@@ -13,6 +13,8 @@ function randName() {
   return `玩家-${a}${b}`;
 }
 const isUserReady = (u: unknown): boolean => !!(u as any)?.ready;
+const GOOD_ROLE_SET = new Set<FlowerRole>(["花蝴蝶", "狙击手", "医生", "警察", "善民"]);
+const BAD_ROLE_SET = new Set<FlowerRole>(["杀手", "魔法师", "森林老人", "恶民"]);
 
 function randomFrom<T>(list: T[]): T | null {
   if (!list.length) return null;
@@ -174,6 +176,7 @@ export default function FlowerRoom() {
   const darkVoteMap = (flowerSnapshot?.day?.tally ?? {}) as Record<string, number>;
   const flowerPhase = flowerSnapshot?.phase ?? "lobby";
   const flowerDayCount = flowerSnapshot?.dayCount ?? 0;
+  const gameResult = flowerSnapshot?.gameResult ?? null;
   const everyoneReady = useMemo(() => {
     if (flowerPhase !== "lobby") return true;
     const playerReadyCheck = (p: FlowerPlayerState) => (p.isBot ? true : !!p.isReady);
@@ -197,6 +200,8 @@ export default function FlowerRoom() {
   const myRole = myFlowerPlayer?.role ?? null;
   const myAlive = !!myFlowerPlayer?.isAlive;
   const myMuted = !!myFlowerPlayer?.isMutedToday;
+
+  // game over UI handled before return (see bottom)
 
   useEffect(() => {
     if (!isHost || flowerPhase !== "night_actions" || !flowerSnapshot) return;
@@ -454,6 +459,57 @@ export default function FlowerRoom() {
   /** ———— UI ———— */
 
   const connText = connected ? "已连接" : "未连接";
+
+  if (flowerPhase === "game_over" && flowerSnapshot && gameResult) {
+    return (
+      <div className="min-h-screen p-6 max-w-3xl mx-auto space-y-4">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">花蝴蝶九人局 · 终局结算</h1>
+          <button className="px-3 py-1 border rounded" onClick={leaveRoom}>离开房间</button>
+        </div>
+        <div className="p-4 border rounded bg-gray-50">
+          <div className="text-lg font-semibold">{gameResult.winner === "good" ? "好人胜利" : gameResult.winner === "bad" ? "坏人胜利" : "平局"}</div>
+          <div className="text-sm text-gray-600">{gameResult.reason}</div>
+        </div>
+        <table className="w-full text-sm border rounded">
+          <thead>
+            <tr className="bg-gray-100">
+              <th className="px-2 py-1 text-left">座位</th>
+              <th className="px-2 py-1 text-left">玩家</th>
+              <th className="px-2 py-1 text-left">角色</th>
+              <th className="px-2 py-1 text-left">阵营</th>
+              <th className="px-2 py-1 text-left">状态</th>
+            </tr>
+          </thead>
+          <tbody>
+            {flowerPlayers.map((p) => {
+              const role = (p.role ?? "") as FlowerRole;
+              const camp = GOOD_ROLE_SET.has(role) ? "好人" : BAD_ROLE_SET.has(role) ? "坏人" : "未知";
+              return (
+                <tr key={`final-${p.seat}`} className="border-t">
+                  <td className="px-2 py-1">{p.seat}</td>
+                  <td className="px-2 py-1">{p.name || `玩家${p.seat}`}</td>
+                  <td className="px-2 py-1">{p.role ?? "未知"}</td>
+                  <td className="px-2 py-1">{camp}</td>
+                  <td className="px-2 py-1">{p.isAlive ? "存活" : "死亡"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <div className="p-3 border rounded">
+          <div className="font-medium mb-1">系统日志</div>
+          <div className="max-h-80 overflow-auto text-sm">
+            <ol className="list-decimal list-inside space-y-1">
+              {flowerSnapshot.logs.map((entry, idx) => (
+                <li key={`gameover-log-${idx}`}>{new Date(entry.at).toLocaleTimeString()} - {entry.text}</li>
+              ))}
+            </ol>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen p-5 max-w-3xl mx-auto">

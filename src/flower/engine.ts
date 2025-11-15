@@ -3,6 +3,7 @@ import type {
   FlowerPlayerState,
   FlowerNightAction,
   FlowerRole,
+  FlowerGameResult,
 } from "./types";
 
 export const FLOWER_ROLES: FlowerRole[] = [
@@ -18,6 +19,7 @@ export const FLOWER_ROLES: FlowerRole[] = [
 ];
 
 const BAD_SPECIAL_ROLES = new Set<FlowerRole>(["杀手", "魔法师", "森林老人"]);
+const GOOD_ROLES = new Set<FlowerRole>(["花蝴蝶", "狙击手", "医生", "警察", "善民"]);
 
 export type AssignResult = { ok: boolean; error?: string };
 export type ResolveResult = { ok: boolean; error?: string };
@@ -184,19 +186,64 @@ export function resolveDayVote(snapshot: FlowerSnapshot): ResolveResult {
     snapshot.logs.push({ at: Date.now(), text: "白天投票平票，无人死亡" });
   }
 
+  if (snapshot.day.votes.length > 0) {
+    const voteSummary = snapshot.day.votes
+      .map((vote) => `座位 ${vote.voterSeat} → 座位 ${vote.targetSeat}`)
+      .join("；");
+    snapshot.logs.push({ at: Date.now(), text: `白天票型：${voteSummary}` });
+  }
+
+  promoteBadSpecial(snapshot);
+
   snapshot.day.pendingExecution = executedSeat
     ? { seat: executedSeat, isBadSpecial: !!snapshot.players.find((p) => p.seat === executedSeat)?.flags?.isBadSpecial }
     : null;
-  snapshot.day.votes = [];
-  snapshot.day.tally = {};
-  snapshot.players.forEach((p) => {
-    p.hasVotedToday = false;
-  });
-  snapshot.phase = "night_actions";
-  snapshot.night.submittedActions = [];
-  snapshot.night.lastActions = [];
+  const dayResult = evaluateGameResult(snapshot);
+  if (dayResult) {
+    finalizeGame(snapshot, dayResult);
+  } else {
+    snapshot.day.votes = [];
+    snapshot.day.tally = {};
+    snapshot.players.forEach((p) => {
+      p.hasVotedToday = false;
+    });
+    snapshot.phase = "night_actions";
+    snapshot.night.submittedActions = [];
+    snapshot.night.lastActions = [];
+  }
   snapshot.updatedAt = Date.now();
   return { ok: true };
+}
+
+function finalizeGame(snapshot: FlowerSnapshot, result: FlowerGameResult) {
+  snapshot.phase = "game_over";
+  snapshot.gameResult = result;
+  snapshot.logs.push({ at: Date.now(), text: `🎉 游戏结束：${result.reason}` });
+}
+
+function evaluateGameResult(snapshot: FlowerSnapshot): FlowerGameResult | null {
+  const alive = snapshot.players.filter(p => p.isAlive);
+  if (alive.length === 0) {
+    return { winner: "draw", reason: "所有玩家全部出局，平局" };
+  }
+  if (alive.every(p => p.role === "恶民")) {
+    return { winner: "draw", reason: "仅剩恶民，平局" };
+  }
+  if (alive.every(p => p.role === "善民" || p.role === "恶民")) {
+    return { winner: "draw", reason: "仅剩善民与恶民，平局" };
+  }
+
+  const goodAlive = alive.some(p => GOOD_ROLES.has((p.role ?? "") as FlowerRole));
+  if (!goodAlive) {
+    return { winner: "bad", reason: "好人阵营全部阵亡，坏人胜" };
+  }
+
+  const badSpecialAlive = alive.some(p => p.flags?.isBadSpecial);
+  if (!badSpecialAlive) {
+    return { winner: "good", reason: "杀手、魔法师与森林老人全部阵亡，好人胜" };
+  }
+
+  return null;
 }
 
 /*************************
@@ -491,29 +538,41 @@ function applyNightOutcome(snapshot: FlowerSnapshot, outcome: NightOutcome) {
   snapshot.day.tally = Object.fromEntries(outcome.darkVotes.entries());
   snapshot.day.votes = [];
   snapshot.day.pendingExecution = null;
-  snapshot.phase = "day_vote";
+  const nightResult = evaluateGameResult(snapshot);
+  if (nightResult) {
+    finalizeGame(snapshot, nightResult);
+  } else {
+    snapshot.phase = "day_vote";
+  }
   outcome.logs.forEach((text) => snapshot.logs.push({ at: now, text }));
   handleRoleUpgrades(snapshot, outcome);
   snapshot.updatedAt = now;
 }
 
 function handleRoleUpgrades(snapshot: FlowerSnapshot, outcome: NightOutcome) {
+  const promoted = promoteBadSpecial(snapshot);
+  if (promoted) {
+    outcome.upgrades.push({ seat: promoted.seat, fromRole: promoted.fromRole, toRole: "杀手" });
+  }
+}
+
+function promoteBadSpecial(snapshot: FlowerSnapshot): { seat: number; fromRole: FlowerRole } | null {
   const findAliveRole = (role: FlowerRole) => snapshot.players.find((p) => p.role === role && p.isAlive);
   const killer = findAliveRole("杀手");
-  if (killer) return;
+  if (killer) return null;
   const mage = findAliveRole("魔法师");
   if (mage) {
     mage.role = "杀手";
     mage.flags = { isBadSpecial: true };
-    outcome.upgrades.push({ seat: mage.seat, fromRole: "魔法师", toRole: "杀手" });
     snapshot.logs.push({ at: Date.now(), text: `魔法师（座位 ${mage.seat}）继承为新的杀手` });
-    return;
+    return { seat: mage.seat, fromRole: "魔法师" };
   }
   const elder = findAliveRole("森林老人");
   if (elder) {
     elder.role = "杀手";
     elder.flags = { isBadSpecial: true };
-    outcome.upgrades.push({ seat: elder.seat, fromRole: "森林老人", toRole: "杀手" });
     snapshot.logs.push({ at: Date.now(), text: `森林老人（座位 ${elder.seat}）继承为新的杀手` });
+    return { seat: elder.seat, fromRole: "森林老人" };
   }
+  return null;
 }

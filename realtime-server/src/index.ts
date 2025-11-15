@@ -12,6 +12,8 @@ type PresenceUser = {
   sessionId: string;   // 客户端持久化，用于断线重连
   seat: number;
   isHost?: boolean;
+  ready?: boolean;     // 准备状态
+  isBot?: boolean;
 };
 
 type Room = {
@@ -22,7 +24,7 @@ type Room = {
 };
 
 const rooms = new Map<string, Room>();
-const MAX_SEATS = 5;
+const MAX_SEATS = 9;
 
 /** ===== 工具函数 ===== */
 function randCode(): string {
@@ -38,23 +40,58 @@ function pickRoomCode(): string {
 function listUsers(r: Room): PresenceUser[] {
   return Array.from(r.users.values()).map(u => ({ ...u }));
 }
-
-function nextAvailableSeat(r: Room, preferred?: number): number | null {
+function nextAvailableSeat(r: Room, preferred?: number | null): number | null {
   const occupied = new Set<number>();
   for (const u of r.users.values()) occupied.add(u.seat);
-  if (preferred && preferred >= 1 && preferred <= MAX_SEATS && !occupied.has(preferred)) {
+
+  // 尝试满足“期望座位”
+  if (
+    typeof preferred === "number" &&
+    preferred >= 1 &&
+    preferred <= MAX_SEATS &&
+    !occupied.has(preferred)
+  ) {
     return preferred;
   }
+  // 否则找最小可用
   for (let i = 1; i <= MAX_SEATS; i++) {
     if (!occupied.has(i)) return i;
   }
   return null;
 }
-
 function refreshHostFlags(room: Room) {
   for (const [sid, user] of room.users.entries()) {
     room.users.set(sid, { ...user, isHost: sid === room.hostSessionId });
   }
+}
+
+function ensureHost(room: Room) {
+  const aliveUsers = Array.from(room.users.values());
+  const current = room.hostSessionId ? room.users.get(room.hostSessionId) : null;
+  const currentAlive = current && !current.isBot && currentStillAlive(room, current.sessionId);
+  if (currentAlive) {
+    refreshHostFlags(room);
+    return;
+  }
+  const humans = aliveUsers.filter(u => !u.isBot && currentStillAlive(room, u.sessionId));
+  const fallback = aliveUsers.filter(u => currentStillAlive(room, u.sessionId));
+  const candidate = humans[0] ?? fallback[0] ?? null;
+  if (candidate) {
+    room.hostSessionId = candidate.sessionId;
+  }
+  refreshHostFlags(room);
+}
+
+function currentStillAlive(room: Room, sessionId: string) {
+  const snapshotPlayers = (room as any).snapshot?.players as Array<{ sessionId: string; isAlive: boolean }> | undefined;
+  if (!snapshotPlayers) return true;
+  const p = snapshotPlayers.find(player => player.sessionId === sessionId);
+  if (!p) return true;
+  return p.isAlive;
+}
+
+function genBotSessionId() {
+  return `bot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
 /** ===== 基础服务 ===== */
@@ -100,9 +137,10 @@ io.on("connection", (socket: Socket) => {
           sessionId,
           seat,
           isHost: true,
+          ready: false,
         };
         room.users.set(sessionId, me);
-        refreshHostFlags(room);
+        ensureHost(room);
         rooms.set(code, room);
 
         socket.join(code);
@@ -117,21 +155,21 @@ io.on("connection", (socket: Socket) => {
     }
   );
 
-  /** 加入房间 */
+  /** 加入房间（支持 preferredSeat） */
   socket.on(
     "room:join",
     (
-      payload: { code: string; name: string; sessionId: string },
+      payload: { code: string; name: string; sessionId: string; preferredSeat?: number | null },
       cb: (resp: { ok: boolean; users?: PresenceUser[]; me?: PresenceUser; msg?: string }) => void
     ) => {
       try {
-        const { code, name, sessionId } = payload || {};
+        const { code, name, sessionId, preferredSeat } = payload || {};
         const room = code ? rooms.get(code) : undefined;
         if (!room) return cb({ ok: false, msg: "房间不存在" });
         if (!name || !sessionId) return cb({ ok: false, msg: "缺少 name 或 sessionId" });
 
         const existed = room.users.get(sessionId);
-        const seat = existed?.seat ?? nextAvailableSeat(room);
+        const seat = existed?.seat ?? nextAvailableSeat(room, preferredSeat ?? null);
         if (!seat) return cb({ ok: false, msg: "房间已满" });
 
         const me: PresenceUser = existed
@@ -142,9 +180,10 @@ io.on("connection", (socket: Socket) => {
               sessionId,
               seat,
               isHost: sessionId === room.hostSessionId,
+              ready: false,
             };
         room.users.set(sessionId, me);
-        refreshHostFlags(room);
+        ensureHost(room);
 
         socket.join(code);
         socket.data.roomCode = code;
@@ -169,24 +208,156 @@ io.on("connection", (socket: Socket) => {
     }
   );
 
+  /** 切换准备状态 */
+  socket.on(
+    "room:ready",
+    (
+      payload: { code: string; sessionId: string; ready: boolean },
+      cb: (resp: { ok: boolean; msg?: string }) => void
+    ) => {
+      try {
+        const { code, sessionId, ready } = payload || {};
+        const room = code ? rooms.get(code) : undefined;
+        if (!room) return cb({ ok: false, msg: "房间不存在" });
+        const u = sessionId ? room.users.get(sessionId) : undefined;
+        if (!u) return cb({ ok: false, msg: "玩家不存在" });
+
+        room.users.set(sessionId, { ...u, ready: !!ready });
+        io.to(code).emit("presence:state", { roomCode: code, users: listUsers(room) });
+        cb({ ok: true });
+      } catch {
+        cb({ ok: false, msg: "room:ready 失败" });
+      }
+    }
+  );
+
+  /** 房主踢出玩家 */
+  socket.on(
+    "room:kick",
+    (
+      payload: { code: string; sessionId: string; targetSessionId: string },
+      cb: (resp: { ok: boolean; msg?: string }) => void
+    ) => {
+      try {
+        const { code, sessionId, targetSessionId } = payload || {};
+        const room = code ? rooms.get(code) : undefined;
+        if (!room) return cb({ ok: false, msg: "房间不存在" });
+          if (!sessionId || sessionId !== room.hostSessionId) {
+          return cb({ ok: false, msg: "只有房主可以踢人" });
+        }
+        if (!targetSessionId || !room.users.has(targetSessionId)) {
+          return cb({ ok: false, msg: "玩家不存在" });
+        }
+        if (targetSessionId === room.hostSessionId) {
+          return cb({ ok: false, msg: "不能踢出房主" });
+        }
+
+        room.users.delete(targetSessionId);
+        ensureHost(room);
+        io.to(code).emit("presence:state", { roomCode: code, users: listUsers(room) });
+
+        for (const sid of io.sockets.adapter.rooms.get(code) || []) {
+          const s = io.sockets.sockets.get(sid);
+          if (s?.data?.sessionId === targetSessionId) {
+            s.leave(code);
+            s.emit("room:kicked", { code });
+          }
+        }
+
+        if (room.users.size === 0) {
+          rooms.delete(code);
+        }
+
+        cb({ ok: true });
+      } catch (err) {
+        cb({ ok: false, msg: "room:kick 失败" });
+      }
+    }
+  );
+
+  /** 房主添加机器人占位 */
+  socket.on(
+    "room:add_bot",
+    (
+      payload: { code: string; sessionId: string; name?: string },
+      cb: (resp: { ok: boolean; msg?: string }) => void
+    ) => {
+      try {
+        const { code, sessionId, name } = payload || {};
+        const room = code ? rooms.get(code) : undefined;
+        if (!room) return cb({ ok: false, msg: "房间不存在" });
+        if (!sessionId || sessionId !== room.hostSessionId) {
+          return cb({ ok: false, msg: "只有房主可以添加机器人" });
+        }
+        const seat = nextAvailableSeat(room);
+        if (!seat) return cb({ ok: false, msg: "房间已满" });
+
+        const botSessionId = genBotSessionId();
+        const bot: PresenceUser = {
+          id: `BOT_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
+          name: name?.trim() || `机器人-${seat}`,
+          sessionId: botSessionId,
+          seat,
+          isHost: false,
+          ready: true,
+          isBot: true,
+        };
+        room.users.set(botSessionId, bot);
+        ensureHost(room);
+        io.to(code).emit("presence:state", { roomCode: code, users: listUsers(room) });
+        cb({ ok: true });
+      } catch (err) {
+        cb({ ok: false, msg: "room:add_bot 失败" });
+      }
+    }
+  );
+
+  /** 主动离开房间 */
+  socket.on(
+    "room:leave",
+    (
+      payload: { code: string; sessionId?: string },
+      cb: (resp: { ok: boolean; msg?: string }) => void
+    ) => {
+      try {
+        const { code, sessionId } = payload || {};
+        const room = code ? rooms.get(code) : undefined;
+        if (!room) return cb({ ok: false, msg: "房间不存在" });
+        const targetSessionId = sessionId || socket.data.sessionId;
+        if (!targetSessionId || !room.users.has(targetSessionId)) {
+          return cb({ ok: false, msg: "玩家不存在" });
+        }
+
+        room.users.delete(targetSessionId);
+        ensureHost(room);
+
+        socket.leave(code);
+        if (room.users.size === 0) {
+          rooms.delete(code);
+        } else {
+          io.to(code).emit("presence:state", { roomCode: code, users: listUsers(room) });
+        }
+        cb({ ok: true });
+      } catch {
+        cb({ ok: false, msg: "room:leave 失败" });
+      }
+    }
+  );
+
   /**
    * ===== Phase 1：动作总线（房主权威） =====
-   * 非房主发 “intent”，服务器只转发给房主；
-   * 房主本地执行后，发 “action”，服务器广播给全房间。
    */
-
   // 非房主 -> 房主
   socket.on(
     "intent",
     (
       payload: { room: string; action: string; data?: unknown; from: string },
-      cb: (resp: { ok: boolean }) => void
+      cb: (resp: { ok: boolean; msg?: string }) => void
     ) => {
       const { room, action, data, from } = payload || {};
       const r = room ? rooms.get(room) : undefined;
-      if (!r) return cb({ ok: false });
+      if (!r) return cb({ ok: false, msg: "房间不存在" });
 
-      // 找到房主的 socket 并单独发送
       const hostSessionId = r.hostSessionId;
       const roomSet = io.sockets.adapter.rooms.get(room);
       if (roomSet) {
@@ -215,7 +386,7 @@ io.on("connection", (socket: Socket) => {
     }
   );
 
-  // 客户端请求最新快照 -> 转给房主
+  // 请求最新快照 -> 转给房主
   socket.on(
     "state:request",
     (
@@ -266,6 +437,50 @@ io.on("connection", (socket: Socket) => {
     }
   );
 
+  /** ===== 开始第一夜（房主） ===== */
+  const startEvents = ["room:start", "flower:start", "flower:start_night", "flower:begin"] as const;
+
+  function broadcastFlowerSnapshot(roomCode: string, fromSessionId: string, phase = "night", night = 1) {
+    const snapshot = {
+      engine: "flower",
+      phase,
+      night,
+      startedAt: Date.now(),
+    };
+    io.to(roomCode).emit("state:full", { snapshot, from: fromSessionId, at: Date.now() });
+  }
+
+  for (const evt of startEvents) {
+  socket.on(
+    evt,
+    (payload: { room: string; sessionId?: string }, cb: (resp: { ok: boolean; msg?: string }) => void) => {
+        try {
+          const roomCode = payload?.room;
+          const room = roomCode ? rooms.get(roomCode) : undefined;
+          if (!room) return cb({ ok: false, msg: "房间不存在" });
+
+          // 仅房主可开始
+          if (socket.data.sessionId !== room.hostSessionId) {
+            return cb({ ok: false, msg: "只有房主可以开始" });
+          }
+
+          // 开始时重置 ready
+          for (const [sid, u] of room.users.entries()) {
+            room.users.set(sid, { ...u, ready: false });
+          }
+          io.to(roomCode).emit("presence:state", { roomCode, users: listUsers(room) });
+
+          // 广播“花蝴蝶”快照（第一夜）
+          broadcastFlowerSnapshot(roomCode, socket.data.sessionId!, "night", 1);
+
+          cb({ ok: true });
+        } catch {
+          cb({ ok: false, msg: `${evt} 失败` });
+        }
+      }
+    );
+  }
+
   /** 关闭房间（仅房主） */
   socket.on(
     "room:close",
@@ -293,15 +508,7 @@ io.on("connection", (socket: Socket) => {
 
     room.users.delete(sessionId);
 
-    // 房主离开 → 让渡
-    if (sessionId === room.hostSessionId) {
-      const first = Array.from(room.users.values())[0];
-      if (first) {
-        room.hostSessionId = first.sessionId;
-      }
-    }
-
-    refreshHostFlags(room);
+    ensureHost(room);
 
     if (room.users.size === 0) {
       rooms.delete(code);

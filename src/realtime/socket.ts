@@ -4,15 +4,24 @@ import type { GameSnapshot } from "../types";
 
 /** ===== 类型 ===== */
 export type IntentMsg = { action: string; payload?: unknown; from: string; room: string };
-export type PresenceUser = { id: string; name: string; sessionId: string; seat: number; isHost?: boolean };
+export type PresenceUser = {
+  id: string;
+  name: string;
+  sessionId: string;
+  seat: number;
+  isHost?: boolean;
+  ready?: boolean; // ← 新增：准备状态
+  isBot?: boolean;
+};
 export type PresenceState = { roomCode: string | null; users: PresenceUser[] };
 export type StateSnapshotMsg = { snapshot: GameSnapshot; from: string; at?: number; target?: string };
 export type StateRequestMsg = { room: string; from: string };
 
-type RTState = {
-  roomCode: string | null;
-  isHost: boolean;
-};
+type CreateRoomAck = { ok: boolean; code?: string; users?: PresenceUser[]; me?: PresenceUser; msg?: string };
+type JoinRoomAck   = { ok: boolean; users?: PresenceUser[]; me?: PresenceUser; msg?: string };
+type IntentAck = { ok: boolean; msg?: string };
+
+type RTState = { roomCode: string | null; isHost: boolean };
 
 /** ===== 内部状态 ===== */
 let socket: Socket | null = null;
@@ -23,8 +32,10 @@ const intentSubs: Array<(msg: IntentMsg) => void> = [];
 const presenceSubs: Array<(state: PresenceState | null) => void> = [];
 const stateSubs: Array<(msg: StateSnapshotMsg) => void> = [];
 const stateRequestSubs: Array<(msg: StateRequestMsg) => void> = [];
+const actionSubs: Array<(msg: { action: string; payload?: any; from: string; at?: number }) => void> = [];
+const kickSubs: Array<(code: string | null) => void> = [];
 
-// 连接状态订阅
+// 连接状态
 let _connected = false;
 const connSubs: Array<(ok: boolean) => void> = [];
 function notifyConn(ok: boolean) {
@@ -43,14 +54,13 @@ export function isConnected() { return _connected; }
 
 /** ===== 工具：实时服务器 URL 解析 ===== */
 function resolveRtUrl() {
-  // 优先使用 Vite 注入的环境变量（示例：wss://fool-stone-realtime.onrender.com）
-  const env = import.meta.env.VITE_RT_URL;
-  if (env) return env;
-
-  // 兜底：同域同协议
+  const env = import.meta.env.VITE_RT_URL as string | undefined;
+  if (env) return env; // e.g. ws://localhost:8787 或 wss://xxx
+  // fallback：与前端同机，固定 8787 端口
   const isHttps = location.protocol === "https:";
   const proto = isHttps ? "wss:" : "ws:";
-  return `${proto}//${location.host}`;
+  const host = location.hostname; // 只取主机名，避免把 5173 也带上
+  return `${proto}//${host}:8787`;
 }
 
 /** ===== 会话 ID（断线重连用） ===== */
@@ -66,11 +76,23 @@ export function getSessionId(): string {
   return sid;
 }
 
+/** ===== 本地“座位”持久化（断线重连保座） ===== */
+const SEAT_KEY = "flower:seat";
+function saveMySeat(n: number | null) {
+  if (typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= 9) {
+    localStorage.setItem(SEAT_KEY, String(n));
+  }
+}
+function loadMySeat(): number | null {
+  const raw = localStorage.getItem(SEAT_KEY);
+  const n = raw ? Number(raw) : NaN;
+  return Number.isInteger(n) && n >= 1 && n <= 9 ? n : null;
+}
+
 /** ===== 建立（或复用）Socket 连接 ===== */
 function ensureSocket(): Socket {
   if (socket) return socket;
 
-  // 先创建到局部变量，再赋给全局的 socket
   const s: Socket = io(resolveRtUrl(), {
     transports: ["websocket"],
     withCredentials: true,
@@ -113,6 +135,8 @@ function ensureSocket(): Socket {
     state.roomCode = p.roomCode ?? null;
     state.isHost = !!me?.isHost;
 
+    if (me?.seat) saveMySeat(me.seat);
+
     localStorage.setItem("lastRoomCode", state.roomCode ?? "");
     localStorage.setItem("isHost", state.isHost ? "1" : "0");
 
@@ -126,6 +150,19 @@ function ensureSocket(): Socket {
     for (const fn of presenceSubs) fn(snapshot);
   });
 
+  // 动作总线：房主广播 action，所有人接收
+  s.on("action", (msg: { action: string; payload?: any; from: string; at?: number }) => {
+    for (const fn of actionSubs) fn(msg);
+  });
+
+  s.on("room:kicked", (msg: { code: string }) => {
+    state.roomCode = null;
+    state.isHost = false;
+    presenceState = null;
+    localStorage.removeItem("lastRoomCode");
+    for (const fn of kickSubs) fn(msg?.code ?? null);
+  });
+
   return s;
 }
 
@@ -133,7 +170,7 @@ function ensureSocket(): Socket {
 export function emitAck<T = unknown, R = unknown>(
   event: string,
   data?: T,
-  timeoutMs = 8000
+  timeoutMs = 3500
 ): Promise<R> {
   return new Promise((resolve, reject) => {
     const s = ensureSocket();
@@ -146,17 +183,17 @@ export function emitAck<T = unknown, R = unknown>(
   });
 }
 
-/** ===== 业务封装 ===== */
+/** ===== 业务封装（intent / state / presence / action） ===== */
 
 // 非房主把意图发给房主
 function sendIntent(action: string, payload?: unknown) {
   if (!state.roomCode) return;
   return emitAck("intent", {
-    room: state.roomCode!, // 已有非空判断
+    room: state.roomCode!,
     action,
     data: payload,
     from: getSessionId(),
-  });
+  }) as Promise<IntentAck>;
 }
 
 function subscribeIntent(handler: (msg: IntentMsg) => void) {
@@ -191,17 +228,29 @@ function subscribePresence(handler: (state: PresenceState | null) => void) {
   };
 }
 
+function subscribeAction(handler: (msg: { action: string; payload?: any; from: string; at?: number }) => void) {
+  actionSubs.push(handler);
+  return () => {
+    const i = actionSubs.indexOf(handler);
+    if (i >= 0) actionSubs.splice(i, 1);
+  };
+}
+
+function subscribeKicked(handler: (code: string | null) => void) {
+  kickSubs.push(handler);
+  return () => {
+    const i = kickSubs.indexOf(handler);
+    if (i >= 0) kickSubs.splice(i, 1);
+  };
+}
+
 function getPresence(): PresenceState | null {
   if (!presenceState) return null;
   return { roomCode: presenceState.roomCode, users: [...presenceState.users] };
 }
 
-function getRoom() {
-  return state.roomCode as string | null;
-}
-function getIsHost() {
-  return state.isHost;
-}
+function getRoom() { return state.roomCode as string | null; }
+function getIsHost() { return state.isHost; }
 
 function sendState(snapshot: GameSnapshot, targetSessionId?: string) {
   if (!state.roomCode) return;
@@ -221,19 +270,96 @@ function requestState() {
   });
 }
 
+function sendAction(action: string, payload?: unknown) {
+  if (!state.roomCode) return;
+  return emitAck("action", {
+    room: state.roomCode!,
+    action,
+    data: payload,
+    from: getSessionId(),
+  });
+}
+
+function kickPlayer(code: string, targetSessionId: string) {
+  return emitAck("room:kick", {
+    code,
+    sessionId: getSessionId(),
+    targetSessionId,
+  });
+}
+
+function addBotToRoom(code: string, name?: string) {
+  return emitAck("room:add_bot", {
+    code,
+    sessionId: getSessionId(),
+    name,
+  });
+}
+
+/** ===== Flower 便捷：创建 / 加入 / 准备 ===== */
+async function createFlowerRoom(name: string): Promise<CreateRoomAck> {
+  const ack = await emitAck<{ name: string; sessionId: string }, CreateRoomAck>("room:create", {
+    name,
+    sessionId: getSessionId(),
+  });
+  if (ack?.ok && ack.me?.seat) saveMySeat(ack.me.seat);
+  return ack;
+}
+
+async function joinFlowerRoom(code: string, name: string): Promise<JoinRoomAck> {
+  const ack = await emitAck<
+    { code: string; name: string; sessionId: string; preferredSeat?: number | null },
+    JoinRoomAck
+  >("room:join", {
+    code,
+    name,
+    sessionId: getSessionId(),
+    preferredSeat: loadMySeat(),
+  });
+  if (ack?.ok && ack.me?.seat) saveMySeat(ack.me.seat);
+  return ack;
+}
+
+/** 新增：切换准备状态（对接后端 room:ready） */
+async function setReady(code: string, ready: boolean) {
+  return emitAck("room:ready", {
+    code,
+    sessionId: getSessionId(),
+    ready,
+  });
+}
+
 /** ===== 导出 API ===== */
 export const rt = {
+  // 连接
   getSocket: ensureSocket,
+  onConnection,
+  isConnected,
+
+  // 发送/订阅
   emitAck,
   sendIntent,
   subscribeIntent,
   subscribeState,
   subscribeStateRequest,
   subscribePresence,
+  subscribeAction,
+  subscribeKicked,
   sendState,
   requestState,
+  sendAction,
+  kickPlayer,
+
+  // 房态
   getPresence,
   getRoom,
   isHost: getIsHost,
+
+  // Flower 便捷
+  createFlowerRoom,
+  joinFlowerRoom,
+  setReady,
+  addBotToRoom,
 };
+
 export default rt;

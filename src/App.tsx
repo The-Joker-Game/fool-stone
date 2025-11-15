@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useGame, exportSnapshot as exportGameSnapshot, applySnapshot as applyGameSnapshot } from './store/game';
 import { rt, getSessionId, type PresenceState } from './realtime/socket';
 import './index.css';
+import FlowerRoom from './FlowerRoom';
+
 
 const CAST_ORDER = ['金', '木', '水', '火', '土', '贤', '愚'] as const;
 type Stone = typeof CAST_ORDER[number];
@@ -21,7 +23,7 @@ const isStringArray = (value: unknown): value is string[] =>
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
 
-export default function App() {
+function MainApp() {
   // —— 全局状态 —— //
   const g = useGame(s => s.game);
   const isOver = useGame(s => s.isOver);
@@ -1020,4 +1022,13 @@ export default function App() {
       {showRules && <RulesModal />}
     </div>
   );
+}
+
+export default function App() {
+  if (typeof window !== 'undefined' && window.location.search.includes('flower')) {
+    // URL 带 ?flower 就进入花蝴蝶调试页面
+    return <FlowerRoom />;
+  }
+  // 默认走原来的愚者之石页面
+  return <MainApp />;
 }
