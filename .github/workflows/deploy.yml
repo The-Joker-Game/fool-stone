@@ -51,7 +51,7 @@ jobs:
         run: |
           : "${DEPLOY_USER:?Set DEPLOY_USER in the repository secrets.}"
           PORT=${DEPLOY_PORT:-22}
-          TARGET_PATH=${DEPLOY_PATH:-/root/fool-stone/dist}
+          TARGET_PATH=${DEPLOY_PATH:-/usr/share/nginx/html/fs}
           ssh -p "${PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "mkdir -p ${TARGET_PATH}"
           rsync -az --delete -e "ssh -p ${PORT}" dist/ "${DEPLOY_USER}@${DEPLOY_HOST}:${TARGET_PATH}"
 
