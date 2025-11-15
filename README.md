@@ -74,7 +74,7 @@ export default tseslint.config([
 
 在 GitHub 仓库的 **Settings → Secrets and variables → Actions** 中配置以下 secrets 即可生效：
 
-- `SSH_PRIVATE_KEY`：可登录部署服务器的私钥内容（建议使用仅具备部署权限的账号）。
+- `SSH_PRIVATE_KEY`：可登录部署服务器的私钥内容。
 - `DEPLOY_HOST`：服务器地址或 IP。
 - `DEPLOY_USER`：登录服务器的用户名。
 - `DEPLOY_PORT`（可选）：SSH 端口，默认 22。
