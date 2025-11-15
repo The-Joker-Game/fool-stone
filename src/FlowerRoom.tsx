@@ -513,7 +513,7 @@ export default function FlowerRoom() {
 
   return (
     <div className="min-h-screen p-5 max-w-3xl mx-auto">
-      <h1 className="text-xl font-semibold mb-3">花蝴蝶九人局 · 调试中</h1>
+      <h1 className="text-xl font-semibold mb-3">花蝴蝶九人局 · 调试版</h1>
 
       {/* 顶部：连接 + 建/加房 */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
