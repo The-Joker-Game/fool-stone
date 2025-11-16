@@ -70,7 +70,17 @@ export default tseslint.config([
 
 ## 自动部署
 
-仓库根目录下的 `.github/workflows/deploy.yml` 会在每次 push 到 `feature/flower` 分支时运行。流程会自动安装依赖、执行 `npm run build`，随后把 `dist/` 目录通过 SSH 上传到服务器的 `/usr/share/nginx/html/fs/`（如需自定义，可以在 secret 中设置 `DEPLOY_PATH`），并在完成后执行 `nginx -s reload` 让 Nginx 立即读取最新内容。
+仓库根目录下的 `.github/workflows/deploy.yml` 会在每次 push 到 `feature/flower` 分支时运行。流程会自动完成以下操作：
+
+1. **前端构建和部署**：安装依赖、执行 `npm run build`，随后把 `dist/` 目录通过 SSH 上传到服务器的 `/usr/share/nginx/html/fs/`（如需自定义，可以在 secret 中设置 `DEPLOY_PATH`），并在完成后执行 `nginx -s reload` 让 Nginx 立即读取最新内容。
+
+2. **Realtime Server 构建和部署**：
+   - 编译 `realtime-server` 项目（执行 `npm ci` 和 `npm run build`）
+   - 将编译产物（`dist/` 目录）和 `package.json`、`package-lock.json` 上传到服务器
+   - 在服务器上安装生产依赖（`npm ci --production`）
+   - 使用 PM2 管理 realtime-server 进程：
+     - 如果应用已在 PM2 中运行，则执行 `pm2 reload` 重新加载
+     - 如果应用未运行，则执行 `pm2 start` 启动应用并保存配置
 
 在 GitHub 仓库的 **Settings → Secrets and variables → Actions** 中配置以下 secrets 即可生效：
 
@@ -79,5 +89,6 @@ export default tseslint.config([
 - `DEPLOY_USER`：登录服务器的用户名。
 - `DEPLOY_PORT`（可选）：SSH 端口，默认 22。
 - `DEPLOY_PATH`（可选）：如果需要覆盖默认的 `/usr/share/nginx/html/fs` 路径，可以在这里指定。
+- `REALTIME_SERVER_PATH`（可选）：realtime-server 的部署路径，默认为 `/opt/fool-stone/realtime-server`。
 
-配置完成后，只要 commit 并 push 到 `feature/flower`，GitHub Actions 就会触发自动构建、部署到 `/usr/share/nginx/html/fs/`，并自动 reload Nginx。
+配置完成后，只要 commit 并 push 到 `feature/flower`，GitHub Actions 就会触发自动构建、部署前端和 realtime-server，并自动 reload Nginx 和 PM2。
