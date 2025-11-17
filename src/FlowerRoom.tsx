@@ -599,8 +599,10 @@ export default function FlowerRoom() {
                       {isHost && player.sessionId && player.sessionId !== getSessionId() && !player.isBot && (
                         <div className="flex items-center gap-1">
                           <button
-                            className="text-xs border border-blue-200 text-blue-600 rounded px-2 py-1 hover:bg-blue-50"
+                            className="text-xs border border-blue-200 text-blue-600 rounded px-2 py-1 hover:bg-blue-50 disabled:opacity-50"
                             onClick={() => handoverHost(player.sessionId, player.name || `座位${player.seat}`)}
+                            disabled={!!presenceInfo?.isDisconnected}
+                            title={presenceInfo?.isDisconnected ? "该玩家暂离，无法交接房主" : ""}
                           >
                             交接房主
                           </button>
@@ -634,8 +636,10 @@ export default function FlowerRoom() {
                       {isHost && u.sessionId !== getSessionId() && !u.isBot && (
                         <div className="flex items-center gap-1">
                           <button
-                            className="text-xs border border-blue-200 text-blue-600 rounded px-2 py-1 hover:bg-blue-50"
+                            className="text-xs border border-blue-200 text-blue-600 rounded px-2 py-1 hover:bg-blue-50 disabled:opacity-50"
                             onClick={() => handoverHost(u.sessionId, u.name || `座位${u.seat}`)}
+                            disabled={!!u.isDisconnected}
+                            title={u.isDisconnected ? "该玩家暂离，无法交接房主" : ""}
                           >
                             交接房主
                           </button>

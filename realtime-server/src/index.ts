@@ -432,6 +432,7 @@ io.on("connection", (socket: Socket) => {
         const target = targetSessionId ? room.users.get(targetSessionId) : undefined;
         if (!target) return cb({ ok: false, msg: "目标玩家不存在" });
         if (target.isBot) return cb({ ok: false, msg: "无法交接给机器人" });
+        if (target.isDisconnected) return cb({ ok: false, msg: "无法交接给暂离玩家" });
 
         room.hostSessionId = targetSessionId;
         refreshHostFlags(room);
