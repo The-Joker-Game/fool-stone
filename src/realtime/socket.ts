@@ -32,7 +32,7 @@ const intentSubs: Array<(msg: IntentMsg) => void> = [];
 const presenceSubs: Array<(state: PresenceState | null) => void> = [];
 const stateSubs: Array<(msg: StateSnapshotMsg) => void> = [];
 const stateRequestSubs: Array<(msg: StateRequestMsg) => void> = [];
-const actionSubs: Array<(msg: { action: string; payload?: any; from: string; at?: number }) => void> = [];
+const actionSubs: Array<(msg: { action: string; payload?: unknown; from: string; at?: number }) => void> = [];
 const kickSubs: Array<(code: string | null) => void> = [];
 
 // 连接状态
@@ -68,7 +68,7 @@ function getKeepaliveWorker() {
       type: "module",
     });
     keepaliveWorker.onmessage = (event: MessageEvent<KeepaliveWorkerMsg>) => {
-      if (event.data?.type === "tick" && typeof event.data.at === "number") {
+      if (event.data?.type === "tick") {
         lastKeepaliveAt = event.data.at;
       }
     };
@@ -147,10 +147,9 @@ function resolveRtUrl() {
 export function getSessionId(): string {
   let sid = localStorage.getItem("sessionId");
   if (!sid) {
-    const uuid =
+    sid =
       (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : undefined) ??
       `s_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
-    sid = uuid;
     localStorage.setItem("sessionId", sid);
   }
   return sid;
@@ -233,7 +232,7 @@ function ensureSocket(): Socket {
   });
 
   // 动作总线：房主广播 action，所有人接收
-  s.on("action", (msg: { action: string; payload?: any; from: string; at?: number }) => {
+  s.on("action", (msg: { action: string; payload?: unknown; from: string; at?: number }) => {
     for (const fn of actionSubs) fn(msg);
   });
 
@@ -329,7 +328,7 @@ function subscribePresence(handler: (state: PresenceState | null) => void) {
   };
 }
 
-function subscribeAction(handler: (msg: { action: string; payload?: any; from: string; at?: number }) => void) {
+function subscribeAction(handler: (msg: { action: string; payload?: unknown; from: string; at?: number }) => void) {
   actionSubs.push(handler);
   return () => {
     const i = actionSubs.indexOf(handler);

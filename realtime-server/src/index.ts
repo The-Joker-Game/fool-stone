@@ -16,12 +16,17 @@ type PresenceUser = {
   isBot?: boolean;
 };
 
+type SnapshotWithPlayers = Snapshot & {
+  players?: Array<{ sessionId: string; isAlive: boolean }>;
+};
+
 type Room = {
   code: string; // 四位数字
   users: Map<string, PresenceUser>; // key = sessionId
   hostSessionId: string;
   createdAt: number;
   lastKeepaliveAt?: number;
+  snapshot: SnapshotWithPlayers | null;
 };
 
 const rooms = new Map<string, Room>();
@@ -121,7 +126,7 @@ function ensureHost(room: Room) {
 }
 
 function currentStillAlive(room: Room, sessionId: string) {
-  const snapshotPlayers = (room as any).snapshot?.players as Array<{ sessionId: string; isAlive: boolean }> | undefined;
+  const snapshotPlayers = room.snapshot?.players;
   if (!snapshotPlayers) return true;
   const p = snapshotPlayers.find(player => player.sessionId === sessionId);
   if (!p) return true;
@@ -167,6 +172,7 @@ io.on("connection", (socket: Socket) => {
           hostSessionId: sessionId,
           createdAt: Date.now(),
           lastKeepaliveAt: Date.now(),
+          snapshot: null,
         };
 
         const seat = nextAvailableSeat(room) ?? 1;
@@ -309,6 +315,7 @@ io.on("connection", (socket: Socket) => {
 
         cb({ ok: true });
       } catch (err) {
+        console.error("room:kick 失败", err);
         cb({ ok: false, msg: "room:kick 失败" });
       }
     }
@@ -346,6 +353,7 @@ io.on("connection", (socket: Socket) => {
         io.to(code).emit("presence:state", { roomCode: code, users: listUsers(room) });
         cb({ ok: true });
       } catch (err) {
+        console.error("room:add_bot 失败", err);
         cb({ ok: false, msg: "room:add_bot 失败" });
       }
     }
@@ -461,6 +469,8 @@ io.on("connection", (socket: Socket) => {
       const r = room ? rooms.get(room) : undefined;
       if (!r) return cb({ ok: false });
       if (socket.data.sessionId !== r.hostSessionId) return cb({ ok: false });
+
+      r.snapshot = snapshot as SnapshotWithPlayers;
 
       if (target) {
         for (const sid of io.sockets.adapter.rooms.get(room) || []) {

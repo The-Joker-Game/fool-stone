@@ -1,5 +1,3 @@
-/// <reference lib="webworker" />
-
 import { io, Socket } from "socket.io-client";
 
 type StartMessage = {
@@ -22,7 +20,6 @@ type SocketMeta = { key: string };
 let currentConfig: StartMessage | null = null;
 let socket: Socket | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
-let activeKey: string | null = null;
 const socketMeta = new WeakMap<Socket, SocketMeta>();
 
 function cleanupSocket() {
@@ -36,7 +33,6 @@ function cleanupSocket() {
     socket.disconnect();
     socket = null;
   }
-  activeKey = null;
 }
 
 function emitKeepalive() {
@@ -72,7 +68,6 @@ function ensureSocket() {
     }
   }
   cleanupSocket();
-  activeKey = key;
   socket = io(currentConfig.rtUrl, {
     transports: ["websocket"],
     reconnection: true,
