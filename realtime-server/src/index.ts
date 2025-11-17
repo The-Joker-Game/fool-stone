@@ -21,10 +21,48 @@ type Room = {
   users: Map<string, PresenceUser>; // key = sessionId
   hostSessionId: string;
   createdAt: number;
+  lastKeepaliveAt?: number;
 };
 
 const rooms = new Map<string, Room>();
+const cleanupTimers = new Map<string, NodeJS.Timeout>();
 const MAX_SEATS = 9;
+const ROOM_EMPTY_GRACE_MS = Number(process.env.ROOM_EMPTY_GRACE_MS ?? 5 * 60 * 1000);
+
+function cancelRoomCleanup(code: string) {
+  const timer = cleanupTimers.get(code);
+  if (timer) {
+    clearTimeout(timer);
+    cleanupTimers.delete(code);
+  }
+}
+
+function scheduleRoomCleanup(room: Room) {
+  cancelRoomCleanup(room.code);
+  const timer = setTimeout(() => {
+    cleanupTimers.delete(room.code);
+    const current = rooms.get(room.code);
+    if (!current) return;
+    if (current.users.size === 0) {
+      const lastKeepalive = current.lastKeepaliveAt ?? current.createdAt;
+      if (Date.now() - lastKeepalive >= ROOM_EMPTY_GRACE_MS) {
+        rooms.delete(current.code);
+        return;
+      }
+      scheduleRoomCleanup(current);
+    }
+  }, ROOM_EMPTY_GRACE_MS);
+  cleanupTimers.set(room.code, timer);
+}
+
+function handleRoomPopulationChange(room: Room) {
+  if (room.users.size === 0) {
+    room.lastKeepaliveAt = room.lastKeepaliveAt ?? Date.now();
+    scheduleRoomCleanup(room);
+  } else {
+    cancelRoomCleanup(room.code);
+  }
+}
 
 /** ===== 工具函数 ===== */
 function randCode(): string {
@@ -128,6 +166,7 @@ io.on("connection", (socket: Socket) => {
           users: new Map(),
           hostSessionId: sessionId,
           createdAt: Date.now(),
+          lastKeepaliveAt: Date.now(),
         };
 
         const seat = nextAvailableSeat(room) ?? 1;
@@ -492,6 +531,7 @@ io.on("connection", (socket: Socket) => {
 
       io.to(code).emit("room:closed", { code });
       io.socketsLeave(code);
+      cancelRoomCleanup(code);
       rooms.delete(code);
       cb({ ok: true });
     }
@@ -509,13 +549,36 @@ io.on("connection", (socket: Socket) => {
     room.users.delete(sessionId);
 
     ensureHost(room);
-
-    if (room.users.size === 0) {
-      rooms.delete(code);
-    } else {
-      io.to(code).emit("presence:state", { roomCode: code, users: listUsers(room) });
-    }
+    handleRoomPopulationChange(room);
+    io.to(code).emit("presence:state", { roomCode: code, users: listUsers(room) });
   });
+
+  socket.on(
+    "room:keepalive",
+    (
+      payload: { roomCode?: string; sessionId?: string },
+      cb?: (resp: { ok: boolean; msg?: string }) => void
+    ) => {
+      try {
+        const { roomCode, sessionId } = payload || {};
+        const room = roomCode ? rooms.get(roomCode) : undefined;
+        if (!room) return cb?.({ ok: false, msg: "房间不存在" });
+        if (!sessionId) return cb?.({ ok: false, msg: "缺少 sessionId" });
+        if (sessionId !== room.hostSessionId && !room.users.has(sessionId)) {
+          return cb?.({ ok: false, msg: "玩家不存在" });
+        }
+        room.lastKeepaliveAt = Date.now();
+        if (room.users.size === 0) {
+          scheduleRoomCleanup(room);
+        } else {
+          cancelRoomCleanup(room.code);
+        }
+        cb?.({ ok: true });
+      } catch {
+        cb?.({ ok: false, msg: "room:keepalive 失败" });
+      }
+    }
+  );
 });
 
 /** ===== 启动 ===== */

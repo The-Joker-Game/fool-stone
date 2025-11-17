@@ -38,9 +38,88 @@ const kickSubs: Array<(code: string | null) => void> = [];
 // 连接状态
 let _connected = false;
 const connSubs: Array<(ok: boolean) => void> = [];
+
+const KEEPALIVE_INTERVAL_MS = 20_000;
+let lifecycleHandlersBound = false;
+let keepaliveWorker: Worker | null = null;
+let keepaliveWorkerKey: string | null = null;
+let lastKeepaliveAt = 0;
+
 function notifyConn(ok: boolean) {
   _connected = ok;
   for (const fn of connSubs) fn(ok);
+}
+
+type KeepaliveStartMsg = {
+  type: "start";
+  roomCode: string;
+  sessionId: string;
+  rtUrl: string;
+  intervalMs?: number;
+};
+type KeepaliveStopMsg = { type: "stop" };
+type KeepalivePokeMsg = { type: "poke" };
+type KeepaliveWorkerMsg = { type: "tick"; at: number };
+
+function getKeepaliveWorker() {
+  if (typeof window === "undefined") return null;
+  if (!keepaliveWorker) {
+    keepaliveWorker = new Worker(new URL("./keepalive.worker.ts", import.meta.url), {
+      type: "module",
+    });
+    keepaliveWorker.onmessage = (event: MessageEvent<KeepaliveWorkerMsg>) => {
+      if (event.data?.type === "tick" && typeof event.data.at === "number") {
+        lastKeepaliveAt = event.data.at;
+      }
+    };
+  }
+  return keepaliveWorker;
+}
+
+function syncKeepaliveWorker() {
+  if (typeof window === "undefined") return;
+  const room = state.roomCode;
+  if (!room) {
+    stopKeepaliveWorker();
+    return;
+  }
+  const key = `${room}|${getSessionId()}`;
+  if (keepaliveWorkerKey === key) return;
+  const worker = getKeepaliveWorker();
+  if (!worker) return;
+  keepaliveWorkerKey = key;
+  const msg: KeepaliveStartMsg = {
+    type: "start",
+    roomCode: room,
+    sessionId: getSessionId(),
+    rtUrl: resolveRtUrl(),
+    intervalMs: 20_000,
+  };
+  worker.postMessage(msg);
+}
+
+function stopKeepaliveWorker() {
+  if (keepaliveWorker) {
+    const msg: KeepaliveStopMsg = { type: "stop" };
+    keepaliveWorker.postMessage(msg);
+  }
+  keepaliveWorkerKey = null;
+  lastKeepaliveAt = 0;
+}
+
+function pokeKeepaliveWorker() {
+  const worker = getKeepaliveWorker();
+  if (!worker || !state.roomCode) return;
+  const msg: KeepalivePokeMsg = { type: "poke" };
+  worker.postMessage(msg);
+}
+
+function ensureFreshKeepalive() {
+  if (!state.roomCode) return;
+  const now = Date.now();
+  if (now - lastKeepaliveAt > KEEPALIVE_INTERVAL_MS) {
+    pokeKeepaliveWorker();
+  }
 }
 export function onConnection(cb: (ok: boolean) => void) {
   connSubs.push(cb);
@@ -62,6 +141,7 @@ function resolveRtUrl() {
   const host = location.hostname; // 只取主机名，避免把 5173 也带上
   return `${proto}//${host}:8787`;
 }
+
 
 /** ===== 会话 ID（断线重连用） ===== */
 export function getSessionId(): string {
@@ -98,6 +178,7 @@ function ensureSocket(): Socket {
     withCredentials: true,
   });
   socket = s;
+  ensureLifecycleHandlers();
 
   // 连接状态
   s.on("connect", () => {
@@ -144,6 +225,7 @@ function ensureSocket(): Socket {
       roomCode: p.roomCode ?? null,
       users: Array.isArray(p.users) ? [...p.users] : [],
     };
+    syncKeepaliveWorker();
     const snapshot = presenceState
       ? { roomCode: presenceState.roomCode, users: [...presenceState.users] }
       : null;
@@ -160,11 +242,30 @@ function ensureSocket(): Socket {
     state.isHost = false;
     presenceState = null;
     localStorage.removeItem("lastRoomCode");
+    stopKeepaliveWorker();
     for (const fn of kickSubs) fn(msg?.code ?? null);
   });
 
   return s;
 }
+
+function ensureLifecycleHandlers() {
+  if (lifecycleHandlersBound) return;
+  if (typeof document === "undefined" || typeof window === "undefined") return;
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && socket && socket.disconnected) {
+      socket.connect();
+    }
+    if (!document.hidden) {
+      ensureFreshKeepalive();
+    }
+  });
+  window.addEventListener("beforeunload", () => {
+    stopKeepaliveWorker();
+  });
+  lifecycleHandlersBound = true;
+}
+
 
 /** ===== 通用 ACK 发送 ===== */
 export function emitAck<T = unknown, R = unknown>(
