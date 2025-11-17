@@ -242,6 +242,53 @@ io.on("connection", (socket: Socket) => {
     }
   );
 
+  /** 断线重连：保持原会话信息并广播 */
+  socket.on(
+    "room:resume",
+    (
+      payload: { code: string; name?: string; sessionId: string; preferredSeat?: number | null },
+      cb: (resp: { ok: boolean; users?: PresenceUser[]; me?: PresenceUser; msg?: string }) => void
+    ) => {
+      try {
+        const { code, sessionId, name, preferredSeat } = payload || {};
+        const room = code ? rooms.get(code) : undefined;
+        if (!room) return cb({ ok: false, msg: "房间不存在" });
+        if (!sessionId) return cb({ ok: false, msg: "缺少 sessionId" });
+
+        const existed = room.users.get(sessionId);
+        const seat = existed?.seat ?? nextAvailableSeat(room, preferredSeat ?? null);
+        if (!seat) return cb({ ok: false, msg: "房间已满" });
+
+        const base: PresenceUser = existed
+          ? { ...existed, name: name?.trim() || existed.name, seat }
+          : {
+              id: `U_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
+              name: name?.trim() || `玩家${seat}`,
+              sessionId,
+              seat,
+              ready: false,
+            };
+        const me: PresenceUser = {
+          ...base,
+          sessionId,
+          isHost: sessionId === room.hostSessionId,
+        };
+        room.users.set(sessionId, me);
+        ensureHost(room);
+
+        socket.join(code);
+        socket.data.roomCode = code;
+        socket.data.sessionId = sessionId;
+
+        io.to(code).emit("presence:state", { roomCode: code, users: listUsers(room) });
+        cb({ ok: true, users: listUsers(room), me });
+      } catch (err) {
+        console.error("room:resume 失败", err);
+        cb({ ok: false, msg: "room:resume 失败" });
+      }
+    }
+  );
+
   /** 仅返回在场名单 */
   socket.on(
     "presence:list",

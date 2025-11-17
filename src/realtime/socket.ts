@@ -19,6 +19,7 @@ export type StateRequestMsg = { room: string; from: string };
 type CreateRoomAck = { ok: boolean; code?: string; users?: PresenceUser[]; me?: PresenceUser; msg?: string };
 type JoinRoomAck   = { ok: boolean; users?: PresenceUser[]; me?: PresenceUser; msg?: string };
 type IntentAck = { ok: boolean; msg?: string };
+type ResumeAck = { ok: boolean; users?: PresenceUser[]; me?: PresenceUser; msg?: string };
 type PresenceListAck = { ok: boolean; users?: PresenceUser[]; msg?: string };
 
 type RTState = { roomCode: string | null; isHost: boolean };
@@ -361,15 +362,27 @@ async function rejoinRoomAfterResume() {
   if (!roomCode) return;
   const name = getStoredDisplayName();
   try {
-    await emitAck<
+    const ack = await emitAck<
       { code: string; name: string; sessionId: string; preferredSeat?: number | null },
-      JoinRoomAck
-    >("room:join", {
+      ResumeAck
+    >("room:resume", {
       code: roomCode,
       name,
       sessionId: getSessionId(),
       preferredSeat: loadMySeat(),
     }, 5000);
+    if (!ack?.ok) {
+      console.warn("[realtime] room:resume failed, fallback to room:join", ack?.msg);
+      await emitAck<
+        { code: string; name: string; sessionId: string; preferredSeat?: number | null },
+        JoinRoomAck
+      >("room:join", {
+        code: roomCode,
+        name,
+        sessionId: getSessionId(),
+        preferredSeat: loadMySeat(),
+      }, 5000);
+    }
   } catch (err) {
     console.warn("[realtime] failed to rejoin room after reconnect", err);
   }
