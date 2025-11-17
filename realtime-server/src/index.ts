@@ -14,6 +14,10 @@ type PresenceUser = {
   isHost?: boolean;
   ready?: boolean;     // 准备状态
   isBot?: boolean;
+  isDisconnected?: boolean;
+  disconnectedAt?: number;
+  leftAt?: number;
+  kickedAt?: number;
 };
 
 type SnapshotWithPlayers = Snapshot & {
@@ -31,8 +35,10 @@ type Room = {
 
 const rooms = new Map<string, Room>();
 const cleanupTimers = new Map<string, NodeJS.Timeout>();
+const disconnectCleanupTimers = new Map<string, NodeJS.Timeout>();
 const MAX_SEATS = 9;
 const ROOM_EMPTY_GRACE_MS = Number(process.env.ROOM_EMPTY_GRACE_MS ?? 5 * 60 * 1000);
+const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS ?? 2 * 60 * 1000);
 
 function cancelRoomCleanup(code: string) {
   const timer = cleanupTimers.get(code);
@@ -60,12 +66,81 @@ function scheduleRoomCleanup(room: Room) {
   cleanupTimers.set(room.code, timer);
 }
 
+function cancelDisconnectCleanup(code: string) {
+  const timer = disconnectCleanupTimers.get(code);
+  if (timer) {
+    clearTimeout(timer);
+    disconnectCleanupTimers.delete(code);
+  }
+}
+
+function scheduleDisconnectCleanup(room: Room) {
+  cancelDisconnectCleanup(room.code);
+  const timer = setTimeout(() => pruneDisconnectedUsers(room.code), DISCONNECT_GRACE_MS + 1000);
+  disconnectCleanupTimers.set(room.code, timer);
+}
+
+function getActiveUserCount(room: Room) {
+  let count = 0;
+  for (const user of room.users.values()) {
+    if (!user.isDisconnected) count++;
+  }
+  return count;
+}
+
 function handleRoomPopulationChange(room: Room) {
-  if (room.users.size === 0) {
-    room.lastKeepaliveAt = room.lastKeepaliveAt ?? Date.now();
+  if (getActiveUserCount(room) === 0) {
+    room.lastKeepaliveAt = Date.now();
     scheduleRoomCleanup(room);
   } else {
     cancelRoomCleanup(room.code);
+  }
+}
+
+function broadcastPresence(room: Room) {
+  io.to(room.code).emit("presence:state", { roomCode: room.code, users: listUsers(room) });
+}
+
+function markUserDisconnected(room: Room, sessionId: string) {
+  const user = room.users.get(sessionId);
+  if (!user) return false;
+  if (user.isBot) {
+    room.users.delete(sessionId);
+    return true;
+  }
+  if (user.isDisconnected) return false;
+  room.users.set(sessionId, { ...user, isDisconnected: true, disconnectedAt: Date.now() });
+  scheduleDisconnectCleanup(room);
+  return true;
+}
+
+function pruneDisconnectedUsers(roomCode: string) {
+  const room = rooms.get(roomCode);
+  if (!room) return;
+  const now = Date.now();
+  let hasPending = false;
+  for (const [sid, user] of room.users.entries()) {
+    if (user.isDisconnected) {
+      const disconnectedAt = user.disconnectedAt ?? now;
+      if (now - disconnectedAt >= DISCONNECT_GRACE_MS) {
+        room.users.delete(sid);
+      } else {
+        hasPending = true;
+      }
+    }
+  }
+  if (hasPending) {
+    scheduleDisconnectCleanup(room);
+  } else {
+    cancelDisconnectCleanup(room.code);
+  }
+  ensureHost(room);
+  handleRoomPopulationChange(room);
+  broadcastPresence(room);
+  if (room.users.size === 0) {
+    cancelRoomCleanup(room.code);
+    cancelDisconnectCleanup(room.code);
+    rooms.delete(room.code);
   }
 }
 
@@ -126,6 +201,8 @@ function ensureHost(room: Room) {
 }
 
 function currentStillAlive(room: Room, sessionId: string) {
+  const user = room.users.get(sessionId);
+  if (user?.isDisconnected) return false;
   const snapshotPlayers = room.snapshot?.players;
   if (!snapshotPlayers) return true;
   const p = snapshotPlayers.find(player => player.sessionId === sessionId);
@@ -192,7 +269,7 @@ io.on("connection", (socket: Socket) => {
         socket.data.roomCode = code;
         socket.data.sessionId = sessionId;
 
-        io.to(code).emit("presence:state", { roomCode: code, users: listUsers(room) });
+        broadcastPresence(room);
         cb({ ok: true, code, users: listUsers(room), me });
       } catch {
         cb({ ok: false, msg: "room:create 失败" });
@@ -218,7 +295,14 @@ io.on("connection", (socket: Socket) => {
         if (!seat) return cb({ ok: false, msg: "房间已满" });
 
         const me: PresenceUser = existed
-          ? { ...existed, name, seat, isHost: sessionId === room.hostSessionId }
+          ? {
+              ...existed,
+              name,
+              seat,
+              isHost: sessionId === room.hostSessionId,
+              isDisconnected: false,
+              disconnectedAt: undefined,
+            }
           : {
               id: `U_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
               name,
@@ -234,7 +318,8 @@ io.on("connection", (socket: Socket) => {
         socket.data.roomCode = code;
         socket.data.sessionId = sessionId;
 
-        io.to(code).emit("presence:state", { roomCode: code, users: listUsers(room) });
+        handleRoomPopulationChange(room);
+        broadcastPresence(room);
         cb({ ok: true, users: listUsers(room), me });
       } catch {
         cb({ ok: false, msg: "room:join 失败" });
@@ -260,7 +345,13 @@ io.on("connection", (socket: Socket) => {
         if (!seat) return cb({ ok: false, msg: "房间已满" });
 
         const base: PresenceUser = existed
-          ? { ...existed, name: name?.trim() || existed.name, seat }
+          ? {
+              ...existed,
+              name: name?.trim() || existed.name,
+              seat,
+              isDisconnected: false,
+              disconnectedAt: undefined,
+            }
           : {
               id: `U_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
               name: name?.trim() || `玩家${seat}`,
@@ -280,7 +371,8 @@ io.on("connection", (socket: Socket) => {
         socket.data.roomCode = code;
         socket.data.sessionId = sessionId;
 
-        io.to(code).emit("presence:state", { roomCode: code, users: listUsers(room) });
+        handleRoomPopulationChange(room);
+        broadcastPresence(room);
         cb({ ok: true, users: listUsers(room), me });
       } catch (err) {
         console.error("room:resume 失败", err);
@@ -315,10 +407,39 @@ io.on("connection", (socket: Socket) => {
         if (!u) return cb({ ok: false, msg: "玩家不存在" });
 
         room.users.set(sessionId, { ...u, ready: !!ready });
-        io.to(code).emit("presence:state", { roomCode: code, users: listUsers(room) });
+        broadcastPresence(room);
         cb({ ok: true });
       } catch {
         cb({ ok: false, msg: "room:ready 失败" });
+      }
+    }
+  );
+
+  /** 房主主动交接房主身份 */
+  socket.on(
+    "room:transfer_host",
+    (
+      payload: { code: string; sessionId: string; targetSessionId: string },
+      cb: (resp: { ok: boolean; msg?: string }) => void
+    ) => {
+      try {
+        const { code, sessionId, targetSessionId } = payload || {};
+        const room = code ? rooms.get(code) : undefined;
+        if (!room) return cb({ ok: false, msg: "房间不存在" });
+        if (!sessionId || sessionId !== room.hostSessionId) {
+          return cb({ ok: false, msg: "只有房主可以交接" });
+        }
+        const target = targetSessionId ? room.users.get(targetSessionId) : undefined;
+        if (!target) return cb({ ok: false, msg: "目标玩家不存在" });
+        if (target.isBot) return cb({ ok: false, msg: "无法交接给机器人" });
+
+        room.hostSessionId = targetSessionId;
+        refreshHostFlags(room);
+        broadcastPresence(room);
+        cb({ ok: true });
+      } catch (err) {
+        console.error("room:transfer_host 失败", err);
+        cb({ ok: false, msg: "room:transfer_host 失败" });
       }
     }
   );
@@ -346,7 +467,8 @@ io.on("connection", (socket: Socket) => {
 
         room.users.delete(targetSessionId);
         ensureHost(room);
-        io.to(code).emit("presence:state", { roomCode: code, users: listUsers(room) });
+        handleRoomPopulationChange(room);
+        broadcastPresence(room);
 
         for (const sid of io.sockets.adapter.rooms.get(code) || []) {
           const s = io.sockets.sockets.get(sid);
@@ -397,7 +519,7 @@ io.on("connection", (socket: Socket) => {
         };
         room.users.set(botSessionId, bot);
         ensureHost(room);
-        io.to(code).emit("presence:state", { roomCode: code, users: listUsers(room) });
+        broadcastPresence(room);
         cb({ ok: true });
       } catch (err) {
         console.error("room:add_bot 失败", err);
@@ -426,10 +548,11 @@ io.on("connection", (socket: Socket) => {
         ensureHost(room);
 
         socket.leave(code);
+        handleRoomPopulationChange(room);
         if (room.users.size === 0) {
           rooms.delete(code);
         } else {
-          io.to(code).emit("presence:state", { roomCode: code, users: listUsers(room) });
+          broadcastPresence(room);
         }
         cb({ ok: true });
       } catch {
@@ -603,11 +726,11 @@ io.on("connection", (socket: Socket) => {
     const room = rooms.get(code);
     if (!room) return;
 
-    room.users.delete(sessionId);
-
+    const removed = markUserDisconnected(room, sessionId);
+    if (!removed && !room.users.has(sessionId)) return;
     ensureHost(room);
     handleRoomPopulationChange(room);
-    io.to(code).emit("presence:state", { roomCode: code, users: listUsers(room) });
+    broadcastPresence(room);
   });
 
   socket.on(

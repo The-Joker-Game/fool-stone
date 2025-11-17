@@ -11,6 +11,10 @@ export type PresenceUser = {
   isHost?: boolean;
   ready?: boolean; // ← 新增：准备状态
   isBot?: boolean;
+  isDisconnected?: boolean;
+  disconnectedAt?: number;
+  leftAt?: number;
+  kickedAt?: number;
 };
 export type PresenceState = { roomCode: string | null; users: PresenceUser[] };
 export type StateSnapshotMsg = { snapshot: GameSnapshot; from: string; at?: number; target?: string };
@@ -629,6 +633,14 @@ function kickPlayer(code: string, targetSessionId: string) {
   });
 }
 
+function transferHost(code: string, targetSessionId: string) {
+  return emitAck("room:transfer_host", {
+    code,
+    sessionId: getSessionId(),
+    targetSessionId,
+  });
+}
+
 function addBotToRoom(code: string, name?: string) {
   return emitAck("room:add_bot", {
     code,
@@ -693,6 +705,7 @@ export const rt = {
   requestState,
   sendAction,
   kickPlayer,
+  transferHost,
 
   // 房态
   getPresence,

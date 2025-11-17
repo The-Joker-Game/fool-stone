@@ -171,6 +171,13 @@ export default function FlowerRoom() {
 
   /** 列表派生 */
   const users = presence?.users ?? [];
+  const presenceMap = useMemo(() => {
+    const map = new Map<string, PresenceState["users"][number]>();
+    for (const u of users) {
+      if (u?.sessionId) map.set(u.sessionId, u);
+    }
+    return map;
+  }, [users]);
   const me = useMemo(() => users.find(u => u.sessionId === getSessionId()) ?? null, [users]);
   const flowerPlayers: FlowerPlayerState[] = flowerSnapshot?.players ?? [];
   const darkVoteMap = (flowerSnapshot?.day?.tally ?? {}) as Record<string, number>;
@@ -330,6 +337,21 @@ export default function FlowerRoom() {
       alert("添加机器人失败：服务器未响应");
     }
   }, [canAddBot, roomCode, pushLog]);
+
+  const handoverHost = useCallback(async (targetSessionId: string | null, displayName?: string | null) => {
+    if (!roomCode || !isHost || !targetSessionId) return;
+    const label = displayName?.trim() || "该玩家";
+    if (!confirm(`确定将房主交接给 ${label} 吗？`)) return;
+    try {
+      const resp = await rt.transferHost(roomCode, targetSessionId);
+      if (!(resp as any)?.ok) {
+        alert(`交接失败：${(resp as any)?.msg || "服务器未响应"}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("交接失败：服务器未响应");
+    }
+  }, [roomCode, isHost]);
 
   useEffect(() => {
     if (!myRole) return;
@@ -551,8 +573,10 @@ export default function FlowerRoom() {
           {flowerSnapshot
             ? flowerPlayers.map((player: FlowerPlayerState) => {
                 const tags: string[] = [];
+                const presenceInfo = player.sessionId ? presenceMap.get(player.sessionId) : undefined;
                 if (player.isHost) tags.push("房主");
                 if (player.sessionId === getSessionId()) tags.push("我");
+                if (presenceInfo?.isDisconnected) tags.push("暂离");
                 if (player.isReady && flowerPhase === "lobby") tags.push("已准备");
                 if (player.isBot) tags.push("BOT");
 
@@ -572,13 +596,21 @@ export default function FlowerRoom() {
                     </div>
                     <div className="flex items-center gap-2">
                       {tags.length > 0 && <div className="text-xs text-gray-500">{tags.join(" · ")}</div>}
-                      {isHost && player.sessionId && player.sessionId !== getSessionId() && (
-                        <button
-                          className="text-xs text-red-600 border border-red-200 rounded px-2 py-1 hover:bg-red-50"
-                          onClick={() => kickPlayer(player.sessionId)}
-                        >
-                          踢出
-                        </button>
+                      {isHost && player.sessionId && player.sessionId !== getSessionId() && !player.isBot && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            className="text-xs border border-blue-200 text-blue-600 rounded px-2 py-1 hover:bg-blue-50"
+                            onClick={() => handoverHost(player.sessionId, player.name || `座位${player.seat}`)}
+                          >
+                            交接房主
+                          </button>
+                          <button
+                            className="text-xs text-red-600 border border-red-200 rounded px-2 py-1 hover:bg-red-50"
+                            onClick={() => kickPlayer(player.sessionId)}
+                          >
+                            踢出
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -588,6 +620,7 @@ export default function FlowerRoom() {
                 const tags: string[] = [];
                 if (u.isHost) tags.push("房主");
                 if (u.sessionId === getSessionId()) tags.push("我");
+                if (u.isDisconnected) tags.push("暂离");
                 if (u.ready) tags.push("已准备");
                 if (u.isBot) tags.push("BOT");
                 return (
@@ -598,13 +631,21 @@ export default function FlowerRoom() {
                     </div>
                     <div className="flex items-center gap-2">
                       {tags.length > 0 && <div className="text-xs text-gray-500">{tags.join(" · ")}</div>}
-                      {isHost && u.sessionId !== getSessionId() && (
-                        <button
-                          className="text-xs text-red-600 border border-red-200 rounded px-2 py-1 hover:bg-red-50"
-                          onClick={() => kickPlayer(u.sessionId)}
-                        >
-                          踢出
-                        </button>
+                      {isHost && u.sessionId !== getSessionId() && !u.isBot && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            className="text-xs border border-blue-200 text-blue-600 rounded px-2 py-1 hover:bg-blue-50"
+                            onClick={() => handoverHost(u.sessionId, u.name || `座位${u.seat}`)}
+                          >
+                            交接房主
+                          </button>
+                          <button
+                            className="text-xs text-red-600 border border-red-200 rounded px-2 py-1 hover:bg-red-50"
+                            onClick={() => kickPlayer(u.sessionId)}
+                          >
+                            踢出
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
