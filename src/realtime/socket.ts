@@ -19,8 +19,25 @@ export type StateRequestMsg = { room: string; from: string };
 type CreateRoomAck = { ok: boolean; code?: string; users?: PresenceUser[]; me?: PresenceUser; msg?: string };
 type JoinRoomAck   = { ok: boolean; users?: PresenceUser[]; me?: PresenceUser; msg?: string };
 type IntentAck = { ok: boolean; msg?: string };
+type PresenceListAck = { ok: boolean; users?: PresenceUser[]; msg?: string };
 
 type RTState = { roomCode: string | null; isHost: boolean };
+
+const LAST_CONNECTED_AT_KEY = "rt:lastConnectedAt";
+let lastConnectedAt = 0;
+try {
+  if (typeof window !== "undefined") {
+    const stored = localStorage.getItem(LAST_CONNECTED_AT_KEY);
+    if (stored) {
+      const parsed = Number(stored);
+      if (!Number.isNaN(parsed)) {
+        lastConnectedAt = parsed;
+      }
+    }
+  }
+} catch {
+  lastConnectedAt = 0;
+}
 
 /** ===== Worker 消息类型 ===== */
 type WorkerInitMessage = {
@@ -56,6 +73,9 @@ type WorkerSocketStub = {
 /** ===== 内部状态 ===== */
 const state: RTState = { roomCode: null, isHost: false };
 let presenceState: PresenceState | null = null;
+let needsFullRefresh = false;
+let refreshPromise: Promise<void> | null = null;
+let rejoinPromise: Promise<void> | null = null;
 
 const intentSubs: Array<(msg: IntentMsg) => void> = [];
 const presenceSubs: Array<(state: PresenceState | null) => void> = [];
@@ -184,20 +204,38 @@ function handleWorkerMessage(data: WorkerInboundMessage | undefined) {
 
 function handleWorkerEvent(eventName: string, args: unknown[]) {
   switch (eventName) {
-    case "connect":
+    case "connect": {
       console.log("[realtime] connected via worker");
+      const now = Date.now();
+      const previous = lastConnectedAt;
+      const gapExceeded = previous > 0 && now - previous >= KEEPALIVE_INTERVAL_MS;
+      persistLastConnected(now);
+      const shouldRefresh = needsFullRefresh || gapExceeded;
+      needsFullRefresh = false;
       notifyConn(true);
+      if (shouldRefresh) {
+        const rejoinTask = scheduleRejoin();
+        if (rejoinTask) {
+          rejoinTask.finally(() => requestFullRefresh("reconnect"));
+        } else {
+          requestFullRefresh("reconnect");
+        }
+      }
       return;
+    }
     case "disconnect":
       console.log("[realtime] disconnected via worker", args[0]);
       notifyConn(false);
+      markConnectionIssue();
       return;
     case "connect_error":
       console.error("[realtime] connect_error via worker", args[0]);
       notifyConn(false);
+      markConnectionIssue();
       return;
     case "reconnect_attempt":
       notifyConn(false);
+      markConnectionIssue();
       return;
     case "intent": {
       const msg = args[0] as { action: string; data?: unknown; from: string; room: string };
@@ -220,24 +258,7 @@ function handleWorkerEvent(eventName: string, args: unknown[]) {
     case "presence:state": {
       const p = args[0] as { roomCode: string; users: PresenceUser[] };
       if (!p) return;
-      const me = p.users.find(u => u.sessionId === getSessionId());
-      state.roomCode = p.roomCode ?? null;
-      state.isHost = !!me?.isHost;
-
-      if (me?.seat) saveMySeat(me.seat);
-
-      localStorage.setItem("lastRoomCode", state.roomCode ?? "");
-      localStorage.setItem("isHost", state.isHost ? "1" : "0");
-
-      presenceState = {
-        roomCode: p.roomCode ?? null,
-        users: Array.isArray(p.users) ? [...p.users] : [],
-      };
-      syncWorkerRoom();
-      const snapshot = presenceState
-        ? { roomCode: presenceState.roomCode, users: [...presenceState.users] }
-        : null;
-      for (const fn of presenceSubs) fn(snapshot);
+      applyPresenceSnapshot({ roomCode: p.roomCode ?? null, users: p.users });
       return;
     }
     case "action": {
@@ -248,11 +269,7 @@ function handleWorkerEvent(eventName: string, args: unknown[]) {
     }
     case "room:kicked": {
       const msg = args[0] as { code: string };
-      state.roomCode = null;
-      state.isHost = false;
-      presenceState = null;
-      localStorage.removeItem("lastRoomCode");
-      syncWorkerRoom();
+      resetPresenceState();
       for (const fn of kickSubs) fn(msg?.code ?? null);
       return;
     }
@@ -266,6 +283,139 @@ function syncWorkerRoom() {
   if (room === lastWorkerRoomCode) return;
   lastWorkerRoomCode = room;
   postWorkerMessage({ type: "ROOM", roomCode: room });
+}
+
+function applyPresenceSnapshot(payload: { roomCode?: string | null; users?: PresenceUser[] } | null) {
+  if (!payload) {
+    resetPresenceState();
+    return;
+  }
+  const roomCode = payload.roomCode ?? null;
+  const users = Array.isArray(payload.users) ? [...payload.users] : [];
+  const me = users.find(u => u.sessionId === getSessionId());
+  state.roomCode = roomCode;
+  state.isHost = !!me?.isHost;
+
+  if (me?.seat) saveMySeat(me.seat);
+
+  if (typeof localStorage !== "undefined") {
+    try {
+      localStorage.setItem("lastRoomCode", roomCode ?? "");
+      localStorage.setItem("isHost", state.isHost ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }
+
+  presenceState = {
+    roomCode,
+    users,
+  };
+  syncWorkerRoom();
+  const snapshot = presenceState ? { roomCode, users: [...users] } : null;
+  for (const fn of presenceSubs) fn(snapshot);
+}
+
+function resetPresenceState() {
+  state.roomCode = null;
+  state.isHost = false;
+  presenceState = null;
+  if (typeof localStorage !== "undefined") {
+    try {
+      localStorage.removeItem("lastRoomCode");
+      localStorage.setItem("isHost", "0");
+    } catch {
+      // ignore
+    }
+  }
+  syncWorkerRoom();
+  for (const fn of presenceSubs) fn(null);
+}
+
+function persistLastConnected(at: number) {
+  lastConnectedAt = at;
+  if (typeof localStorage !== "undefined") {
+    try {
+      localStorage.setItem(LAST_CONNECTED_AT_KEY, String(at));
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function markConnectionIssue() {
+  needsFullRefresh = true;
+}
+
+function scheduleRejoin(): Promise<void> | null {
+  if (!state.roomCode) return null;
+  if (rejoinPromise) return rejoinPromise;
+  rejoinPromise = rejoinRoomAfterResume().finally(() => {
+    rejoinPromise = null;
+  });
+  return rejoinPromise;
+}
+
+async function rejoinRoomAfterResume() {
+  const roomCode = state.roomCode;
+  if (!roomCode) return;
+  const name = getStoredDisplayName();
+  try {
+    await emitAck<
+      { code: string; name: string; sessionId: string; preferredSeat?: number | null },
+      JoinRoomAck
+    >("room:join", {
+      code: roomCode,
+      name,
+      sessionId: getSessionId(),
+      preferredSeat: loadMySeat(),
+    }, 5000);
+  } catch (err) {
+    console.warn("[realtime] failed to rejoin room after reconnect", err);
+  }
+}
+
+function requestFullRefresh(trigger: string) {
+  if (!state.roomCode) return;
+  if (refreshPromise) return;
+  refreshPromise = (async () => {
+    await refreshPresenceFromServer();
+    await requestSnapshotFromHost();
+  })()
+    .catch((err) => {
+      console.error(`[realtime] full refresh failed (${trigger})`, err);
+    })
+    .finally(() => {
+      refreshPromise = null;
+    });
+}
+
+async function refreshPresenceFromServer() {
+  if (!state.roomCode) return;
+  try {
+    const resp = await emitAck<{ code: string }, PresenceListAck>("presence:list", { code: state.roomCode });
+    if (resp?.ok && Array.isArray(resp.users)) {
+      applyPresenceSnapshot({ roomCode: state.roomCode, users: resp.users });
+    }
+  } catch (err) {
+    console.warn("[realtime] presence:list failed during refresh", err);
+  }
+}
+
+async function requestSnapshotFromHost() {
+  if (!state.roomCode) return;
+  try {
+    await requestState();
+  } catch (err) {
+    console.warn("[realtime] state:request failed during refresh", err);
+  }
+}
+
+function getStoredDisplayName() {
+  if (typeof window === "undefined") return "player";
+  const raw = localStorage.getItem("name");
+  if (raw && raw.trim().length > 0) return raw.trim();
+  return "player";
 }
 
 export function onConnection(cb: (ok: boolean) => void) {
