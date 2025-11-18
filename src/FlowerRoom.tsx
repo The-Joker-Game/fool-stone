@@ -74,45 +74,79 @@ export default function FlowerRoom() {
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logs.length]);
 
   // —— 屏幕常亮功能 —— //
-  useEffect(() => {
-    let wakeLock: WakeLockSentinel | null = null;
+  const [isWakeLockActive, setIsWakeLockActive] = useState(false);
+  const [wakeLockRequested, setWakeLockRequested] = useState(false);
+  let wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
-    const requestWakeLock = async () => {
-      try {
-        // 检查浏览器是否支持 Screen Wake Lock API
-        if ('wakeLock' in navigator) {
-          wakeLock = await navigator.wakeLock.request('screen');
-          console.log('Screen Wake Lock is active');
-          
-          // 监听页面可见性变化，当页面变为可见时重新请求唤醒锁
-          const handleVisibilityChange = () => {
-            if (wakeLock !== null && document.visibilityState === 'visible') {
-              requestWakeLock();
-            }
-          };
-          
-          document.addEventListener('visibilitychange', handleVisibilityChange);
-          
-          // 当唤醒锁释放时记录日志
-          wakeLock.addEventListener('release', () => {
-            console.log('Screen Wake Lock was released');
-          });
-        } else {
-          console.warn('Screen Wake Lock API is not supported in this browser');
-        }
-      } catch (err) {
-        console.error('Failed to acquire screen wake lock:', err);
+  // 检测是否为 iOS 设备
+  const isIOS = useMemo(() => {
+    if (typeof window === 'undefined' || !window.navigator) return false;
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+  }, []);
+
+  const requestWakeLock = useCallback(async () => {
+    try {
+      // 检查浏览器是否支持 Screen Wake Lock API
+      if ('wakeLock' in navigator) {
+        const wakeLock = await navigator.wakeLock.request('screen');
+        wakeLockRef.current = wakeLock;
+        setIsWakeLockActive(true);
+        console.log('Screen Wake Lock is active');
+        
+        // 监听页面可见性变化，当页面变为可见时重新请求唤醒锁
+        const handleVisibilityChange = () => {
+          if (wakeLockRef.current !== null && document.visibilityState === 'visible') {
+            requestWakeLock();
+          }
+        };
+        
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        
+        // 当唤醒锁释放时记录日志
+        wakeLock.addEventListener('release', () => {
+          console.log('Screen Wake Lock was released');
+          setIsWakeLockActive(false);
+          wakeLockRef.current = null;
+        });
+      } else {
+        console.warn('Screen Wake Lock API is not supported in this browser');
       }
-    };
+    } catch (err) {
+      console.error('Failed to acquire screen wake lock:', err);
+      setIsWakeLockActive(false);
+    }
+  }, []);
 
-    // 请求屏幕常亮
+  // 当用户请求屏幕常亮时调用
+  const handleWakeLockRequest = useCallback(() => {
+    setWakeLockRequested(true);
     requestWakeLock();
+  }, [requestWakeLock]);
 
-    // 组件卸载时释放唤醒锁
+  // 释放屏幕常亮锁
+  const releaseWakeLock = useCallback(() => {
+    if (wakeLockRef.current !== null) {
+      wakeLockRef.current.release();
+      wakeLockRef.current = null;
+      setIsWakeLockActive(false);
+    }
+  }, []);
+
+  // 针对非 iOS 设备，可以在组件加载时自动请求唤醒锁
+  useEffect(() => {
+    if (!isIOS && !wakeLockRequested) {
+      setWakeLockRequested(true);
+      requestWakeLock();
+    }
+  }, [isIOS, wakeLockRequested, requestWakeLock]);
+
+  // 组件卸载时释放唤醒锁
+  useEffect(() => {
     return () => {
-      if (wakeLock !== null) {
-        wakeLock.release();
-        wakeLock = null;
+      if (wakeLockRef.current !== null) {
+        wakeLockRef.current.release();
+        wakeLockRef.current = null;
+        setIsWakeLockActive(false);
       }
     };
   }, []);
@@ -631,6 +665,19 @@ export default function FlowerRoom() {
             离开房间
           </button>
         )}
+        {/* 屏幕常亮开关 */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm">屏幕常亮</span>
+          <button
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${isWakeLockActive ? 'bg-green-600' : 'bg-gray-300'}`}
+            onClick={isWakeLockActive ? releaseWakeLock : handleWakeLockRequest}
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isWakeLockActive ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+          <span className="text-sm text-gray-600">
+            {isWakeLockActive ? '已开启' : isIOS ? '点击开启' : '已关闭'}
+          </span>
+        </div>
       </div>
 
       {/* 房间信息 */}
