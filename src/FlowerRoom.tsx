@@ -130,6 +130,34 @@ export default function FlowerRoom() {
     return () => off();
   }, [isHost, hostSubmitNightAction, hostSubmitDayVote, broadcastSnapshot]);
 
+  // 添加对 state:request 事件的监听
+  useEffect(() => {
+    if (!isHost) return;
+    const off = rt.subscribeStateRequest(async (msg) => {
+      console.log("[state:request] received from", msg.from);
+      // 广播当前快照给请求者
+      if (flowerSnapshot) {
+        try {
+          // 将 FlowerSnapshot 转换为 GameSnapshot
+          const gameSnapshot: any = {
+            game: null,
+            endThreshold: 0,
+            isOver: false,
+            finalRanks: null,
+            flaskMap: null,
+            nextFlaskMap: null,
+            foolPrankUsed: false,
+            roundStartScores: null,
+            ...flowerSnapshot
+          };
+          await rt.sendState(gameSnapshot, msg.from);
+        } catch (err) {
+          console.error("Failed to send state to requester", err);
+        }
+      }
+    });
+    return () => off();
+  }, [isHost, flowerSnapshot]);
 
   useEffect(() => {
     if (roomCode || autoJoinAttempted.current || !connected) return;
