@@ -1,7 +1,7 @@
 // src/FlowerRoom.tsx
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { rt, getSessionId, type PresenceState } from "./realtime/socket";
-import type { FlowerPlayerState, FlowerRole } from "./flower/types";
+import type { FlowerPlayerState, FlowerRole, FlowerPhase } from "./flower/types";
 import { useFlowerStore } from "./flower/store";
 import type { FlowerStore } from "./flower/store";
 import type { SubmitNightActionPayload, SubmitDayVotePayload } from "./flower/engine";
@@ -16,6 +16,14 @@ function randName() {
 const isUserReady = (u: unknown): boolean => !!(u as any)?.ready;
 const GOOD_ROLE_SET = new Set<FlowerRole>(["花蝴蝶", "狙击手", "医生", "警察", "善民"]);
 const BAD_ROLE_SET = new Set<FlowerRole>(["杀手", "魔法师", "森林老人", "恶民"]);
+const PHASE_TEXT_MAP: Record<FlowerPhase, string> = {
+  lobby: "准备阶段",
+  night_actions: "夜晚行动",
+  night_result: "夜晚结算",
+  day_discussion: "白天讨论",
+  day_vote: "白天投票",
+  game_over: "游戏结束",
+};
 
 function randomFrom<T>(list: T[]): T | null {
   if (!list.length) return null;
@@ -53,6 +61,7 @@ export default function FlowerRoom() {
   const [name, setName] = useState<string>(randName());
   const autoJoinAttempted = useRef(false);
   const wasHostRef = useRef<boolean>(false);
+  const autoHostTransferAttempted = useRef(false);
   const [nightActionSelections, setNightActionSelections] = useState<NightSelectionMap>({});
   const [dayVoteSelection, setDayVoteSelection] = useState<number | "">("");
 
@@ -289,8 +298,33 @@ export default function FlowerRoom() {
   const flowerPlayers: FlowerPlayerState[] = flowerSnapshot?.players ?? [];
   const darkVoteMap = (flowerSnapshot?.day?.tally ?? {}) as Record<string, number>;
   const flowerPhase = flowerSnapshot?.phase ?? "lobby";
+  const flowerPhaseText = PHASE_TEXT_MAP[flowerPhase] ?? flowerPhase;
   const flowerDayCount = flowerSnapshot?.dayCount ?? 0;
   const gameResult = flowerSnapshot?.gameResult ?? null;
+  const latestDaySummary = useMemo(() => {
+    const logs = flowerSnapshot?.logs;
+    if (!logs || logs.length === 0) {
+      return { executionText: null as string | null, votesText: null as string | null, hasSummary: false };
+    }
+    let executionText: string | null = null;
+    let votesText: string | null = null;
+    for (let i = logs.length - 1; i >= 0; i -= 1) {
+      const text = logs[i].text || "";
+      if (!executionText) {
+        if (text.startsWith("白天票决：")) {
+          executionText = text.replace(/^白天票决：/, "");
+        } else if (text.startsWith("白天投票平票") || text.includes("平票，无人死亡")) {
+          executionText = "无人被处决";
+        }
+      }
+      if (!votesText && text.startsWith("白天票型：")) {
+        votesText = text.replace(/^白天票型：/, "");
+      }
+      if (executionText && votesText) break;
+    }
+    const hasSummary = !!executionText || !!votesText;
+    return { executionText, votesText, hasSummary };
+  }, [flowerSnapshot?.logs, flowerSnapshot?.updatedAt]);
   const everyoneReady = useMemo(() => {
     if (flowerPhase !== "lobby") return true;
     const playerReadyCheck = (p: FlowerPlayerState) => (p.isBot ? true : !!p.isReady);
@@ -314,6 +348,15 @@ export default function FlowerRoom() {
   const myRole = myFlowerPlayer?.role ?? null;
   const myAlive = !!myFlowerPlayer?.isAlive;
   const myMuted = !!myFlowerPlayer?.isMutedToday;
+  const myDayVoteTarget = myFlowerPlayer?.voteTargetSeat ?? null;
+  const showDaySummary = flowerPhase === "night_actions" && latestDaySummary.hasSummary;
+  const showNightSummary = flowerPhase === "day_vote" && !!flowerSnapshot?.night?.result;
+
+  useEffect(() => {
+    if (!isHost || !roomCode) {
+      autoHostTransferAttempted.current = false;
+    }
+  }, [isHost, roomCode]);
 
   // game over UI handled before return (see bottom)
 
@@ -445,20 +488,67 @@ export default function FlowerRoom() {
     }
   }, [canAddBot, roomCode, pushLog]);
 
-  const handoverHost = useCallback(async (targetSessionId: string | null, displayName?: string | null) => {
-    if (!roomCode || !isHost || !targetSessionId) return;
-    const label = displayName?.trim() || "该玩家";
-    if (!confirm(`确定将房主交接给 ${label} 吗？`)) return;
-    try {
-      const resp = await rt.transferHost(roomCode, targetSessionId);
-      if (!(resp as any)?.ok) {
-        alert(`交接失败：${(resp as any)?.msg || "服务器未响应"}`);
+  const transferHostInternal = useCallback(
+    async (targetSessionId: string | null, options?: { confirm?: boolean; label?: string }) => {
+      if (!roomCode || !isHost || !targetSessionId) return false;
+      const confirmNeeded = options?.confirm ?? true;
+      const label = options?.label?.trim() || "该玩家";
+      if (confirmNeeded && !confirm(`确定将房主交接给 ${label} 吗？`)) return false;
+      try {
+        const resp = await rt.transferHost(roomCode, targetSessionId);
+        if (!(resp as any)?.ok) {
+          const msg = (resp as any)?.msg || "服务器未响应";
+          if (confirmNeeded) {
+            alert(`交接失败：${msg}`);
+          } else {
+            console.warn("自动交接房主失败：", msg);
+          }
+          return false;
+        }
+        return true;
+      } catch (err) {
+        console.error("transfer host failed", err);
+        if (confirmNeeded) {
+          alert("交接失败：服务器未响应");
+        }
+        return false;
       }
-    } catch (err) {
-      console.error(err);
-      alert("交接失败：服务器未响应");
+    },
+    [roomCode, isHost]
+  );
+
+  const handoverHost = useCallback(
+    async (targetSessionId: string | null, displayName?: string | null) => {
+      await transferHostInternal(targetSessionId, { confirm: true, label: displayName || undefined });
+    },
+    [transferHostInternal]
+  );
+
+  useEffect(() => {
+    if (!isHost || !roomCode) return;
+    const hostPlayer = flowerPlayers.find(p => p.sessionId === getSessionId()) ?? null;
+    if (!hostPlayer) {
+      autoHostTransferAttempted.current = false;
+      return;
     }
-  }, [roomCode, isHost]);
+    if (hostPlayer.isAlive) {
+      autoHostTransferAttempted.current = false;
+      return;
+    }
+    if (autoHostTransferAttempted.current) return;
+    const candidates = flowerPlayers
+      .filter(p => p.isAlive && p.sessionId && p.sessionId !== hostPlayer.sessionId)
+      .sort((a, b) => {
+        if (!!a.isBot !== !!b.isBot) return a.isBot ? 1 : -1;
+        return a.seat - b.seat;
+      });
+    if (!candidates.length) return;
+    autoHostTransferAttempted.current = true;
+    transferHostInternal(candidates[0].sessionId!, {
+      confirm: false,
+      label: candidates[0].name || `座位${candidates[0].seat}`,
+    });
+  }, [isHost, roomCode, flowerPlayers, transferHostInternal]);
 
   useEffect(() => {
     if (!myRole) return;
@@ -530,6 +620,7 @@ export default function FlowerRoom() {
 
   const handleResolveDayVote = useCallback(async () => {
     if (!isHost) { alert("只有房主可以结算投票"); return; }
+    if (!confirm("确认要结算当前白天投票吗？（请确保所有玩家都已完成投票）")) return;
     const res = hostResolveDayVote();
     if (!res.ok) {
       alert(res.error || "结算失败");
@@ -540,6 +631,7 @@ export default function FlowerRoom() {
 
   const handleResolveNight = useCallback(async () => {
     if (!isHost) { alert("只有房主可以结算夜晚"); return; }
+    if (!confirm("确认要结算当前夜晚吗？（请确保所有夜间技能都已提交）")) return;
     const res = hostResolveNight();
     if (!res.ok) {
       alert(res.error || "结算失败");
@@ -785,49 +877,63 @@ export default function FlowerRoom() {
       <div className="p-3 border rounded mb-4">
         <div className="font-medium mb-2">花蝴蝶游戏状态</div>
         {flowerSnapshot ? (
-          <div className="text-sm mb-3">
-            阶段：<b>{flowerPhase}</b>； 天数：<b>{flowerDayCount}</b>
-          </div>
+          <>
+            <div className="text-sm mb-3">
+              阶段：<b>{flowerPhaseText}</b>； 天数：<b>{flowerDayCount}</b>
+            </div>
+            {flowerPhase === "night_actions" && (
+              <div className="text-xs text-gray-500 mb-2">
+                正在执行夜晚行动，下面保留上一天的投票结算
+              </div>
+            )}
+            {flowerPhase === "day_vote" && (
+              <div className="text-xs text-gray-500 mb-2">
+                正在进行白天投票，下面保留上一夜的结算结果
+              </div>
+            )}
+          </>
         ) : (
           <div className="text-sm text-red-600 mb-3">还没有收到 <b>flower:state</b>（请创建/加入房间后再试）</div>
         )}
 
-        <div className="flex flex-wrap gap-2 items-center">
-          <button
-            className={`px-4 py-2 rounded border ${((me as any)?.ready ? "bg-green-600 text-white" : "")}`}
-            onClick={toggleReady}
-            disabled={!roomCode || flowerPhase !== "lobby"}
-          >
-            {(me as any)?.ready ? "取消准备" : "准备"}
-          </button>
+        {flowerPhase === "lobby" && (
+          <div className="flex flex-wrap gap-2 items-center">
+            <button
+              className={`px-4 py-2 rounded border ${((me as any)?.ready ? "bg-green-600 text-white" : "")}`}
+              onClick={toggleReady}
+              disabled={!roomCode}
+            >
+              {(me as any)?.ready ? "取消准备" : "准备"}
+            </button>
 
-          <button
-            className={`px-4 py-2 rounded ${
-              isHost && roomCode && flowerPhase === "lobby"
-                ? "bg-black text-white"
-                : "border text-gray-400 bg-gray-100 cursor-not-allowed"
-            }`}
-            disabled={!isHost || !roomCode || flowerPhase !== "lobby"}
-            title={!isHost ? "只有房主可以开始" : ""}
-            onClick={startFirstNight}
-          >
-            开始游戏（第一夜）
-          </button>
+            <button
+              className={`px-4 py-2 rounded ${
+                isHost && roomCode
+                  ? "bg-black text-white"
+                  : "border text-gray-400 bg-gray-100 cursor-not-allowed"
+              }`}
+              disabled={!isHost || !roomCode}
+              title={!isHost ? "只有房主可以开始" : ""}
+              onClick={startFirstNight}
+            >
+              开始游戏（第一夜）
+            </button>
 
-          <button
-            className={`px-4 py-2 rounded border ${canAddBot ? "" : "text-gray-400 bg-gray-100 cursor-not-allowed"}`}
-            disabled={!canAddBot}
-            onClick={addBotPlaceholder}
-          >
-            添加机器人（剩余 {remainingSeats}）
-          </button>
+            <button
+              className={`px-4 py-2 rounded border ${canAddBot ? "" : "text-gray-400 bg-gray-100 cursor-not-allowed"}`}
+              disabled={!canAddBot}
+              onClick={addBotPlaceholder}
+            >
+              添加机器人（剩余 {remainingSeats}）
+            </button>
 
-          {isHost && roomCode && flowerPhase === "lobby" && (
-            <div className="text-xs text-gray-500 flex items-center">
-              {everyoneReady ? "（所有玩家已准备）" : "（有人未准备）"}
-            </div>
-          )}
-        </div>
+            {isHost && roomCode && (
+              <div className="text-xs text-gray-500 flex items-center">
+                {everyoneReady ? "（所有玩家已准备）" : "（有人未准备）"}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 我的身份 / 夜间操作 */}
@@ -909,6 +1015,9 @@ export default function FlowerRoom() {
           >
             提交投票
           </button>
+          <div className="text-xs text-gray-500">
+            当前已投票：{myDayVoteTarget ? `座位 ${myDayVoteTarget}` : "尚未投票"}
+          </div>
           {isHost && (
             <button
               className="px-4 py-2 rounded border border-black text-black hover:bg-black/5 disabled:opacity-50"
@@ -925,35 +1034,37 @@ export default function FlowerRoom() {
         </div>
       )}
 
-      {/* 夜晚结算结果 */}
-          {flowerSnapshot?.night?.result && (
-            <div className="p-3 border rounded mb-4 space-y-2">
-              <div className="font-medium">夜晚结算</div>
-              <div className="text-sm text-gray-700">
-                死亡：
-                {flowerSnapshot.night.result.deaths.length === 0
-                  ? " 无"
-                  : flowerSnapshot.night.result.deaths
-                      .map(d => `座位 ${d.seat}`)
-                      .join("、")}
-              </div>
+      {/* 白天投票结算（夜晚时显示上一白天结果） */}
+      {showDaySummary && (
+        <div className="p-3 border rounded mb-4 space-y-2">
+          <div className="font-medium">白天结算</div>
+          <div className="text-sm text-gray-700">
+            处决：{latestDaySummary.executionText || "无人被处决"}
+          </div>
+          {latestDaySummary.votesText && (
+            <div className="text-sm text-gray-700">票型：{latestDaySummary.votesText}</div>
+          )}
+        </div>
+      )}
+
+      {/* 夜晚结算结果（白天时显示上一夜结果） */}
+      {showNightSummary && flowerSnapshot?.night?.result && (
+        <div className="p-3 border rounded mb-4 space-y-2">
+          <div className="font-medium">夜晚结算</div>
+          <div className="text-sm text-gray-700">
+            死亡：
+            {flowerSnapshot.night.result.deaths.length === 0
+              ? " 无"
+              : flowerSnapshot.night.result.deaths
+                  .map(d => `座位 ${d.seat}`)
+                  .join("、")}
+          </div>
           <div className="text-sm text-gray-700">
             禁言：
             {flowerSnapshot.night.result.mutedSeats.length === 0
               ? " 无"
               : flowerSnapshot.night.result.mutedSeats.map(seat => `座位 ${seat}`).join("、")}
           </div>
-          {flowerSnapshot.night.result.policeReports.length > 0 && (
-            <div className="text-sm text-gray-700">
-              警察验人：
-              {flowerSnapshot.night.result.policeReports
-                .map(r => {
-                  const label = r.result === "bad_special" ? "坏特殊" : r.result === "not_bad_special" ? "非坏特殊" : "未知";
-                  return `座位 ${r.targetSeat} → ${label}`;
-                })
-                .join("、")}
-            </div>
-          )}
         </div>
       )}
 

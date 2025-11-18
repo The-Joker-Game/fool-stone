@@ -142,6 +142,7 @@ export function submitDayVote(snapshot: FlowerSnapshot, payload: SubmitDayVotePa
     source: "day",
   });
   voter.hasVotedToday = true;
+  voter.voteTargetSeat = payload.targetSeat;
   snapshot.updatedAt = Date.now();
   snapshot.logs.push({ at: Date.now(), text: `白天投票：座位 ${payload.voterSeat} 投给座位 ${payload.targetSeat}` });
   return { ok: true };
@@ -274,8 +275,10 @@ function buildNightContext(snapshot: FlowerSnapshot): NightContext | null {
   const aliveSeats = new Set<number>();
   players.forEach((p) => {
     playersBySeat.set(p.seat, p);
-    if (p.role) roleSeats.set(p.role, p);
-    if (p.isAlive) aliveSeats.add(p.seat);
+    if (p.isAlive) {
+      aliveSeats.add(p.seat);
+      if (p.role) roleSeats.set(p.role, p);
+    }
   });
   const actionsByRole = new Map<FlowerRole, FlowerNightAction>();
   snapshot.night.submittedActions.forEach((action) => {
