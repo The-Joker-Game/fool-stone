@@ -5,6 +5,7 @@ import { useGame, exportSnapshot as exportGameSnapshot, applySnapshot as applyGa
 import { rt, getSessionId, type PresenceState } from './realtime/socket';
 import './index.css';
 import FlowerRoom from './FlowerRoom';
+import type { WakeLockSentinel } from './types';
 
 
 const CAST_ORDER = ['金', '木', '水', '火', '土', '贤', '愚'] as const;
@@ -36,6 +37,50 @@ function MainApp() {
   const roundStartScores = useGame(s => s.roundStartScores);
 
   const flaskImageSrc = useCallback((no: number) => `/flasks/${no}.png`, []);
+
+  // —— 屏幕常亮功能 —— //
+  useEffect(() => {
+    let wakeLock: WakeLockSentinel | null = null;
+
+    const requestWakeLock = async () => {
+      try {
+        // 检查浏览器是否支持 Screen Wake Lock API
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+          console.log('Screen Wake Lock is active');
+          
+          // 监听页面可见性变化，当页面变为可见时重新请求唤醒锁
+          const handleVisibilityChange = () => {
+            if (wakeLock !== null && document.visibilityState === 'visible') {
+              requestWakeLock();
+            }
+          };
+          
+          document.addEventListener('visibilitychange', handleVisibilityChange);
+          
+          // 当唤醒锁释放时记录日志
+          wakeLock.addEventListener('release', () => {
+            console.log('Screen Wake Lock was released');
+          });
+        } else {
+          console.warn('Screen Wake Lock API is not supported in this browser');
+        }
+      } catch (err) {
+        console.error('Failed to acquire screen wake lock:', err);
+      }
+    };
+
+    // 请求屏幕常亮
+    requestWakeLock();
+
+    // 组件卸载时释放唤醒锁
+    return () => {
+      if (wakeLock !== null) {
+        wakeLock.release();
+        wakeLock = null;
+      }
+    };
+  }, []);
 
   // —— 天象占卜（从 game 对象读取；第3回合起可能有值） —— //
   const omenStone = useGame((s) => {

@@ -2,6 +2,13 @@ export type Stone = '金'|'木'|'水'|'火'|'土'|'贤'|'愚';
 export const STONES: Stone[] = ['金','木','水','火','土','贤','愚'];
 export type Phase = 'select'|'cast'|'end';
 
+// Screen Wake Lock API 类型定义
+export type WakeLockSentinel = {
+  release(): Promise<void>;
+  addEventListener(type: 'release', listener: () => void): void;
+  removeEventListener(type: 'release', listener: () => void): void;
+};
+
 export interface Player { id: string; name: string; isFool?: boolean; }
 export interface Score { pub: number; sec: number; }
 export interface Pick { playerId: string; flask: number; stone: Stone; }
