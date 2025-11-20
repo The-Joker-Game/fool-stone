@@ -95,6 +95,21 @@ export interface FlowerGameResult {
   reason: string;
 }
 
+export interface ChatMention {
+  seat: number;
+  name: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  sessionId: string;
+  senderSeat: number;
+  senderName: string;
+  content: string;
+  mentions: ChatMention[];
+  timestamp: number;
+}
+
 export interface FlowerSnapshot {
   engine: "flower";
   roomCode: string;
@@ -105,6 +120,7 @@ export interface FlowerSnapshot {
   night: FlowerNightState;
   day: FlowerDayState;
   logs: FlowerLogEntry[];
+  chatMessages?: ChatMessage[];
   pendingAction?: { role: FlowerRole; seat: number } | null;
   gameResult?: FlowerGameResult | null;
   updatedAt: number;

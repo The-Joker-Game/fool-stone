@@ -6,6 +6,8 @@ import type {
   FlowerPlayerState,
   FlowerNightState,
   FlowerDayState,
+  ChatMessage,
+  ChatMention,
 } from "./types";
 import {
   assignFlowerRoles,
@@ -24,7 +26,7 @@ import { rt, getSessionId } from "../realtime/socket";
 const MAX_SEATS = 9;
 const SNAPSHOT_KEY_PREFIX = "flower:snapshot:";
 
-type FlowerSnapshotInput = Partial<FlowerSnapshot> & { engine: "flower"; [key: string]: unknown };
+type FlowerSnapshotInput = Partial<FlowerSnapshot> & { engine: "flower";[key: string]: unknown };
 
 export interface FlowerStore {
   snapshot: FlowerSnapshot | null;
@@ -40,6 +42,7 @@ export interface FlowerStore {
   hostResolveDayVote: () => ResolveResult;
   submitDayVote: (payload: SubmitDayVotePayload) => Promise<SubmitResult>;
   broadcastSnapshot: (targetSessionId?: string) => Promise<void>;
+  addChatMessage: (content: string, mentions: ChatMention[]) => Promise<{ ok: boolean; error?: string }>;
 }
 
 export const useFlowerStore = create<FlowerStore>()(
@@ -205,6 +208,42 @@ export const useFlowerStore = create<FlowerStore>()(
         await rt.sendState(snapshot as any, targetSessionId);
       } catch (err) {
         console.error("broadcast snapshot failed", err);
+      }
+    },
+    addChatMessage: async (content: string, mentions: ChatMention[]) => {
+      const currentSnapshot = get().snapshot;
+      if (!currentSnapshot) return { ok: false, error: "没有可用快照" };
+
+      const sessionId = getSessionId();
+      const myPlayer = currentSnapshot.players.find(p => p.sessionId === sessionId);
+      if (!myPlayer) return { ok: false, error: "未找到玩家信息" };
+
+      const message: ChatMessage = {
+        id: `${Date.now()}_${sessionId}_${Math.random().toString(36).slice(2)}`,
+        sessionId,
+        senderSeat: myPlayer.seat,
+        senderName: myPlayer.name,
+        content,
+        mentions,
+        timestamp: Date.now(),
+      };
+
+      // Add to local snapshot
+      set((state) => {
+        if (!state.snapshot) return;
+        if (!state.snapshot.chatMessages) state.snapshot.chatMessages = [];
+        state.snapshot.chatMessages.push(message);
+        state.snapshot.updatedAt = Date.now();
+        saveSnapshotToCache(state.snapshot);
+      });
+
+      // Broadcast via intent
+      try {
+        await rt.sendIntent("flower:chat_message", message);
+        return { ok: true };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: msg };
       }
     },
   }))

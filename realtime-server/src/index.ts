@@ -186,7 +186,8 @@ function refreshHostFlags(room: Room) {
 function ensureHost(room: Room) {
   const aliveUsers = Array.from(room.users.values());
   const current = room.hostSessionId ? room.users.get(room.hostSessionId) : null;
-  const currentAlive = current && !current.isBot && currentStillAlive(room, current.sessionId);
+  // 只要房主还在房间列表里（哪怕断线、哪怕游戏里死了），就不自动转移
+  const currentAlive = current && !current.isBot;
   if (currentAlive) {
     refreshHostFlags(room);
     return;
@@ -203,11 +204,8 @@ function ensureHost(room: Room) {
 function currentStillAlive(room: Room, sessionId: string) {
   const user = room.users.get(sessionId);
   if (user?.isDisconnected) return false;
-  const snapshotPlayers = room.snapshot?.players;
-  if (!snapshotPlayers) return true;
-  const p = snapshotPlayers.find(player => player.sessionId === sessionId);
-  if (!p) return true;
-  return p.isAlive;
+  // 移除对 snapshot.players 的检查，不再因为游戏内死亡而认为“不活跃”
+  return true;
 }
 
 function genBotSessionId() {
@@ -296,21 +294,21 @@ io.on("connection", (socket: Socket) => {
 
         const me: PresenceUser = existed
           ? {
-              ...existed,
-              name,
-              seat,
-              isHost: sessionId === room.hostSessionId,
-              isDisconnected: false,
-              disconnectedAt: undefined,
-            }
+            ...existed,
+            name,
+            seat,
+            isHost: sessionId === room.hostSessionId,
+            isDisconnected: false,
+            disconnectedAt: undefined,
+          }
           : {
-              id: `U_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
-              name,
-              sessionId,
-              seat,
-              isHost: sessionId === room.hostSessionId,
-              ready: false,
-            };
+            id: `U_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
+            name,
+            sessionId,
+            seat,
+            isHost: sessionId === room.hostSessionId,
+            ready: false,
+          };
         room.users.set(sessionId, me);
         ensureHost(room);
 
@@ -346,19 +344,19 @@ io.on("connection", (socket: Socket) => {
 
         const base: PresenceUser = existed
           ? {
-              ...existed,
-              name: name?.trim() || existed.name,
-              seat,
-              isDisconnected: false,
-              disconnectedAt: undefined,
-            }
+            ...existed,
+            name: name?.trim() || existed.name,
+            seat,
+            isDisconnected: false,
+            disconnectedAt: undefined,
+          }
           : {
-              id: `U_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
-              name: name?.trim() || `玩家${seat}`,
-              sessionId,
-              seat,
-              ready: false,
-            };
+            id: `U_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
+            name: name?.trim() || `玩家${seat}`,
+            sessionId,
+            seat,
+            ready: false,
+          };
         const me: PresenceUser = {
           ...base,
           sessionId,
@@ -456,7 +454,7 @@ io.on("connection", (socket: Socket) => {
         const { code, sessionId, targetSessionId } = payload || {};
         const room = code ? rooms.get(code) : undefined;
         if (!room) return cb({ ok: false, msg: "房间不存在" });
-          if (!sessionId || sessionId !== room.hostSessionId) {
+        if (!sessionId || sessionId !== room.hostSessionId) {
           return cb({ ok: false, msg: "只有房主可以踢人" });
         }
         if (!targetSessionId || !room.users.has(targetSessionId)) {
@@ -671,9 +669,9 @@ io.on("connection", (socket: Socket) => {
   }
 
   for (const evt of startEvents) {
-  socket.on(
-    evt,
-    (payload: { room: string; sessionId?: string }, cb: (resp: { ok: boolean; msg?: string }) => void) => {
+    socket.on(
+      evt,
+      (payload: { room: string; sessionId?: string }, cb: (resp: { ok: boolean; msg?: string }) => void) => {
         try {
           const roomCode = payload?.room;
           const room = roomCode ? rooms.get(roomCode) : undefined;
