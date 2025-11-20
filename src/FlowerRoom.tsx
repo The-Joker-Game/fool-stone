@@ -21,9 +21,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { useAlert } from "@/components/AlertMessage";
-import { useJoinRoomDrawer } from "@/components/JoinRoomDrawer";
+import { useJoinRoomDialog } from "@/components/JoinRoomDialog";
 import { TargetSelectionDrawer } from "@/components/TargetSelectionDrawer";
-import { useAddBotDrawer } from "@/components/AddBotDrawer";
+import { useAddBotDialog } from "@/components/AddBotDialog";
 import Avvvatars from "avvvatars-react";
 import { Users, LogOut, Crown, Bot, Wifi, WifiOff, UserPlus, MessageSquare, Moon, Sun, Gamepad2, Wrench, User } from "lucide-react";
 
@@ -105,8 +105,8 @@ export default function FlowerRoom() {
   // Dialog hooks to replace native alert/confirm
   const { confirm, ConfirmDialogComponent } = useConfirm();
   const { alert, AlertDialogComponent } = useAlert();
-  const { showJoinRoomDrawer, JoinRoomDrawerComponent } = useJoinRoomDrawer();
-  const { showAddBotDrawer, AddBotDrawerComponent } = useAddBotDrawer();
+  const { showJoinRoomDialog, JoinRoomDialogComponent } = useJoinRoomDialog();
+  const { showAddBotDialog, AddBotDialogComponent } = useAddBotDialog();
 
   const logRef = useRef<HTMLDivElement | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
@@ -227,6 +227,14 @@ export default function FlowerRoom() {
           console.warn("处理白天投票失败", res.error);
         }
       }
+      // 房主不再需要处理聊天消息，因为服务器会直接广播给所有成员
+    });
+    return () => off();
+  }, [isHost, hostSubmitNightAction, hostSubmitDayVote, broadcastSnapshot, setFlowerSnapshot, flowerSnapshot]);
+
+  // 添加对聊天消息的订阅处理
+  useEffect(() => {
+    const off = rt.subscribeAction(async (msg) => {
       if (msg.action === "flower:chat_message") {
         const chatMsg = msg.payload as ChatMessage;
         const currentSnapshot = flowerSnapshot;
@@ -239,14 +247,12 @@ export default function FlowerRoom() {
               chatMessages: [...chatMessages, chatMsg],
               updatedAt: Date.now(),
             });
-            // Broadcast to all clients
-            await broadcastSnapshot();
           }
         }
       }
     });
     return () => off();
-  }, [isHost, hostSubmitNightAction, hostSubmitDayVote, broadcastSnapshot, setFlowerSnapshot, flowerSnapshot]);
+  }, [flowerSnapshot, setFlowerSnapshot]);
 
   // 添加对 state:request 事件的监听
   useEffect(() => {
@@ -276,6 +282,23 @@ export default function FlowerRoom() {
     });
     return () => off();
   }, [isHost, flowerSnapshot]);
+
+  // 添加对连接状态变化的监听，确保重新连接时能获取最新状态
+  useEffect(() => {
+    // 当连接建立且在房间内时，请求最新的快照状态
+    if (roomCode && connected) {
+      const timer = setTimeout(async () => {
+        try {
+          console.log("Requesting latest state...");
+          await rt.requestState();
+        } catch (err) {
+          console.warn("Failed to request state after reconnect", err);
+        }
+      }, 1000); // 延迟1秒确保连接稳定
+
+      return () => clearTimeout(timer);
+    }
+  }, [roomCode, connected]);
 
   useEffect(() => {
     if (roomCode || autoJoinAttempted.current || !connected) return;
@@ -430,7 +453,7 @@ export default function FlowerRoom() {
 
   // 加入房间（**这里一定要发 code，不是 room**）
   const joinRoom = useCallback(async () => {
-    const code = await showJoinRoomDrawer(roomCode || localStorage.getItem("lastRoomCode") || "");
+    const code = await showJoinRoomDialog(roomCode || localStorage.getItem("lastRoomCode") || "");
     if (!code) return;
     try {
       const nick = name?.trim() || randName();
@@ -448,7 +471,7 @@ export default function FlowerRoom() {
       console.error(e);
       await alert("加入失败：Ack 超时或异常");
     }
-  }, [name, roomCode, pushLog, showJoinRoomDrawer, alert]);
+  }, [name, roomCode, pushLog, showJoinRoomDialog, alert]);
 
   const leaveRoom = useCallback(async () => {
     if (!roomCode) return;
@@ -511,7 +534,7 @@ export default function FlowerRoom() {
 
   const addBotPlaceholder = useCallback(async () => {
     if (!canAddBot || !roomCode) return;
-    const nick = await showAddBotDrawer();
+    const nick = await showAddBotDialog();
     if (nick === null) return; // User cancelled
     try {
       const resp = await rt.addBotToRoom(roomCode, nick?.trim() || undefined);
@@ -756,43 +779,12 @@ export default function FlowerRoom() {
           <Card>
             <CardContent className="pt-6">
               <div className="flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <Input
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="昵称"
-                    className="w-40"
-                  />
-                  {roomCode && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={async () => {
-                        if (!roomCode || !name.trim()) return;
-                        try {
-                          const resp = await rt.emitAck("room:update_name", {
-                            code: roomCode,
-                            sessionId: getSessionId(),
-                            name: name.trim(),
-                          }, 3000);
-                          if ((resp as any)?.ok) {
-                            localStorage.setItem("name", name.trim());
-                            await alert("昵称已更新");
-                          } else {
-                            await alert(`更新失败：${(resp as any)?.msg || "服务器未响应"}`);
-                          }
-                        } catch (err) {
-                          console.error(err);
-                          await alert("更新失败：服务器未响应");
-                        }
-                      }}
-                      disabled={!name.trim()}
-                      title="更新昵称"
-                    >
-                      更新
-                    </Button>
-                  )}
-                </div>
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="昵称"
+                  className="w-40"
+                />
                 <Button onClick={createRoom}>
                   <UserPlus className="h-4 w-4 mr-2" />
                   创建花蝴蝶房间
@@ -817,7 +809,7 @@ export default function FlowerRoom() {
           {roomCode ? (
             <Card>
               <CardContent className="py-3">
-                <div className="flex flex-wrap items-center gap-2 text-sm">
+                <div className="flex items-center gap-2 text-sm">
                   <span className="text-muted-foreground">房间号:</span>
                   <Badge variant="outline" className="font-mono text-base">
                     {roomCode}
@@ -850,9 +842,9 @@ export default function FlowerRoom() {
           {flowerSnapshot && (
             <Card className="mb-4">
               <CardHeader>
-                <CardTitle className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle className="flex items-center justify-between">
                   <span>当前阶段</span>
-                  <Badge variant="outline" className="text-lg whitespace-nowrap">
+                  <Badge variant="outline" className="text-lg">
                     {flowerPhaseText} - 第{flowerDayCount}天
                   </Badge>
                 </CardTitle>
@@ -860,7 +852,7 @@ export default function FlowerRoom() {
               <CardContent>
                 <div className="space-y-2">
                   {myRole && (
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-2">
                       <span className="text-sm font-medium">你的角色：</span>
                       <Badge variant="default">{myRole}</Badge>
                       {!myAlive && <Badge variant="destructive">已死亡</Badge>}
@@ -888,13 +880,8 @@ export default function FlowerRoom() {
                         variant="outline"
                         onClick={addBotPlaceholder}
                         disabled={!canAddBot}
-                        className="flex-shrink-0"
                       >
-                        <Bot className="h-4 w-4 mr-1" />
-                        添加机器人
-                        <Badge variant="secondary" className="ml-2">
-                          剩余 {remainingSeats}
-                        </Badge>
+                        添加机器人 ({remainingSeats})
                       </Button>
                     </div>
                   )}
@@ -1355,8 +1342,8 @@ export default function FlowerRoom() {
       {/* Dialog Components */}
       <ConfirmDialogComponent />
       <AlertDialogComponent />
-      <JoinRoomDrawerComponent />
-      <AddBotDrawerComponent />
+      <JoinRoomDialogComponent />
+      <AddBotDialogComponent />
 
       {/* Target Selection Drawers */}
       <TargetSelectionDrawer

@@ -120,7 +120,7 @@ export interface FlowerSnapshot {
   night: FlowerNightState;
   day: FlowerDayState;
   logs: FlowerLogEntry[];
-  chatMessages?: ChatMessage[];
+  chatMessages: ChatMessage[];
   pendingAction?: { role: FlowerRole; seat: number } | null;
   gameResult?: FlowerGameResult | null;
   updatedAt: number;

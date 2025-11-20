@@ -228,7 +228,7 @@ export const useFlowerStore = create<FlowerStore>()(
         timestamp: Date.now(),
       };
 
-      // Add to local snapshot
+      // Add to local snapshot immediately
       set((state) => {
         if (!state.snapshot) return;
         if (!state.snapshot.chatMessages) state.snapshot.chatMessages = [];
@@ -237,13 +237,14 @@ export const useFlowerStore = create<FlowerStore>()(
         saveSnapshotToCache(state.snapshot);
       });
 
-      // Broadcast via intent
+      // Send via intent (server will broadcast to all clients)
       try {
         await rt.sendIntent("flower:chat_message", message);
         return { ok: true };
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { ok: false, error: msg };
+        // const msg = err instanceof Error ? err.message : String(err);
+        // Even if sending fails, the message is already displayed locally
+        return { ok: true }; // Still return ok since message is shown locally
       }
     },
   }))
@@ -270,6 +271,8 @@ function normalizeSnapshot(snapshot: FlowerSnapshot) {
   if (!snapshot.day) snapshot.day = createEmptyDayState();
   if (!Array.isArray(snapshot.day.votes)) snapshot.day.votes = [];
   if (!snapshot.day.tally) snapshot.day.tally = {};
+  // 确保 chatMessages 字段存在
+  if (!Array.isArray(snapshot.chatMessages)) snapshot.chatMessages = [];
 }
 
 function createEmptyPlayer(seat: number): FlowerPlayerState {
@@ -308,6 +311,8 @@ function createEmptySnapshot(roomCode: string, hostSessionId: string | null): Fl
     pendingAction: null,
     gameResult: null,
     updatedAt: now,
+    // 初始化聊天消息数组
+    chatMessages: [],
   };
 }
 
@@ -383,6 +388,20 @@ function mergeIncomingSnapshot(target: FlowerSnapshot, incoming: FlowerSnapshotI
   }
   if (Array.isArray(incoming.logs)) {
     target.logs = incoming.logs as FlowerSnapshot["logs"];
+  }
+  if (Array.isArray(incoming.chatMessages)) {
+    // 合并聊天消息，避免重复并保持顺序
+    const existingMessages = target.chatMessages || [];
+    const newMessages = incoming.chatMessages as ChatMessage[];
+
+    // 创建一个映射来跟踪已存在的消息ID
+    const existingIds = new Set(existingMessages.map(msg => msg.id));
+
+    // 只添加新的消息
+    const messagesToAdd = newMessages.filter(msg => !existingIds.has(msg.id));
+
+    // 合并消息并按时间排序
+    target.chatMessages = [...existingMessages, ...messagesToAdd].sort((a, b) => a.timestamp - b.timestamp);
   }
   if ("pendingAction" in incoming) {
     target.pendingAction = (incoming.pendingAction as FlowerSnapshot["pendingAction"]) ?? null;

@@ -413,30 +413,6 @@ io.on("connection", (socket: Socket) => {
     }
   );
 
-  /** 更新玩家昵称 */
-  socket.on(
-    "room:update_name",
-    (
-      payload: { code: string; sessionId: string; name: string },
-      cb: (resp: { ok: boolean; msg?: string }) => void
-    ) => {
-      try {
-        const { code, sessionId, name } = payload || {};
-        const room = code ? rooms.get(code) : undefined;
-        if (!room) return cb({ ok: false, msg: "房间不存在" });
-        const u = sessionId ? room.users.get(sessionId) : undefined;
-        if (!u) return cb({ ok: false, msg: "玩家不存在" });
-        if (!name || !name.trim()) return cb({ ok: false, msg: "昵称不能为空" });
-
-        room.users.set(sessionId, { ...u, name: name.trim() });
-        broadcastPresence(room);
-        cb({ ok: true });
-      } catch {
-        cb({ ok: false, msg: "room:update_name 失败" });
-      }
-    }
-  );
-
   /** 房主主动交接房主身份 */
   socket.on(
     "room:transfer_host",
@@ -598,6 +574,12 @@ io.on("connection", (socket: Socket) => {
       const r = room ? rooms.get(room) : undefined;
       if (!r) return cb({ ok: false, msg: "房间不存在" });
 
+      // 特殊处理聊天消息，直接广播给所有房间成员
+      if (action === "flower:chat_message") {
+        io.to(room).emit("action", { action, payload: data, from, at: Date.now() });
+        return cb({ ok: true });
+      }
+
       const hostSessionId = r.hostSessionId;
       const roomSet = io.sockets.adapter.rooms.get(room);
       if (roomSet) {
@@ -688,6 +670,7 @@ io.on("connection", (socket: Socket) => {
       phase,
       night,
       startedAt: Date.now(),
+      chatMessages: [],
     };
     io.to(roomCode).emit("state:full", { snapshot, from: fromSessionId, at: Date.now() });
   }

@@ -18,6 +18,7 @@ export type Snapshot = {
   foolPrankUsed: boolean;
   roundStartScores: Record<string, unknown> | null;
   omenStone?: string | null;
+  chatMessages?: Array<unknown>;
 };
 
 export type Room = {
