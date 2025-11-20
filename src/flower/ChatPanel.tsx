@@ -29,13 +29,19 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId }: Cha
     // Scroll to bottom when new messages arrive
     useEffect(() => {
         if (chatContainerRef.current) {
-            chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+            // Use a small timeout to ensure the DOM has updated with the new message
+            setTimeout(() => {
+                if (chatContainerRef.current) {
+                    chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+                }
+            }, 0);
         }
-    }, [messages.length]);
+    }, [messages]);
 
     // Filter players for mention suggestions
     const mentionSuggestions = useMemo(() => {
-        const activePlayers = players.filter(p => p.sessionId && p.sessionId !== getSessionId());
+        // 包含机器人玩家，但排除自己
+        const activePlayers = players.filter(p => (p.sessionId || p.isBot) && p.sessionId !== getSessionId());
         if (!mentionSearchTerm) return activePlayers;
         const search = mentionSearchTerm.toLowerCase();
         return activePlayers.filter(
@@ -106,7 +112,8 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId }: Cha
 
         while ((match = mentionRegex.exec(text)) !== null) {
             const mentionName = match[1];
-            const player = players.find(p => p.name === mentionName && p.sessionId);
+            // 匹配玩家时也包含机器人
+            const player = players.find(p => p.name === mentionName && (p.sessionId || p.isBot));
             if (player) {
                 mentions.push({ seat: player.seat, name: player.name });
             }
@@ -158,7 +165,8 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId }: Cha
 
             const mentionName = match[1];
             const isMentioned = message.mentions.some(m => m.name === mentionName);
-            const isMe = players.find(p => p.name === mentionName)?.sessionId === mySessionId;
+            const player = players.find(p => p.name === mentionName);
+            const isMe = player ? (player.sessionId === mySessionId || (player.isBot && !player.sessionId)) : false;
 
             parts.push(
                 <Badge
@@ -214,7 +222,10 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId }: Cha
                             messages.map((message) => {
                                 const isMyMessage = message.sessionId === mySessionId;
                                 const isMentioned = message.mentions.some(
-                                    m => players.find(p => p.seat === m.seat)?.sessionId === mySessionId
+                                    m => {
+                                        const player = players.find(p => p.seat === m.seat);
+                                        return player ? (player.sessionId === mySessionId || (player.isBot && !player.sessionId)) : false;
+                                    }
                                 );
 
                                 return (

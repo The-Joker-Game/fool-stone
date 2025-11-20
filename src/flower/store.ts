@@ -78,7 +78,9 @@ export const useFlowerStore = create<FlowerStore>()(
           return;
         }
 
-        if (!state.snapshot || state.snapshot.roomCode !== presence.roomCode) {
+        const isNewSnapshot = !state.snapshot || state.snapshot.roomCode !== presence.roomCode;
+
+        if (isNewSnapshot) {
           const hostSessionId = getHostSessionId(presence);
           state.snapshot = loadSnapshotFromCache(presence.roomCode) ?? createEmptySnapshot(presence.roomCode, hostSessionId);
         }
@@ -87,7 +89,12 @@ export const useFlowerStore = create<FlowerStore>()(
 
         normalizeSnapshot(state.snapshot);
         syncSnapshotWithPresence(state.snapshot, presence);
-        state.snapshot.updatedAt = Date.now();
+
+        // 只在创建新快照时更新时间戳，避免因在线状态同步而污染游戏状态时间戳
+        // if (isNewSnapshot) {
+        //   state.snapshot.updatedAt = Date.now();
+        // }
+
         saveSnapshotToCache(state.snapshot);
       }),
     clearError: () => set((state) => { state.lastError = null; }),

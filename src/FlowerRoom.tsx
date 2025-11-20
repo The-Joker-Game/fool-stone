@@ -254,12 +254,14 @@ export default function FlowerRoom() {
     return () => off();
   }, [flowerSnapshot, setFlowerSnapshot]);
 
-  // 添加对 state:request 事件的监听
+
+  // 新的快照同步逻辑：响应时间戳查询和快照提供请求
   useEffect(() => {
-    if (!isHost) return;
-    const off = rt.subscribeStateRequest(async (msg) => {
-      console.log("[state:request] received from", msg.from);
-      // 广播当前快照给请求者
+    const offQuery = rt.subscribeQueryTimestamp(() => {
+      rt.reportTimestamp(flowerSnapshot?.updatedAt ?? -1);
+    });
+
+    const offProvide = rt.subscribeProvideSnapshot(async (msg) => {
       if (flowerSnapshot) {
         try {
           // 将 FlowerSnapshot 转换为 GameSnapshot
@@ -274,14 +276,28 @@ export default function FlowerRoom() {
             roundStartScores: null,
             ...flowerSnapshot
           };
-          await rt.sendState(gameSnapshot, msg.from);
+          // 如果 msg.target 为空，则广播给所有人（包括服务器更新）
+          await rt.sendState(gameSnapshot, msg.target);
         } catch (err) {
-          console.error("Failed to send state to requester", err);
+          console.error("Failed to provide snapshot", err);
         }
       }
     });
+
+    return () => {
+      offQuery();
+      offProvide();
+    };
+  }, [flowerSnapshot]);
+
+  // 监听快照同步失败
+  useEffect(() => {
+    const off = rt.subscribeSyncFailed(async (msg) => {
+      console.warn("State sync failed:", msg.reason);
+      await alert("无法获取最新游戏状态（可能所有玩家都已断线或无数据），请尝试刷新页面或重新加入。");
+    });
     return () => off();
-  }, [isHost, flowerSnapshot]);
+  }, [alert]);
 
   // 添加对连接状态变化的监听，确保重新连接时能获取最新状态
   useEffect(() => {
@@ -1098,6 +1114,7 @@ export default function FlowerRoom() {
                 </AccordionTrigger>
                 <AccordionContent className="px-4">
                   <ChatPanel
+                    key={roomCode}
                     messages={flowerSnapshot.chatMessages || []}
                     players={flowerPlayers}
                     onSendMessage={addChatMessage}

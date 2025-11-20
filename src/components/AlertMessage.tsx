@@ -22,6 +22,8 @@ export function useAlert() {
         description: "",
     });
 
+    const [resolvePromise, setResolvePromise] = useState<(() => void) | null>(null);
+
     const alert = useCallback((options: string | AlertOptions) => {
         if (typeof options === "string") {
             setConfig({ description: options, title: "提示" });
@@ -29,7 +31,18 @@ export function useAlert() {
             setConfig({ title: "提示", ...options });
         }
         setIsOpen(true);
+        return new Promise<void>((resolve) => {
+            setResolvePromise(() => resolve);
+        });
     }, []);
+
+    const handleClose = () => {
+        setIsOpen(false);
+        if (resolvePromise) {
+            resolvePromise();
+            setResolvePromise(null);
+        }
+    };
 
     const AlertDialogComponent = () => (
         <AlertDialog open={isOpen} onOpenChange={setIsOpen}>
@@ -39,7 +52,7 @@ export function useAlert() {
                     <AlertDialogDescription>{config.description}</AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                    <AlertDialogAction onClick={() => setIsOpen(false)}>
+                    <AlertDialogAction onClick={handleClose}>
                         {config.confirmText || "确定"}
                     </AlertDialogAction>
                 </AlertDialogFooter>

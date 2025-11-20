@@ -31,6 +31,12 @@ type Room = {
   createdAt: number;
   lastKeepaliveAt?: number;
   snapshot: SnapshotWithPlayers | null;
+  expectedSnapshotProvider?: string;
+  pendingSync?: {
+    requester: string;
+    candidates: Map<string, number>;
+    timer: NodeJS.Timeout;
+  };
 };
 
 const rooms = new Map<string, Room>();
@@ -608,30 +614,139 @@ io.on("connection", (socket: Socket) => {
     }
   );
 
-  // 请求最新快照 -> 转给房主
+  // 请求最新快照 -> 广播查询时间戳
   socket.on(
     "state:request",
     (
       payload: { room: string; from: string },
       cb: (resp: { ok: boolean }) => void
     ) => {
-      const { room, from } = payload || {};
-      const r = room ? rooms.get(room) : undefined;
+      const { room: roomCode, from } = payload || {};
+      const r = roomCode ? rooms.get(roomCode) : undefined;
       if (!r) return cb({ ok: false });
 
-      const hostSessionId = r.hostSessionId;
-      const roomSet = io.sockets.adapter.rooms.get(room);
-      if (roomSet) {
-        for (const sid of roomSet) {
-          const s = io.sockets.sockets.get(sid);
-          if (s?.data?.sessionId === hostSessionId) {
-            s.emit("state:request", { room, from: from ?? socket.data.sessionId });
-          }
-        }
+      // 如果已有同步正在进行，简单起见先覆盖（或者忽略）
+      if (r.pendingSync) {
+        clearTimeout(r.pendingSync.timer);
       }
+
+      const timer = setTimeout(() => {
+        finishSync(r);
+      }, 1000); // 1秒收集窗口
+
+      r.pendingSync = {
+        requester: from ?? socket.data.sessionId ?? "",
+        candidates: new Map(),
+        timer,
+      };
+
+      io.to(roomCode).emit("state:query_timestamp", { room: roomCode });
       cb({ ok: true });
     }
   );
+
+  // 汇报快照时间戳
+  socket.on(
+    "state:report_timestamp",
+    (
+      payload: { room: string; updatedAt: number },
+      cb?: (resp: { ok: boolean }) => void
+    ) => {
+      const { room: roomCode, updatedAt } = payload || {};
+      const r = roomCode ? rooms.get(roomCode) : undefined;
+      if (!r || !r.pendingSync) return cb?.({ ok: false });
+
+      const sessionId = socket.data.sessionId;
+      if (sessionId && typeof updatedAt === "number") {
+        r.pendingSync.candidates.set(sessionId, updatedAt);
+      }
+
+      // 检查是否所有活跃人类玩家都已上报
+      let activeHumans = 0;
+      for (const u of r.users.values()) {
+        if (!u.isBot && !u.isDisconnected) {
+          activeHumans++;
+        }
+      }
+
+      // 只要收到的唯一上报数 >= 活跃人数，就可以提前结束
+      if (r.pendingSync.candidates.size >= activeHumans) {
+        clearTimeout(r.pendingSync.timer);
+        finishSync(r);
+      }
+
+      cb?.({ ok: true });
+    }
+  );
+
+  function finishSync(room: Room) {
+    if (!room.pendingSync) return;
+    const { requester, candidates } = room.pendingSync;
+    room.pendingSync = undefined;
+
+    let bestId: string | null = null;
+    let maxTime = -1;
+
+    // 检查服务器缓存
+    if (room.snapshot?.updatedAt) {
+      maxTime = room.snapshot.updatedAt;
+      bestId = "SERVER";
+    }
+
+    // 检查玩家汇报
+    for (const [sid, time] of candidates) {
+      if (time > maxTime) {
+        maxTime = time;
+        bestId = sid;
+      }
+    }
+
+    if (!bestId) {
+      // 无人有快照，通知请求者失败
+      const roomSet = io.sockets.adapter.rooms.get(room.code);
+      if (roomSet) {
+        for (const sid of roomSet) {
+          const s = io.sockets.sockets.get(sid);
+          if (s?.data?.sessionId === requester) {
+            s.emit("state:sync_failed", { room: room.code, reason: "no_candidates" });
+            break;
+          }
+        }
+      }
+      return;
+    }
+
+    if (bestId === "SERVER") {
+      // 服务器直接发送
+      const roomSet = io.sockets.adapter.rooms.get(room.code);
+      if (roomSet) {
+        for (const sid of roomSet) {
+          const s = io.sockets.sockets.get(sid);
+          if (s?.data?.sessionId === requester) {
+            s.emit("state:full", { snapshot: room.snapshot!, from: "server", at: Date.now() });
+            break;
+          }
+        }
+      }
+    } else {
+      // 指定玩家发送
+      // 如果最佳持有者就是请求者自己，说明请求者的数据比服务器还新 -> 让请求者广播同步给服务器
+      const isRequesterSelf = bestId === requester;
+      const target = isRequesterSelf ? undefined : requester;
+
+      room.expectedSnapshotProvider = bestId;
+      const roomSet = io.sockets.adapter.rooms.get(room.code);
+      if (roomSet) {
+        for (const sid of roomSet) {
+          const s = io.sockets.sockets.get(sid);
+          if (s?.data?.sessionId === bestId) {
+            s.emit("state:provide_snapshot", { target, room: room.code });
+            break;
+          }
+        }
+      }
+    }
+  }
 
   // 房主广播快照
   socket.on(
@@ -643,7 +758,20 @@ io.on("connection", (socket: Socket) => {
       const { room, snapshot, from, target } = payload || {};
       const r = room ? rooms.get(room) : undefined;
       if (!r) return cb({ ok: false });
-      if (socket.data.sessionId !== r.hostSessionId) return cb({ ok: false });
+
+      // 允许房主 或 被指定的提供者 上传快照
+      const isHost = socket.data.sessionId === r.hostSessionId;
+      const isProvider = socket.data.sessionId === r.expectedSnapshotProvider;
+
+      if (!isHost && !isProvider) return cb({ ok: false });
+
+      if (isProvider) {
+        r.expectedSnapshotProvider = undefined;
+      }
+
+      // 服务器作为时间戳权威，强制更新 updatedAt
+      const serverTime = Date.now();
+      snapshot.updatedAt = serverTime;
 
       r.snapshot = snapshot as SnapshotWithPlayers;
 
@@ -651,11 +779,11 @@ io.on("connection", (socket: Socket) => {
         for (const sid of io.sockets.adapter.rooms.get(room) || []) {
           const s = io.sockets.sockets.get(sid);
           if (s?.data?.sessionId === target) {
-            s.emit("state:full", { snapshot, from, at: Date.now(), target });
+            s.emit("state:full", { snapshot, from, at: serverTime, target });
           }
         }
       } else {
-        io.to(room).emit("state:full", { snapshot, from, at: Date.now() });
+        io.to(room).emit("state:full", { snapshot, from, at: serverTime });
       }
       cb({ ok: true });
     }

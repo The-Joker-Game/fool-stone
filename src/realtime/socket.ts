@@ -19,9 +19,12 @@ export type PresenceUser = {
 export type PresenceState = { roomCode: string | null; users: PresenceUser[] };
 export type StateSnapshotMsg = { snapshot: GameSnapshot; from: string; at?: number; target?: string };
 export type StateRequestMsg = { room: string; from: string };
+export type StateQueryMsg = { room: string; syncId?: string };
+export type StateProvideMsg = { room: string; target?: string };
+export type StateSyncFailedMsg = { room: string; reason: string };
 
 type CreateRoomAck = { ok: boolean; code?: string; users?: PresenceUser[]; me?: PresenceUser; msg?: string };
-type JoinRoomAck   = { ok: boolean; users?: PresenceUser[]; me?: PresenceUser; msg?: string };
+type JoinRoomAck = { ok: boolean; users?: PresenceUser[]; me?: PresenceUser; msg?: string };
 type IntentAck = { ok: boolean; msg?: string };
 type ResumeAck = { ok: boolean; users?: PresenceUser[]; me?: PresenceUser; msg?: string };
 type PresenceListAck = { ok: boolean; users?: PresenceUser[]; msg?: string };
@@ -86,6 +89,9 @@ const intentSubs: Array<(msg: IntentMsg) => void> = [];
 const presenceSubs: Array<(state: PresenceState | null) => void> = [];
 const stateSubs: Array<(msg: StateSnapshotMsg) => void> = [];
 const stateRequestSubs: Array<(msg: StateRequestMsg) => void> = [];
+const stateQuerySubs: Array<(msg: StateQueryMsg) => void> = [];
+const stateProvideSubs: Array<(msg: StateProvideMsg) => void> = [];
+const stateSyncFailedSubs: Array<(msg: StateSyncFailedMsg) => void> = [];
 const actionSubs: Array<(msg: { action: string; payload?: unknown; from: string; at?: number }) => void> = [];
 const kickSubs: Array<(code: string | null) => void> = [];
 
@@ -258,6 +264,24 @@ function handleWorkerEvent(eventName: string, args: unknown[]) {
       const msg = args[0] as { room: string; from: string };
       if (!msg) return;
       for (const fn of stateRequestSubs) fn({ room: msg.room, from: msg.from });
+      return;
+    }
+    case "state:query_timestamp": {
+      const msg = args[0] as StateQueryMsg;
+      if (!msg) return;
+      for (const fn of stateQuerySubs) fn(msg);
+      return;
+    }
+    case "state:provide_snapshot": {
+      const msg = args[0] as StateProvideMsg;
+      if (!msg) return;
+      for (const fn of stateProvideSubs) fn(msg);
+      return;
+    }
+    case "state:sync_failed": {
+      const msg = args[0] as StateSyncFailedMsg;
+      if (!msg) return;
+      for (const fn of stateSyncFailedSubs) fn(msg);
       return;
     }
     case "presence:state": {
@@ -565,6 +589,30 @@ function subscribeStateRequest(handler: (msg: StateRequestMsg) => void) {
   };
 }
 
+function subscribeQueryTimestamp(handler: (msg: StateQueryMsg) => void) {
+  stateQuerySubs.push(handler);
+  return () => {
+    const i = stateQuerySubs.indexOf(handler);
+    if (i >= 0) stateQuerySubs.splice(i, 1);
+  };
+}
+
+function subscribeProvideSnapshot(handler: (msg: StateProvideMsg) => void) {
+  stateProvideSubs.push(handler);
+  return () => {
+    const i = stateProvideSubs.indexOf(handler);
+    if (i >= 0) stateProvideSubs.splice(i, 1);
+  };
+}
+
+function subscribeSyncFailed(handler: (msg: StateSyncFailedMsg) => void) {
+  stateSyncFailedSubs.push(handler);
+  return () => {
+    const i = stateSyncFailedSubs.indexOf(handler);
+    if (i >= 0) stateSyncFailedSubs.splice(i, 1);
+  };
+}
+
 function subscribePresence(handler: (state: PresenceState | null) => void) {
   presenceSubs.push(handler);
   return () => {
@@ -612,6 +660,14 @@ function requestState() {
   return emitAck("state:request", {
     room: state.roomCode!,
     from: getSessionId(),
+  });
+}
+
+function reportTimestamp(updatedAt: number) {
+  if (!state.roomCode) return;
+  return emitAck("state:report_timestamp", {
+    room: state.roomCode!,
+    updatedAt,
   });
 }
 
@@ -698,11 +754,15 @@ export const rt = {
   subscribeIntent,
   subscribeState,
   subscribeStateRequest,
+  subscribeQueryTimestamp,
+  subscribeProvideSnapshot,
+  subscribeSyncFailed,
   subscribePresence,
   subscribeAction,
   subscribeKicked,
   sendState,
   requestState,
+  reportTimestamp,
   sendAction,
   kickPlayer,
   transferHost,

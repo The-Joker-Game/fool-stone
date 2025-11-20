@@ -19,6 +19,7 @@ export type Snapshot = {
   roundStartScores: Record<string, unknown> | null;
   omenStone?: string | null;
   chatMessages?: Array<unknown>;
+  updatedAt?: number;
 };
 
 export type Room = {

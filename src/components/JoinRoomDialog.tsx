@@ -74,11 +74,8 @@ export function JoinRoomDialog({
                             <InputOTPSlot index={3} />
                         </InputOTPGroup>
                     </InputOTP>
-                    <p className="text-sm text-muted-foreground">
-                        {value.length}/4 位已输入
-                    </p>
                 </div>
-                <DialogFooter className="sm:justify-between">
+                <DialogFooter className="sm:justify-between flex-col gap-2">
                     <Button
                         type="button"
                         variant="outline"
