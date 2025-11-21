@@ -48,7 +48,9 @@ import {
     Gamepad2,
     Wrench,
     User,
-    Pencil, Swords, House
+    Pencil,
+    Swords,
+    House
 } from "lucide-react";
 
 
@@ -732,7 +734,7 @@ export default function FlowerRoom() {
 
     if (flowerPhase === "game_over" && flowerSnapshot && gameResult) {
         return (
-            <div className="min-h-screen p-6 max-w-3xl mx-auto space-y-4">
+            <div className="h-[dvh] p-6 max-w-3xl mx-auto space-y-4">
                 <VantaBackground isNight={isNight} />
                 <div className="flex items-center justify-between">
                     <h1 className={`text-2xl font-bold ${isNight ? "text-white" : ""}`}>花蝴蝶九人局 · 终局结算</h1>
@@ -755,6 +757,7 @@ export default function FlowerRoom() {
                             </Button>
                         )}
                         <Button variant="outline" onClick={leaveRoom}>离开房间</Button>
+                        <LogOut className="h-4 w-4 mr-2" />
                     </div>
                 </div>
                 <Card className={themeClass}>
@@ -820,11 +823,11 @@ export default function FlowerRoom() {
     }
 
     return (
-        <div className="h-screen flex flex-col overflow-hidden">
+        <div className="h-[100dvh] flex flex-col overflow-hidden">
             <VantaBackground isNight={isNight} />
 
             {/* Fixed Top Card - 不滚动 */}
-            <div className="flex-none z-10 p-2 md:p-4">
+            <div className="sticky flex-none z-10 p-2 md:p-4">
                 <Card className={`w-full shadow-lg ${themeClass}`}>
                     <CardHeader className="pb-2 pt-4 px-4">
                         <div className="flex items-center gap-2">

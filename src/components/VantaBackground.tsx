@@ -126,5 +126,5 @@ export function VantaBackground({ isNight }: VantaBackgroundProps) {
 
     }, [isNight, vantaEffect]);
 
-    return <div ref={vantaRef} className="fixed inset-0 -z-10 w-full h-full" />;
+    return <div ref={vantaRef} className="fixed inset-0 -z-10" />;
 }
