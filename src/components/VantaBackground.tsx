@@ -50,9 +50,6 @@ export function VantaBackground({ isNight }: VantaBackgroundProps) {
                     // 初始颜色使用当前的 props
                     ... (isNight ? CONFIG.night : CONFIG.day)
                 });
-                if (effect.renderer) {
-                    effect.renderer.setPixelRatio(1);
-                }
                 // 初始化时同步 ref 状态
                 currentColors.current = isNight ? { ...CONFIG.night } : { ...CONFIG.day };
                 setVantaEffect(effect);
