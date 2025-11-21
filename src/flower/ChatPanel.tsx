@@ -1,329 +1,478 @@
 // src/flower/ChatPanel.tsx
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useEditor, EditorContent, ReactRenderer } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import Mention from "@tiptap/extension-mention";
+import Placeholder from "@tiptap/extension-placeholder";
+import tippy, { type Instance as TippyInstance } from "tippy.js";
+import "tippy.js/dist/tippy.css";
 import Avvvatars from "avvvatars-react";
+import { Send, MessageSquareOff } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
 import type { ChatMessage, ChatMention, FlowerPlayerState } from "./types";
 import { getSessionId } from "../realtime/socket";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Badge } from "@/components/ui/badge";
-import { Send } from "lucide-react";
-import { cn } from "@/lib/utils";
+
+// --- 类型定义 ---
+
+declare global {
+    interface Window {
+        __mentionKeyHandler?: (event: KeyboardEvent) => boolean;
+    }
+}
 
 interface ChatPanelProps {
     messages: ChatMessage[];
     players: FlowerPlayerState[];
     onSendMessage: (content: string, mentions: ChatMention[]) => Promise<{ ok: boolean; error?: string }>;
     mySessionId: string;
+    connected?: boolean; // 新增 connected 属性
 }
 
-export function ChatPanel({ messages, players, onSendMessage, mySessionId }: ChatPanelProps) {
-    const [inputValue, setInputValue] = useState("");
-    const [showMentionMenu, setShowMentionMenu] = useState(false);
-    const [mentionSearchTerm, setMentionSearchTerm] = useState("");
-    const [cursorPosition, setCursorPosition] = useState(0);
-    const inputRef = useRef<HTMLTextAreaElement>(null);
-    const chatContainerRef = useRef<HTMLDivElement>(null);
+interface MentionListProps {
+    items: FlowerPlayerState[];
+    command: (props: { id: string | number; label: string }) => void;
+}
 
-    // Scroll to bottom when new messages arrive
+// --- 提及列表组件 (MentionList) ---
+const MentionList = ({ items, command }: MentionListProps) => {
+    const [selectedIndex, setSelectedIndex] = useState(0);
+
+    const selectItem = useCallback((index: number) => {
+        const item = items[index];
+        if (item) {
+            command({ id: item.seat, label: item.name });
+        }
+    }, [items, command]);
+
+    useEffect(() => setSelectedIndex(0), [items]);
+
     useEffect(() => {
-        if (chatContainerRef.current) {
-            // Use a small timeout to ensure the DOM has updated with the new message
-            setTimeout(() => {
-                if (chatContainerRef.current) {
-                    chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
-                }
-            }, 0);
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "ArrowUp") {
+                setSelectedIndex((prev) => (prev + items.length - 1) % items.length);
+                return true;
+            }
+            if (event.key === "ArrowDown") {
+                setSelectedIndex((prev) => (prev + 1) % items.length);
+                return true;
+            }
+            if (event.key === "Enter") {
+                selectItem(selectedIndex);
+                return true;
+            }
+            return false;
+        };
+
+        window.__mentionKeyHandler = handleKeyDown;
+        return () => { window.__mentionKeyHandler = undefined; };
+    }, [selectedIndex, items, selectItem]);
+
+    if (items.length === 0) return null;
+
+    return (
+        <div className="bg-popover border text-popover-foreground rounded-md shadow-md p-1 min-w-[140px] overflow-hidden">
+            {items.map((item, index) => (
+                <button
+                    key={item.seat}
+                    className={cn(
+                        "w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-sm cursor-pointer outline-none transition-colors",
+                        index === selectedIndex ? "bg-accent text-accent-foreground" : "hover:bg-muted"
+                    )}
+                    onClick={() => selectItem(index)}
+                >
+                    <Avvvatars value={item.name} size={20} style="shape" />
+                    <span className="flex-1 text-left truncate font-medium">{item.name}</span>
+                    <span className="text-xs text-muted-foreground opacity-70">#{item.seat}</span>
+                </button>
+            ))}
+        </div>
+    );
+};
+
+// --- 主组件 ---
+export function ChatPanel({ messages, players, onSendMessage, mySessionId, connected = true }: ChatPanelProps) {
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const [isSending, setIsSending] = useState(false);
+    const [editorContent, setEditorContent] = useState("");
+    const sendMessageRef = useRef<(() => void) | null>(null);
+
+    // 使用 ref 来存储 players，打破 useEditor 的依赖链
+    // 解决 players 更新导致编辑器重置（无法输入/发送）的问题
+    const playersRef = useRef(players);
+    useEffect(() => {
+        playersRef.current = players;
+    }, [players]);
+
+    // 自动滚动到底部
+    useEffect(() => {
+        if (scrollRef.current) {
+            const viewport = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]');
+            if (viewport) {
+                viewport.scrollTop = viewport.scrollHeight;
+            }
         }
     }, [messages]);
 
-    // Filter players for mention suggestions
-    const mentionSuggestions = useMemo(() => {
-        // 包含机器人玩家，但排除自己
-        const activePlayers = players.filter(p => (p.sessionId || p.isBot) && p.sessionId !== getSessionId());
-        if (!mentionSearchTerm) return activePlayers;
-        const search = mentionSearchTerm.toLowerCase();
-        return activePlayers.filter(
-            p => p.name.toLowerCase().includes(search) || `${p.seat}`.includes(search)
-        );
-    }, [players, mentionSearchTerm]);
+    // Tiptap 编辑器配置
+    const editor = useEditor({
+        extensions: [
+            StarterKit,
+            Placeholder.configure({
+                placeholder: "输入消息... (@提及玩家)",
+                emptyEditorClass: "is-editor-empty before:content-[attr(data-placeholder)] before:text-muted-foreground before:float-left before:pointer-events-none before:h-0",
+            }),
+            Mention.configure({
+                HTMLAttributes: {
+                    class: "mention-capsule",
+                },
+                suggestion: {
+                    char: '@',
+                    allowSpaces: true,
+                    allowedPrefixes: null, // 允许在任何字符后触发 @，包括紧跟 mention 后
+                    items: ({ query }) => {
+                        const q = query.toLowerCase();
+                        // 使用 ref 获取最新的 players
+                        return playersRef.current
+                            .filter(p => (p.sessionId || p.isBot) && p.sessionId !== getSessionId())
+                            .filter(p => p.name.toLowerCase().includes(q) || String(p.seat).includes(q))
+                            .slice(0, 5);
+                    },
+                    command: ({ editor, range, props }) => {
+                        // 使用 ProseMirror transaction 直接操作
+                        const { state, view } = editor;
+                        const { schema } = state;
 
-    const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-        const value = e.target.value;
-        const cursorPos = e.target.selectionStart || 0;
+                        // 暂时不删除 @，只替换查询文本
+                        // range.from 是查询文本的开始
+                        const from = range.from;
+                        const to = range.to;
 
-        setInputValue(value);
-        setCursorPosition(cursorPos);
+                        // 检查 @ 前面是否是 mention 节点
+                        // @ 的位置是 from - 1，所以我们要检查 from - 1 的前面
+                        const $atPos = state.doc.resolve(from - 1);
+                        const nodeBefore = $atPos.nodeBefore;
+                        const isPreviousMention = nodeBefore?.type.name === 'mention';
 
-        // Check if user is typing @ for mentions
-        const textBeforeCursor = value.slice(0, cursorPos);
-        const lastAtSymbol = textBeforeCursor.lastIndexOf("@");
+                        // 创建 mention 节点
+                        const mentionNode = schema.nodes.mention.create(props);
 
-        if (lastAtSymbol !== -1 && lastAtSymbol === cursorPos - 1) {
-            // Just typed @
-            setShowMentionMenu(true);
-            setMentionSearchTerm("");
-        } else if (lastAtSymbol !== -1) {
-            // Check if we're still in a mention context
-            const textAfterAt = textBeforeCursor.slice(lastAtSymbol + 1);
-            if (!/\s/.test(textAfterAt)) {
-                setShowMentionMenu(true);
-                setMentionSearchTerm(textAfterAt);
-            } else {
-                setShowMentionMenu(false);
-            }
-        } else {
-            setShowMentionMenu(false);
-        }
-    };
+                        const tr = state.tr;
 
-    const insertMention = (player: FlowerPlayerState) => {
-        const textBeforeCursor = inputValue.slice(0, cursorPosition);
-        const textAfterCursor = inputValue.slice(cursorPosition);
-        const lastAtSymbol = textBeforeCursor.lastIndexOf("@");
+                        if (isPreviousMention) {
+                            // 如果前面是 mention，先在 @ 前面插入一个空格
+                            // @ 的位置是 from - 1
+                            tr.insert(from - 1, schema.text(' '));
+                            // 插入空格后，原来的内容向后移动了 1 位
+                            // 替换查询文本 (from + 1 到 to + 1)
+                            tr.replaceWith(from + 1, to + 1, mentionNode);
+                        } else {
+                            // 否则直接替换查询文本
+                            tr.replaceWith(from, to, mentionNode);
+                        }
 
-        if (lastAtSymbol !== -1) {
-            const mentionText = `@${player.name} `;
-            const newValue =
-                inputValue.slice(0, lastAtSymbol) +
-                mentionText +
-                textAfterCursor;
+                        view.dispatch(tr);
+                    },
+                    render: () => {
+                        let component: ReactRenderer;
+                        let popup: TippyInstance[];
 
-            setInputValue(newValue);
-            setShowMentionMenu(false);
-            setMentionSearchTerm("");
+                        return {
+                            onStart: (props) => {
+                                // 如果没有匹配项（例如只有自己），MentionList 返回 null，此时不应该显示 tippy
+                                if (props.items.length === 0) return;
 
-            // Set cursor position after mention
-            setTimeout(() => {
-                if (inputRef.current) {
-                    const newCursorPos = lastAtSymbol + mentionText.length;
-                    inputRef.current.setSelectionRange(newCursorPos, newCursorPos);
-                    inputRef.current.focus();
+                                component = new ReactRenderer(MentionList, {
+                                    props,
+                                    editor: props.editor,
+                                });
+
+                                if (!props.clientRect) return;
+
+                                popup = tippy("body", {
+                                    getReferenceClientRect: props.clientRect as () => DOMRect,
+                                    appendTo: () => document.body,
+                                    content: component.element,
+                                    showOnCreate: true,
+                                    interactive: true,
+                                    trigger: "manual",
+                                    placement: "top-start",
+                                    arrow: false,
+                                    offset: [0, 8],
+                                });
+                            },
+                            onUpdate(props) {
+                                if (!component || !popup) return;
+                                component.updateProps(props);
+                                if (!props.clientRect) return;
+                                popup[0].setProps({
+                                    getReferenceClientRect: props.clientRect as () => DOMRect,
+                                });
+                            },
+                            onKeyDown(props) {
+                                if (props.event.key === "Escape") {
+                                    popup?.[0].hide();
+                                    return true;
+                                }
+                                if (window.__mentionKeyHandler) {
+                                    return window.__mentionKeyHandler(props.event);
+                                }
+                                return false;
+                            },
+                            onExit() {
+                                popup?.[0].destroy();
+                                component?.destroy();
+                            },
+                        };
+                    },
+                },
+            }),
+        ],
+        editorProps: {
+            attributes: {
+                class: "prose prose-sm focus:outline-none min-h-[44px] max-h-32 overflow-y-auto px-4 py-3",
+                enterkeyhint: "send",
+            },
+            handleKeyDown: (view: any, event: any) => {
+                // Handle Enter key to send message
+                if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    // Trigger send message using ref
+                    if (sendMessageRef.current) {
+                        sendMessageRef.current();
+                    }
+                    return true;
                 }
-            }, 0);
-        }
-    };
 
-    const extractMentions = (text: string): ChatMention[] => {
-        const mentions: ChatMention[] = [];
-        const mentionRegex = /@([^\s@]+)/g;
-        let match;
+                if (event.key === 'Backspace') {
+                    const { state, dispatch } = view;
+                    const { selection } = state;
+                    const { empty, $from } = selection;
 
-        while ((match = mentionRegex.exec(text)) !== null) {
-            const mentionName = match[1];
-            // 匹配玩家时也包含机器人
-            const player = players.find(p => p.name === mentionName && (p.sessionId || p.isBot));
-            if (player) {
-                mentions.push({ seat: player.seat, name: player.name });
+                    if (empty) {
+                        const nodeBefore = $from.nodeBefore;
+                        if (nodeBefore && nodeBefore.type.name === 'mention') {
+                            // 我们正在删除一个 mention
+                            const mentionSize = nodeBefore.nodeSize;
+                            const mentionPos = $from.pos - mentionSize;
+
+                            const $mentionPos = state.doc.resolve(mentionPos);
+                            const nodeBeforeMention = $mentionPos.nodeBefore;
+
+                            // 检查 mention 前面是否有一个空格,且空格前面是另一个 mention
+                            if (nodeBeforeMention && nodeBeforeMention.text === ' ' && nodeBeforeMention.nodeSize === 1) {
+                                const spacePos = mentionPos - 1;
+                                const $spacePos = state.doc.resolve(spacePos);
+                                const nodeBeforeSpace = $spacePos.nodeBefore;
+
+                                if (nodeBeforeSpace && nodeBeforeSpace.type.name === 'mention') {
+                                    // [mention] [mention]| -> 删除空格和当前的 mention
+                                    if (dispatch) {
+                                        dispatch(state.tr.delete(spacePos, $from.pos));
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                return false;
             }
+        },
+        onUpdate: ({ editor }) => {
+            setEditorContent(editor.getText());
+        },
+    }, []); // 依赖项为空，确保编辑器只创建一次
+
+    // 监听连接状态，控制编辑器可编辑性
+    useEffect(() => {
+        if (editor) {
+            editor.setEditable(connected);
         }
+    }, [editor, connected]);
 
-        return mentions;
-    };
+    const handleSendMessage = useCallback(async () => {
+        if (!editor || isSending || !connected) return;
 
-    const handleSendMessage = async () => {
-        const trimmedContent = inputValue.trim();
-        if (!trimmedContent) return;
+        const text = editor.getText().trim();
+        if (!text) return;
 
-        const mentions = extractMentions(trimmedContent);
-        const result = await onSendMessage(trimmedContent, mentions);
+        setIsSending(true);
+
+        const textContent = text;
+        const mentions: ChatMention[] = [];
+        editor.getJSON().content?.forEach((node) => {
+            if (node.type === "paragraph" && node.content) {
+                node.content.forEach((innerNode: any) => {
+                    if (innerNode.type === "mention" && innerNode.attrs) {
+                        mentions.push({
+                            seat: Number(innerNode.attrs.id),
+                            name: innerNode.attrs.label
+                        });
+                    }
+                });
+            }
+        });
+
+        const uniqueMentions = Array.from(new Map(mentions.map(m => [m.seat, m])).values());
+
+        const result = await onSendMessage(textContent, uniqueMentions);
 
         if (result.ok) {
-            setInputValue("");
-            setShowMentionMenu(false);
-            setMentionSearchTerm("");
+            editor.commands.clearContent();
         }
-    };
+        setIsSending(false);
+    }, [editor, isSending, connected, onSendMessage]);
 
-    const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-        if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            if (!showMentionMenu) {
-                handleSendMessage();
-            }
-        } else if (e.key === "Escape") {
-            setShowMentionMenu(false);
-        }
-    };
+    // Update ref to allow keyboard handler to call this function
+    useEffect(() => {
+        sendMessageRef.current = handleSendMessage;
+    }, [handleSendMessage]);
 
-    const renderMessageContent = (message: ChatMessage) => {
-        const parts: React.ReactNode[] = [];
-        let lastIndex = 0;
-        const mentionRegex = /@([^\s@]+)/g;
-        let match;
+    const renderMessageContent = useCallback((msg: ChatMessage) => {
+        if (!msg.mentions || msg.mentions.length === 0) return msg.content;
 
-        while ((match = mentionRegex.exec(message.content)) !== null) {
-            // Add text before mention
-            if (match.index > lastIndex) {
-                parts.push(
-                    <span key={`text-${lastIndex}`}>
-                        {message.content.slice(lastIndex, match.index)}
+        const content = msg.content;
+        const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const names = msg.mentions.map(m => `@${escapeRegExp(m.name)}`).join("|");
+
+        if (!names) return msg.content;
+
+        const regex = new RegExp(`(${names})`, "g");
+        const split = content.split(regex);
+
+        return split.map((part, i) => {
+            const isMention = msg.mentions.some(m => `@${m.name}` === part);
+            if (isMention) {
+                return (
+                    <span key={i} className="mx-0.5 inline-block bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded text-xs font-medium align-middle">
+                        {part}
                     </span>
                 );
             }
+            return part;
+        });
+    }, []);
 
-            const mentionName = match[1];
-            const isMentioned = message.mentions.some(m => m.name === mentionName);
-            const player = players.find(p => p.name === mentionName);
-            const isMe = player ? (player.sessionId === mySessionId || (player.isBot && !player.sessionId)) : false;
-
-            parts.push(
-                <Badge
-                    key={`mention-${match.index}`}
-                    variant={isMe ? "default" : isMentioned ? "secondary" : "outline"}
-                    className={cn(
-                        "inline-flex",
-                        isMe && "bg-primary text-primary-foreground"
-                    )}
-                >
-                    @{mentionName}
-                </Badge>
-            );
-
-            lastIndex = match.index + match[0].length;
-        }
-
-        // Add remaining text
-        if (lastIndex < message.content.length) {
-            parts.push(
-                <span key={`text-${lastIndex}`}>
-                    {message.content.slice(lastIndex)}
-                </span>
-            );
-        }
-
-        return <>{parts}</>;
-    };
-
-    const formatTime = (timestamp: number) => {
-        const date = new Date(timestamp);
-        return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-    };
+    const formatTime = (ts: number) => new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
     return (
-        <Card className="w-full">
-            <CardHeader>
-                <CardTitle>聊天室</CardTitle>
-                <CardDescription>使用 @ 提及其他玩家</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-                {/* Messages Container */}
-                <ScrollArea
-                    ref={chatContainerRef}
-                    className="h-[400px] pr-4"
-                >
-                    <div className="space-y-4">
-                        {messages.length === 0 ? (
-                            <div className="flex items-center justify-center h-[300px] text-muted-foreground text-sm">
-                                暂无消息，开始聊天吧！
-                            </div>
-                        ) : (
-                            messages.map((message) => {
-                                const isMyMessage = message.sessionId === mySessionId;
-                                const isMentioned = message.mentions.some(
-                                    m => {
-                                        const player = players.find(p => p.seat === m.seat);
-                                        return player ? (player.sessionId === mySessionId || (player.isBot && !player.sessionId)) : false;
-                                    }
-                                );
-
-                                return (
-                                    <div
-                                        key={message.id}
-                                        className={cn(
-                                            "flex gap-3",
-                                            isMyMessage && "flex-row-reverse"
-                                        )}
-                                    >
-                                        {/* Avatar */}
-                                        <div className="flex-shrink-0">
-                                            <Avvvatars
-                                                value={message.senderName}
-                                                size={40}
-                                                style="shape"
-                                            />
-                                        </div>
-
-                                        {/* Message Content */}
-                                        <div className={cn(
-                                            "flex flex-col gap-1 max-w-[70%]",
-                                            isMyMessage && "items-end"
-                                        )}>
-                                            <div className="flex items-baseline gap-2 text-xs text-muted-foreground">
-                                                <span className="font-medium">{message.senderName}</span>
-                                                <span>座位{message.senderSeat}</span>
-                                                <span>{formatTime(message.timestamp)}</span>
-                                            </div>
-                                            <div
-                                                className={cn(
-                                                    "px-4 py-2 rounded-lg text-sm break-words inline-flex flex-wrap items-center gap-1",
-                                                    isMyMessage
-                                                        ? "bg-primary text-primary-foreground"
-                                                        : isMentioned
-                                                            ? "bg-yellow-50 border-2 border-yellow-300 dark:bg-yellow-950 dark:border-yellow-700"
-                                                            : "bg-muted"
-                                                )}
-                                            >
-                                                {renderMessageContent(message)}
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })
-                        )}
-                    </div>
-                </ScrollArea>
-
-                {/* Input Container */}
-                <div className="relative space-y-2">
-                    {/* Mention Suggestions */}
-                    {showMentionMenu && mentionSuggestions.length > 0 && (
-                        <Card className="absolute bottom-full left-0 right-0 mb-2 max-h-40 overflow-y-auto z-10">
-                            <CardContent className="p-2">
-                                {mentionSuggestions.map((player) => (
-                                    <button
-                                        key={player.seat}
-                                        className="w-full px-3 py-2 text-left hover:bg-accent rounded-md flex items-center gap-3 transition-colors"
-                                        onClick={() => insertMention(player)}
-                                        type="button"
-                                    >
-                                        <Avvvatars
-                                            value={player.name}
-                                            size={32}
-                                            style="shape"
-                                        />
-                                        <div className="flex flex-col">
-                                            <span className="font-medium text-sm">{player.name}</span>
-                                            <span className="text-xs text-muted-foreground">座位{player.seat}</span>
-                                        </div>
-                                    </button>
-                                ))}
-                            </CardContent>
-                        </Card>
+        <div className="flex flex-col h-[560px] border rounded-xl bg-[#F5F7FB] overflow-hidden shadow-sm">
+            <ScrollArea ref={scrollRef} className="flex-1 p-4">
+                <div className="space-y-6 pb-2">
+                    {messages.length === 0 && (
+                        <div className="flex flex-col items-center justify-center h-40 text-muted-foreground text-sm opacity-60">
+                            <MessageSquareOff className="h-10 w-10 mb-2 stroke-1" />
+                            <p>聊天室暂无消息</p>
+                        </div>
                     )}
 
-                    <div className="flex gap-2">
-                        <Textarea
-                            ref={inputRef}
-                            value={inputValue}
-                            onChange={handleInputChange}
-                            onKeyDown={handleKeyDown}
-                            placeholder="输入消息... (使用 @ 提及玩家)"
-                            className="resize-none"
-                            rows={2}
-                        />
-                        <Button
-                            onClick={handleSendMessage}
-                            disabled={!inputValue.trim()}
-                            size="icon"
-                            className="h-16 w-16 flex-shrink-0"
-                        >
-                            <Send className="h-4 w-4" />
-                        </Button>
-                    </div>
+                    {messages.map((msg, idx) => {
+                        const isMe = msg.sessionId === mySessionId;
+                        const showTime = idx === 0 || (msg.timestamp - messages[idx - 1].timestamp > 3 * 60 * 1000);
+                        const isSystem = !msg.sessionId;
+
+                        if (isSystem) {
+                            return (
+                                <div key={msg.id} className="flex justify-center my-4">
+                                    <span className="bg-gray-200/60 text-gray-500 text-xs px-3 py-1 rounded-full">
+                                        {msg.content}
+                                    </span>
+                                </div>
+                            );
+                        }
+
+                        return (
+                            <div key={msg.id} className="space-y-2">
+                                {showTime && (
+                                    <div className="flex justify-center">
+                                        <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-sm">
+                                            {formatTime(msg.timestamp)}
+                                        </span>
+                                    </div>
+                                )}
+
+                                <div className={cn("flex gap-3", isMe ? "flex-row-reverse" : "flex-row")}>
+                                    {/* 头像 */}
+                                    <div className="flex-shrink-0 flex flex-col justify-end">
+                                        <Avvvatars value={msg.senderName} size={36} style="shape" />
+                                    </div>
+
+                                    {/* 气泡主体 */}
+                                    <div className={cn("flex flex-col max-w-[75%]", isMe ? "items-end" : "items-start")}>
+                                        {/* 昵称和座次 (自己和别人的都显示) */}
+                                        <div className={cn(
+                                            "flex items-center gap-1 mb-1",
+                                            isMe ? "mr-1 flex-row-reverse" : "ml-1 flex-row"
+                                        )}>
+                                            <span className="text-xs text-gray-500 font-medium">{msg.senderName}</span>
+                                            <span className="text-[10px] text-gray-400 bg-gray-100 px-1 rounded">#{msg.senderSeat}</span>
+                                        </div>
+
+                                        <div
+                                            className={cn(
+                                                "px-4 py-2.5 text-[15px] leading-relaxed shadow-sm break-words relative min-w-[3rem]",
+                                                isMe
+                                                    ? "bg-primary text-primary-foreground rounded-2xl rounded-tr-sm"
+                                                    : "bg-white text-gray-800 border border-gray-100 rounded-2xl rounded-tl-sm"
+                                            )}
+                                        >
+                                            {renderMessageContent(msg)}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
                 </div>
-            </CardContent>
-        </Card>
+            </ScrollArea>
+
+            {/* 底部输入栏 */}
+            <div className="bg-white border-t p-3 flex items-end gap-2 relative z-10">
+                <div className={cn(
+                    "flex-1 bg-gray-50 border border-gray-200 rounded-2xl focus-within:ring-2 focus-within:ring-primary/20 focus-within:bg-white focus-within:border-primary/30 transition-all overflow-hidden",
+                    !connected && "opacity-60 bg-gray-100 cursor-not-allowed"
+                )}>
+                    <EditorContent editor={editor} />
+                </div>
+                <Button
+                    onClick={handleSendMessage}
+                    disabled={!connected || !editor || !editorContent.trim() || isSending}
+                    size="icon"
+                    className={cn(
+                        "h-11 w-11 rounded-full flex-shrink-0 transition-all shadow-sm",
+                        (!connected || !editor || !editorContent.trim() || isSending) ? "bg-gray-200 text-gray-400" : "bg-primary hover:bg-primary/90"
+                    )}
+                >
+                    <Send className="h-5 w-5 ml-0.5" />
+                </Button>
+            </div>
+
+            <style>{`
+        .ProseMirror p { margin: 0; }
+        .mention-capsule {
+          color: #2563eb;
+          background-color: #eff6ff;
+          border-radius: 0.375rem;
+          padding: 0.1rem 0.3rem;
+          margin: 0 2px;
+          font-size: 0.9em;
+          font-weight: 600;
+          display: inline-block;
+          border: 1px solid rgba(37, 99, 235, 0.1);
+          vertical-align: baseline;
+        }
+        .ProseMirror { caret-color: hsl(var(--primary)); }
+        .is-editor-empty:before { color: #9ca3af; pointer-events: none; }
+        /* 禁用状态下隐藏 placeholder */
+        .ProseMirror[contenteditable="false"] { color: #9ca3af; }
+        .tippy-box {
+            background-color: transparent !important;
+            box-shadow: none !important;
+            border: none !important;
+        }
+      `}</style>
+        </div>
     );
 }

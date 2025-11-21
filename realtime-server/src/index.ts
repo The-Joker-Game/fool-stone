@@ -30,7 +30,7 @@ type Room = {
   hostSessionId: string;
   createdAt: number;
   lastKeepaliveAt?: number;
-  // snapshot: SnapshotWithPlayers | null; // 禁用服务器快照保存
+  snapshot: any | null; // 服务器权威快照（存储完整快照，不限于特定游戏）
   expectedSnapshotProvider?: string;
   pendingSync?: {
     requester: string;
@@ -253,7 +253,7 @@ io.on("connection", (socket: Socket) => {
           hostSessionId: sessionId,
           createdAt: Date.now(),
           lastKeepaliveAt: Date.now(),
-          // snapshot: null, // 禁用服务器快照保存
+          snapshot: null, // 初始化为 null，等待客户端上传
         };
 
         const seat = nextAvailableSeat(room) ?? 1;
@@ -325,6 +325,11 @@ io.on("connection", (socket: Socket) => {
         handleRoomPopulationChange(room);
         broadcastPresence(room);
         cb({ ok: true, users: listUsers(room), me });
+
+        // 如果服务器有权威快照，立即下发给新加入的客户端
+        if (room.snapshot) {
+          socket.emit("state:full", { snapshot: room.snapshot, from: "server", at: Date.now() });
+        }
       } catch {
         cb({ ok: false, msg: "room:join 失败" });
       }
@@ -378,6 +383,11 @@ io.on("connection", (socket: Socket) => {
         handleRoomPopulationChange(room);
         broadcastPresence(room);
         cb({ ok: true, users: listUsers(room), me });
+
+        // 如果服务器有权威快照，立即下发给重连的客户端
+        if (room.snapshot) {
+          socket.emit("state:full", { snapshot: room.snapshot, from: "server", at: Date.now() });
+        }
       } catch (err) {
         console.error("room:resume 失败", err);
         cb({ ok: false, msg: "room:resume 失败" });
@@ -748,7 +758,7 @@ io.on("connection", (socket: Socket) => {
     // }
   }
 
-  // 房主广播快照
+  // 接收并保存快照（允许任何房间成员更新）
   socket.on(
     "state:full",
     (
@@ -759,13 +769,14 @@ io.on("connection", (socket: Socket) => {
       const r = room ? rooms.get(room) : undefined;
       if (!r) return cb({ ok: false });
 
-      // 允许房主 或 被指定的提供者 上传快照
-      const isHost = socket.data.sessionId === r.hostSessionId;
-      const isProvider = socket.data.sessionId === r.expectedSnapshotProvider;
+      // 验证发送者是否在房间内
+      const senderSessionId = socket.data.sessionId;
+      if (!senderSessionId || !r.users.has(senderSessionId)) {
+        return cb({ ok: false });
+      }
 
-      if (!isHost && !isProvider) return cb({ ok: false });
-
-      if (isProvider) {
+      // 清除 expectedSnapshotProvider（如果发送者是被指定的提供者）
+      if (senderSessionId === r.expectedSnapshotProvider) {
         r.expectedSnapshotProvider = undefined;
       }
 
@@ -773,8 +784,8 @@ io.on("connection", (socket: Socket) => {
       const serverTime = Date.now();
       snapshot.updatedAt = serverTime;
 
-      // 不再保存快照到服务器
-      // r.snapshot = snapshot as SnapshotWithPlayers;
+      // 服务器保存权威快照（接受任何房间成员的更新）
+      r.snapshot = snapshot;
 
       if (target) {
         for (const sid of io.sockets.adapter.rooms.get(room) || []) {

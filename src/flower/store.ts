@@ -209,8 +209,7 @@ export const useFlowerStore = create<FlowerStore>()(
     broadcastSnapshot: async (targetSessionId?: string) => {
       const snapshot = get().snapshot;
       const roomCode = snapshot?.roomCode ?? rt.getRoom();
-      const isHost = snapshot?.hostSessionId === getSessionId();
-      if (!snapshot || !roomCode || !isHost) return;
+      if (!snapshot || !roomCode) return;
       try {
         await rt.sendState(snapshot as any, targetSessionId);
       } catch (err) {
@@ -247,6 +246,10 @@ export const useFlowerStore = create<FlowerStore>()(
       // Send via intent (server will broadcast to all clients)
       try {
         await rt.sendIntent("flower:chat_message", message);
+
+        // 广播快照到服务器，确保聊天消息被服务器保存
+        await get().broadcastSnapshot();
+
         return { ok: true };
       } catch (err) {
         // const msg = err instanceof Error ? err.message : String(err);
