@@ -40,8 +40,8 @@ export function VantaBackground({ isNight }: VantaBackgroundProps) {
                 const effect = FOG({
                     el: vantaRef.current,
                     THREE: THREE,
-                    mouseControls: true,
-                    touchControls: true,
+                    mouseControls: false,
+                    touchControls: false,
                     gyroControls: false,
                     minHeight: 200.00,
                     minWidth: 200.00,
@@ -50,6 +50,9 @@ export function VantaBackground({ isNight }: VantaBackgroundProps) {
                     // 初始颜色使用当前的 props
                     ... (isNight ? CONFIG.night : CONFIG.day)
                 });
+                if (effect.renderer) {
+                    effect.renderer.setPixelRatio(1);
+                }
                 // 初始化时同步 ref 状态
                 currentColors.current = isNight ? { ...CONFIG.night } : { ...CONFIG.day };
                 setVantaEffect(effect);
