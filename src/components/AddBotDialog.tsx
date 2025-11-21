@@ -64,7 +64,7 @@ export function AddBotDialog({
                         autoFocus
                     />
                 </div>
-                <DialogFooter className="sm:justify-between">
+                <DialogFooter className="sm:justify-between gap-2">
                     <Button
                         type="button"
                         variant="outline"
