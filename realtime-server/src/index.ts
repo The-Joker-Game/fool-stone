@@ -429,6 +429,44 @@ io.on("connection", (socket: Socket) => {
     }
   );
 
+  /** 更新玩家昵称 */
+  socket.on(
+    "room:update_name",
+    (
+      payload: { code: string; sessionId: string; name: string },
+      cb: (resp: { ok: boolean; msg?: string }) => void
+    ) => {
+      try {
+        const { code, sessionId, name } = payload || {};
+        const room = code ? rooms.get(code) : undefined;
+        if (!room) return cb({ ok: false, msg: "房间不存在" });
+        const u = sessionId ? room.users.get(sessionId) : undefined;
+        if (!u) return cb({ ok: false, msg: "玩家不存在" });
+
+        // Update presence
+        const newName = name?.trim() || u.name;
+        room.users.set(sessionId, { ...u, name: newName });
+        broadcastPresence(room);
+
+        // Update snapshot if exists
+        if (room.snapshot && room.snapshot.players) {
+          const players = room.snapshot.players as any[];
+          const playerIndex = players.findIndex((p: any) => p.sessionId === sessionId);
+          if (playerIndex !== -1) {
+            players[playerIndex].name = newName;
+            // Force update timestamp to make it authoritative
+            room.snapshot.updatedAt = Date.now();
+            io.to(code).emit("state:full", { snapshot: room.snapshot, from: "server", at: Date.now() });
+          }
+        }
+
+        cb({ ok: true });
+      } catch {
+        cb({ ok: false, msg: "room:update_name 失败" });
+      }
+    }
+  );
+
   /** 房主主动交接房主身份 */
   socket.on(
     "room:transfer_host",

@@ -20,6 +20,7 @@ interface ConfirmDialogProps {
     confirmText?: string;
     cancelText?: string;
     variant?: "default" | "destructive";
+    isNight?: boolean;
 }
 
 export function ConfirmDialog({
@@ -32,6 +33,7 @@ export function ConfirmDialog({
     confirmText = "确认",
     cancelText = "取消",
     variant = "default",
+    isNight = false,
 }: ConfirmDialogProps) {
     const handleConfirm = () => {
         onConfirm();
@@ -45,18 +47,18 @@ export function ConfirmDialog({
 
     return (
         <AlertDialog open={open} onOpenChange={onOpenChange}>
-            <AlertDialogContent>
+            <AlertDialogContent className={isNight ? "backdrop-blur-sm bg-gray-900/80 text-white border-white/20" : "backdrop-blur-sm bg-white/80 text-slate-900 border-white/40"}>
                 <AlertDialogHeader>
                     <AlertDialogTitle>{title}</AlertDialogTitle>
                     <AlertDialogDescription>{description}</AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                    <AlertDialogCancel onClick={handleCancel}>
+                    <AlertDialogCancel onClick={handleCancel} className={isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}>
                         {cancelText}
                     </AlertDialogCancel>
                     <AlertDialogAction
                         onClick={handleConfirm}
-                        className={variant === "destructive" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : ""}
+                        className={variant === "destructive" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : isNight ? "bg-white text-black hover:bg-white/90" : ""}
                     >
                         {confirmText}
                     </AlertDialogAction>
@@ -77,7 +79,7 @@ interface ConfirmOptions {
     variant?: "default" | "destructive";
 }
 
-export function useConfirm() {
+export function useConfirm(isNight: boolean = false) {
     const [isOpen, setIsOpen] = useState(false);
     const [config, setConfig] = useState<ConfirmOptions>({
         title: "",
@@ -120,6 +122,7 @@ export function useConfirm() {
             variant={config.variant}
             onConfirm={handleConfirm}
             onCancel={handleCancel}
+            isNight={isNight}
         />
     );
 

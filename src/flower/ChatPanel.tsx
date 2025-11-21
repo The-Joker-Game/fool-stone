@@ -7,7 +7,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import tippy, { type Instance as TippyInstance } from "tippy.js";
 import "tippy.js/dist/tippy.css";
 import Avvvatars from "avvvatars-react";
-import { Send, MessageSquareOff } from "lucide-react";
+import { Send, MessageSquareOff, ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
@@ -28,6 +28,7 @@ interface ChatPanelProps {
     onSendMessage: (content: string, mentions: ChatMention[]) => Promise<{ ok: boolean; error?: string }>;
     mySessionId: string;
     connected?: boolean; // 新增 connected 属性
+    isNight?: boolean;
 }
 
 interface MentionListProps {
@@ -92,7 +93,7 @@ const MentionList = ({ items, command }: MentionListProps) => {
 };
 
 // --- 主组件 ---
-export function ChatPanel({ messages, players, onSendMessage, mySessionId, connected = true }: ChatPanelProps) {
+export function ChatPanel({ messages, players, onSendMessage, mySessionId, connected = true, isNight = false }: ChatPanelProps) {
     const scrollRef = useRef<HTMLDivElement>(null);
     const [isSending, setIsSending] = useState(false);
     const [editorContent, setEditorContent] = useState("");
@@ -105,15 +106,38 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
         playersRef.current = players;
     }, [players]);
 
+    const [isAtBottom, setIsAtBottom] = useState(true);
+    const [lastReadTimestamp, setLastReadTimestamp] = useState(0);
+
+    // 滚动监听
+    const handleScroll = useCallback(() => {
+        if (!scrollRef.current) return;
+        const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+        const isBottom = scrollHeight - scrollTop - clientHeight < 50;
+        setIsAtBottom(isBottom);
+
+        if (isBottom && messages.length > 0) {
+            // 如果滚动到底部，更新最后阅读时间
+            setLastReadTimestamp(Math.max(lastReadTimestamp, messages[messages.length - 1].timestamp));
+        }
+    }, [messages, lastReadTimestamp]);
+
     // 自动滚动到底部
     useEffect(() => {
-        if (scrollRef.current) {
-            const viewport = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]');
-            if (viewport) {
-                viewport.scrollTop = viewport.scrollHeight;
+        if (isAtBottom && scrollRef.current) {
+            // 使用 setTimeout 确保 DOM 已更新
+            setTimeout(() => {
+                if (scrollRef.current) {
+                    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+                }
+            }, 0);
+
+            // 如果自动滚动了，也更新阅读状态
+            if (messages.length > 0) {
+                setLastReadTimestamp(prev => Math.max(prev, messages[messages.length - 1].timestamp));
             }
         }
-    }, [messages]);
+    }, [messages, isAtBottom]);
 
     // Tiptap 编辑器配置
     const editor = useEditor({
@@ -237,6 +261,14 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
             handleKeyDown: (view: any, event: any) => {
                 // Handle Enter key to send message
                 if (event.key === 'Enter' && !event.shiftKey) {
+                    // If mention popup is open, let it handle the Enter key
+                    if (window.__mentionKeyHandler) {
+                        const handled = window.__mentionKeyHandler(event);
+                        if (handled) {
+                            return true;
+                        }
+                    }
+
                     event.preventDefault();
                     // Trigger send message using ref
                     if (sendMessageRef.current) {
@@ -357,12 +389,27 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
 
     const formatTime = (ts: number) => new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
+    const unreadCount = messages.filter(m => m.timestamp > lastReadTimestamp).length;
+
+    const scrollToBottom = () => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+    };
+
     return (
-        <div className="flex flex-col h-[560px] border rounded-xl bg-[#F5F7FB] overflow-hidden shadow-sm">
-            <ScrollArea ref={scrollRef} className="flex-1 p-4">
+        <div className={cn(
+            "flex flex-col h-[560px] border rounded-xl overflow-hidden shadow-sm relative transition-colors duration-500",
+            isNight ? "bg-black/20 border-white/10" : "bg-[#F5F7FB]/80 border-gray-200"
+        )}>
+            <ScrollArea
+                ref={scrollRef}
+                className="flex-1 p-4"
+                onScroll={handleScroll}
+            >
                 <div className="space-y-6 pb-2">
                     {messages.length === 0 && (
-                        <div className="flex flex-col items-center justify-center h-40 text-muted-foreground text-sm opacity-60">
+                        <div className={cn("flex flex-col items-center justify-center h-40 text-sm opacity-60", isNight ? "text-white/50" : "text-muted-foreground")}>
                             <MessageSquareOff className="h-10 w-10 mb-2 stroke-1" />
                             <p>聊天室暂无消息</p>
                         </div>
@@ -383,11 +430,24 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
                             );
                         }
 
+                        const isUnread = msg.timestamp > lastReadTimestamp;
+                        const showUnreadDivider = isUnread && (idx === 0 || messages[idx - 1].timestamp <= lastReadTimestamp);
+
                         return (
                             <div key={msg.id} className="space-y-2">
+                                {showUnreadDivider && (
+                                    <div className="flex items-center justify-center my-4 opacity-80">
+                                        <div className="h-px bg-red-200 flex-1"></div>
+                                        <span className="px-3 text-[10px] text-red-400 font-medium bg-[#F5F7FB]">新消息</span>
+                                        <div className="h-px bg-red-200 flex-1"></div>
+                                    </div>
+                                )}
                                 {showTime && (
                                     <div className="flex justify-center">
-                                        <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-sm">
+                                        <span className={cn(
+                                            "text-[10px] px-2 py-0.5 rounded-sm",
+                                            isNight ? "text-white/60 bg-white/10" : "text-gray-400 bg-gray-100"
+                                        )}>
                                             {formatTime(msg.timestamp)}
                                         </span>
                                     </div>
@@ -406,8 +466,8 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
                                             "flex items-center gap-1 mb-1",
                                             isMe ? "mr-1 flex-row-reverse" : "ml-1 flex-row"
                                         )}>
-                                            <span className="text-xs text-gray-500 font-medium">{msg.senderName}</span>
-                                            <span className="text-[10px] text-gray-400 bg-gray-100 px-1 rounded">#{msg.senderSeat}</span>
+                                            <span className={cn("text-xs font-medium", isNight ? "text-white/70" : "text-gray-500")}>{msg.senderName}</span>
+                                            <span className={cn("text-[10px] px-1 rounded", isNight ? "text-white/50 bg-white/10" : "text-gray-400 bg-gray-100")}>#{msg.senderSeat}</span>
                                         </div>
 
                                         <div
@@ -415,7 +475,12 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
                                                 "px-4 py-2.5 text-[15px] leading-relaxed shadow-sm break-words relative min-w-[3rem]",
                                                 isMe
                                                     ? "bg-primary text-primary-foreground rounded-2xl rounded-tr-sm"
-                                                    : "bg-white text-gray-800 border border-gray-100 rounded-2xl rounded-tl-sm"
+                                                    : cn(
+                                                        "rounded-2xl rounded-tl-sm border",
+                                                        isNight
+                                                            ? "bg-white/10 text-white border-white/10"
+                                                            : "bg-white text-gray-800 border-gray-100"
+                                                    )
                                             )}
                                         >
                                             {renderMessageContent(msg)}
@@ -428,11 +493,23 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
                 </div>
             </ScrollArea>
 
+            {/* 新消息提示悬浮按钮 */}
+            {!isAtBottom && unreadCount > 0 && (
+                <button
+                    onClick={scrollToBottom}
+                    className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-blue-500 hover:bg-blue-600 text-white text-xs px-3 py-1.5 rounded-full shadow-md z-20 flex items-center gap-1.5 transition-all animate-in fade-in slide-in-from-bottom-2 cursor-pointer"
+                >
+                    <ArrowDown className="w-3 h-3" />
+                    <span>{unreadCount} 条新消息</span>
+                </button>
+            )}
+
             {/* 底部输入栏 */}
-            <div className="bg-white border-t p-3 flex items-end gap-2 relative z-10">
+            <div className={cn("border-t p-3 flex items-end gap-2 relative z-10", isNight ? "bg-black/40 border-white/10" : "bg-white border-gray-200")}>
                 <div className={cn(
-                    "flex-1 bg-gray-50 border border-gray-200 rounded-2xl focus-within:ring-2 focus-within:ring-primary/20 focus-within:bg-white focus-within:border-primary/30 transition-all overflow-hidden",
-                    !connected && "opacity-60 bg-gray-100 cursor-not-allowed"
+                    "flex-1 border rounded-2xl focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary/30 transition-all overflow-hidden",
+                    isNight ? "bg-white/5 border-white/10 text-white focus-within:bg-black/40" : "bg-gray-50 border-gray-200 focus-within:bg-white",
+                    !connected && "opacity-60 cursor-not-allowed"
                 )}>
                     <EditorContent editor={editor} />
                 </div>

@@ -1,5 +1,4 @@
-// src/components/JoinRoomDialog.tsx
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
     Dialog,
     DialogContent,
@@ -9,34 +8,37 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import {
-    InputOTP,
-    InputOTPGroup,
-    InputOTPSlot,
-} from "@/components/ui/input-otp";
+import { Input } from "@/components/ui/input";
 
-interface JoinRoomDialogProps {
+interface EditNameDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     defaultValue?: string;
-    onConfirm: (roomCode: string) => void;
+    onConfirm: (name: string) => void;
     onCancel?: () => void;
     isNight?: boolean;
 }
 
-export function JoinRoomDialog({
+export function EditNameDialog({
     open,
     onOpenChange,
     defaultValue = "",
     onConfirm,
     onCancel,
     isNight = false,
-}: JoinRoomDialogProps) {
+}: EditNameDialogProps) {
     const [value, setValue] = useState(defaultValue);
 
+    // Reset value when dialog opens with new default
+    useEffect(() => {
+        if (open) {
+            setValue(defaultValue);
+        }
+    }, [open, defaultValue]);
+
     const handleConfirm = () => {
-        if (value.length === 4) {
-            onConfirm(value);
+        if (value.trim()) {
+            onConfirm(value.trim());
             onOpenChange(false);
         }
     };
@@ -47,7 +49,7 @@ export function JoinRoomDialog({
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === "Enter" && value.length === 4) {
+        if (e.key === "Enter" && value.trim()) {
             handleConfirm();
         }
     };
@@ -56,26 +58,20 @@ export function JoinRoomDialog({
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className={`sm:max-w-md ${isNight ? "backdrop-blur-sm bg-gray-900/80 text-white border-white/20" : "backdrop-blur-sm bg-white/80 text-slate-900 border-white/40"}`}>
                 <DialogHeader>
-                    <DialogTitle>加入房间</DialogTitle>
-                    <DialogDescription>
-                        请输入四位房间号
+                    <DialogTitle>修改昵称</DialogTitle>
+                    <DialogDescription className={isNight ? "text-white/70" : ""}>
+                        请输入新的昵称
                     </DialogDescription>
                 </DialogHeader>
-                <div className="flex flex-col items-center gap-4 py-4">
-                    <InputOTP
-                        maxLength={4}
+                <div className="py-4">
+                    <Input
                         value={value}
-                        onChange={setValue}
+                        onChange={(e) => setValue(e.target.value)}
                         onKeyDown={handleKeyDown}
+                        placeholder="请输入昵称"
+                        className={`text-lg h-12 ${isNight ? "bg-black/20 border-white/20 text-white placeholder:text-white/40" : ""}`}
                         autoFocus
-                    >
-                        <InputOTPGroup>
-                            <InputOTPSlot index={0} />
-                            <InputOTPSlot index={1} />
-                            <InputOTPSlot index={2} />
-                            <InputOTPSlot index={3} />
-                        </InputOTPGroup>
-                    </InputOTP>
+                    />
                 </div>
                 <DialogFooter className="sm:justify-between flex-col gap-2">
                     <Button
@@ -90,9 +86,9 @@ export function JoinRoomDialog({
                         type="button"
                         className={isNight ? "bg-white text-black hover:bg-white/90" : ""}
                         onClick={handleConfirm}
-                        disabled={value.length !== 4}
+                        disabled={!value.trim()}
                     >
-                        加入房间
+                        确定
                     </Button>
                 </DialogFooter>
             </DialogContent>
@@ -100,8 +96,8 @@ export function JoinRoomDialog({
     );
 }
 
-// Hook for using join room dialog
-export function useJoinRoomDialog(isNight: boolean = false) {
+// Hook for using edit name dialog
+export function useEditNameDialog(isNight: boolean = false) {
     const [isOpen, setIsOpen] = useState(false);
     const [defaultValue, setDefaultValue] = useState("");
     const [resolvePromise, setResolvePromise] = useState<((value: string | null) => void) | null>(null);
@@ -114,9 +110,9 @@ export function useJoinRoomDialog(isNight: boolean = false) {
         });
     };
 
-    const handleConfirm = (roomCode: string) => {
+    const handleConfirm = (name: string) => {
         if (resolvePromise) {
-            resolvePromise(roomCode);
+            resolvePromise(name);
             setResolvePromise(null);
         }
         setIsOpen(false);
@@ -130,8 +126,8 @@ export function useJoinRoomDialog(isNight: boolean = false) {
         setIsOpen(false);
     };
 
-    const JoinRoomDialogComponent = () => (
-        <JoinRoomDialog
+    const EditNameDialogComponent = () => (
+        <EditNameDialog
             open={isOpen}
             onOpenChange={setIsOpen}
             defaultValue={defaultValue}
@@ -141,5 +137,5 @@ export function useJoinRoomDialog(isNight: boolean = false) {
         />
     );
 
-    return { showJoinRoomDialog: showDialog, JoinRoomDialogComponent };
+    return { showEditNameDialog: showDialog, EditNameDialogComponent };
 }

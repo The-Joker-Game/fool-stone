@@ -738,6 +738,24 @@ async function setReady(code: string, ready: boolean) {
   });
 }
 
+/** 新增：更新昵称（对接后端 room:update_name） */
+async function updateName(code: string, name: string) {
+  return emitAck("room:update_name", {
+    code,
+    sessionId: getSessionId(),
+    name,
+  });
+}
+
+/** 新增：获取房间用户列表（对接 presence:list） */
+async function getRoomUsers(code: string): Promise<PresenceUser[]> {
+  const resp = await emitAck<{ code: string }, PresenceListAck>("presence:list", { code });
+  if (resp?.ok && Array.isArray(resp.users)) {
+    return resp.users;
+  }
+  return [];
+}
+
 /** ===== 导出 API ===== */
 export const rt = {
   // 连接
@@ -776,7 +794,9 @@ export const rt = {
   createFlowerRoom,
   joinFlowerRoom,
   setReady,
+  updateName,
   addBotToRoom,
+  getRoomUsers,
 };
 
 export default rt;

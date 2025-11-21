@@ -1,24 +1,23 @@
 // src/FlowerRoom.tsx
-import {useCallback, useEffect, useMemo, useRef, useState} from "react";
-import {rt, getSessionId, type PresenceState} from "./realtime/socket";
-import type {FlowerPlayerState, FlowerRole, FlowerPhase, ChatMessage} from "./flower/types";
-import {useFlowerStore} from "./flower/store";
-import type {FlowerStore} from "./flower/store";
-import type {SubmitNightActionPayload, SubmitDayVotePayload} from "./flower/engine";
-import type {WakeLockSentinel} from "./types";
-import {ChatPanel} from "./flower/ChatPanel";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { rt, getSessionId, type PresenceState } from "./realtime/socket";
+import type { FlowerPlayerState, FlowerRole, FlowerPhase, ChatMessage } from "./flower/types";
+import { useFlowerStore } from "./flower/store";
+import type { FlowerStore } from "./flower/store";
+import type { SubmitNightActionPayload, SubmitDayVotePayload } from "./flower/engine";
+import type { WakeLockSentinel } from "./types";
+import { ChatPanel } from "./flower/ChatPanel";
 import {
     Card,
     CardContent,
     CardHeader,
     CardTitle,
 } from "@/components/ui/card";
-import {Button} from "@/components/ui/button";
-import {Input} from "@/components/ui/input";
-import {Badge} from "@/components/ui/badge";
-import {Separator} from "@/components/ui/separator";
-import {ScrollArea} from "@/components/ui/scroll-area";
-import {Accordion, AccordionContent, AccordionItem, AccordionTrigger} from "@/components/ui/accordion";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import {
     Table,
     TableBody,
@@ -27,11 +26,13 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
-import {useConfirm} from "@/components/ConfirmDialog";
-import {useAlert} from "@/components/AlertMessage";
-import {useJoinRoomDialog} from "@/components/JoinRoomDialog";
-import {TargetSelectionDrawer} from "@/components/TargetSelectionDrawer";
-import {useAddBotDialog} from "@/components/AddBotDialog";
+import { useConfirm } from "@/components/ConfirmDialog";
+import { useAlert } from "@/components/AlertMessage";
+import { useJoinRoomDialog } from "@/components/JoinRoomDialog";
+import { TargetSelectionDrawer } from "@/components/TargetSelectionDrawer";
+import { useAddBotDialog } from "@/components/AddBotDialog";
+import { useEditNameDialog } from "@/components/EditNameDialog";
+import { VantaBackground } from "@/components/VantaBackground";
 import Avvvatars from "avvvatars-react";
 import {
     Users,
@@ -46,7 +47,8 @@ import {
     Sun,
     Gamepad2,
     Wrench,
-    User
+    User,
+    Pencil, Swords, House
 } from "lucide-react";
 
 
@@ -55,6 +57,27 @@ function randName() {
     const a = Math.random().toString(36).slice(2, 4);
     const b = Math.random().toString(36).slice(2, 4);
     return `玩家-${a}${b}`;
+}
+
+const AI_NAMES = [
+    "ChatGPT",
+    "Claude",
+    "Gemini",
+    "Llama",
+    "DeepSeek",
+    "通义千问",
+    "豆包",
+    "文心一言",
+    "Kimi"
+];
+
+const isFakeBot = (name: string | undefined) => name?.endsWith("\u200B") ?? false;
+
+function getAvailableAiName(usedNames: Set<string>): string {
+    console.log("getAvailableAiName", usedNames);
+    const available = AI_NAMES.filter(n => !usedNames.has(n));
+    if (available.length === 0) return randomFrom(AI_NAMES)!;
+    return randomFrom(available)!;
 }
 
 const isUserReady = (u: unknown): boolean => !!(u as any)?.ready;
@@ -123,23 +146,22 @@ export default function FlowerRoom() {
     const hostResolveDayVote = useFlowerStore((state: FlowerStore) => state.hostResolveDayVote);
     const broadcastSnapshot = useFlowerStore((state: FlowerStore) => state.broadcastSnapshot);
     const addChatMessage = useFlowerStore((state: FlowerStore) => state.addChatMessage);
+    const resetGame = useFlowerStore((state: FlowerStore) => state.resetGame);
 
     // Dialog hooks to replace native alert/confirm
-    const {confirm, ConfirmDialogComponent} = useConfirm();
-    const {alert, AlertDialogComponent} = useAlert();
-    const {showJoinRoomDialog, JoinRoomDialogComponent} = useJoinRoomDialog();
-    const {showAddBotDialog, AddBotDialogComponent} = useAddBotDialog();
+    const { confirm, ConfirmDialogComponent } = useConfirm(flowerSnapshot?.phase === "night_actions" || flowerSnapshot?.phase === "night_result");
+    const { alert, AlertDialogComponent } = useAlert();
+    const { showJoinRoomDialog, JoinRoomDialogComponent } = useJoinRoomDialog(flowerSnapshot?.phase === "night_actions" || flowerSnapshot?.phase === "night_result");
+    const { showAddBotDialog, AddBotDialogComponent } = useAddBotDialog(flowerSnapshot?.phase === "night_actions" || flowerSnapshot?.phase === "night_result");
+    const { showEditNameDialog, EditNameDialogComponent } = useEditNameDialog(flowerSnapshot?.phase === "night_actions" || flowerSnapshot?.phase === "night_result");
 
-    const logRef = useRef<HTMLDivElement | null>(null);
     const [logs, setLogs] = useState<string[]>([]);
     const pushLog = useCallback((line: string) => setLogs(prev => [...prev, line]), []);
-    useEffect(() => {
-        if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-    }, [logs.length]);
+
 
     // —— 屏幕常亮功能 —— //
 
-    let wakeLockRef = useRef<WakeLockSentinel | null>(null);
+    const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
 
     const requestWakeLock = useCallback(async () => {
@@ -341,7 +363,7 @@ export default function FlowerRoom() {
     const latestDaySummary = useMemo(() => {
         const logs = flowerSnapshot?.logs;
         if (!logs || logs.length === 0) {
-            return {executionText: null as string | null, votesText: null as string | null, hasSummary: false};
+            return { executionText: null as string | null, votesText: null as string | null, hasSummary: false };
         }
         let executionText: string | null = null;
         let votesText: string | null = null;
@@ -360,7 +382,7 @@ export default function FlowerRoom() {
             if (executionText && votesText) break;
         }
         const hasSummary = !!executionText || !!votesText;
-        return {executionText, votesText, hasSummary};
+        return { executionText, votesText, hasSummary };
     }, [flowerSnapshot?.logs, flowerSnapshot?.updatedAt]);
     const everyoneReady = useMemo(() => {
         if (flowerPhase !== "lobby") return true;
@@ -385,10 +407,14 @@ export default function FlowerRoom() {
     const myRole = myFlowerPlayer?.role ?? null;
     const myAlive = !!myFlowerPlayer?.isAlive;
     const myMuted = !!myFlowerPlayer?.isMutedToday;
-    const myDayVoteTarget = myFlowerPlayer?.voteTargetSeat ?? null;
     const showDaySummary = flowerPhase === "night_actions" && latestDaySummary.hasSummary;
     const showNightSummary = flowerPhase === "day_vote" && !!flowerSnapshot?.night?.result;
 
+    const isNight = flowerPhase === "night_actions" || flowerPhase === "night_result";
+    const themeClass = isNight
+        ? "backdrop-blur-sm bg-black/50 text-white border-white/20 shadow-none"
+        : "backdrop-blur-sm bg-white/50 text-slate-900 border-white/40 shadow-sm";
+    const mutedTextClass = isNight ? "text-white/70" : "text-slate-500";
 
     // game over UI handled before return (see bottom)
 
@@ -414,32 +440,53 @@ export default function FlowerRoom() {
 
     /** ———— 发送端 ———— */
 
-        // 创建房间（用封装，避免字段名再错）
+    // 创建房间（用封装，避免字段名再错）
     const createRoom = useCallback(async () => {
-            try {
-                const nick = name?.trim() || randName();
-                const resp = await rt.createFlowerRoom(nick);
-                pushLog(`room:create ack: ${JSON.stringify(resp)}`);
-                if (resp?.ok && resp.code) {
-                    setRoomCode(String(resp.code));
-                    setIsHost(true);
-                    localStorage.setItem("name", nick);
-                    localStorage.setItem("lastRoomCode", resp.code);
-                } else {
-                    await alert(resp?.msg || "创建失败");
-                }
-            } catch (e) {
-                console.error(e);
-                await alert("创建失败：Ack 超时或异常");
+        try {
+            let nick = name?.trim() || randName();
+            if (nick === "机器人") {
+                // 创建房间时，没有其他玩家，直接随机
+                const aiName = randomFrom(AI_NAMES) || "AI Robot";
+                nick = aiName + "\u200B";
+                setName(nick);
             }
-        }, [name, pushLog]);
+            const resp = await rt.createFlowerRoom(nick);
+            pushLog(`room:create ack: ${JSON.stringify(resp)}`);
+            if (resp?.ok && resp.code) {
+                setRoomCode(String(resp.code));
+                setIsHost(true);
+                localStorage.setItem("name", nick);
+                localStorage.setItem("lastRoomCode", resp.code);
+            } else {
+                await alert(resp?.msg || "创建失败");
+            }
+        } catch (e) {
+            console.error(e);
+            await alert("创建失败：Ack 超时或异常");
+        }
+    }, [name, pushLog]);
 
     // 加入房间（**这里一定要发 code，不是 room**）
     const joinRoom = useCallback(async () => {
         const code = await showJoinRoomDialog(roomCode || localStorage.getItem("lastRoomCode") || "");
         if (!code) return;
         try {
-            const nick = name?.trim() || randName();
+            let nick = name?.trim() || randName();
+            if (nick === "机器人") {
+                // 加入前先获取房间用户列表，进行去重
+                try {
+                    const users = await rt.getRoomUsers(code.trim());
+                    const usedNames = new Set(users.map(u => u.name?.replace(/\u200B/g, "")).filter(Boolean) as string[]);
+                    const aiName = getAvailableAiName(usedNames);
+                    nick = aiName + "\u200B";
+                    setName(nick);
+                } catch (err) {
+                    console.warn("Failed to fetch room users for unique name check, falling back to random", err);
+                    const aiName = randomFrom(AI_NAMES) || "AI Robot";
+                    nick = aiName + "\u200B";
+                    setName(nick);
+                }
+            }
             const resp = await rt.joinFlowerRoom(code.trim(), nick);
             pushLog(`room:join ack: ${JSON.stringify(resp)}`);
             if (resp?.ok) {
@@ -465,7 +512,7 @@ export default function FlowerRoom() {
         });
         if (!confirmed) return;
         try {
-            await rt.emitAck("room:leave", {code: roomCode, sessionId: getSessionId()}, 2000);
+            await rt.emitAck("room:leave", { code: roomCode, sessionId: getSessionId() }, 2000);
         } catch {
             // ignore
         }
@@ -519,8 +566,15 @@ export default function FlowerRoom() {
         if (!canAddBot || !roomCode) return;
         const nick = await showAddBotDialog();
         if (nick === null) return; // User cancelled
+
+        let finalName = nick?.trim();
+        if (!finalName) {
+            const usedNames = new Set(users.map(u => u.name?.replace(/\u200B/g, "")).filter(Boolean) as string[]);
+            finalName = getAvailableAiName(usedNames);
+        }
+
         try {
-            const resp = await rt.addBotToRoom(roomCode, nick?.trim() || undefined);
+            const resp = await rt.addBotToRoom(roomCode, finalName);
             pushLog(`room:add_bot ack: ${JSON.stringify(resp)}`);
             if (!(resp as any)?.ok) {
                 await alert(`添加机器人失败：${(resp as any)?.msg || "服务器未响应"}`);
@@ -529,7 +583,7 @@ export default function FlowerRoom() {
             console.error(err);
             await alert("添加机器人失败：服务器未响应");
         }
-    }, [canAddBot, roomCode, pushLog, alert]);
+    }, [canAddBot, roomCode, pushLog, alert, users]);
 
     const transferHostInternal = useCallback(
         async (targetSessionId: string | null, options?: { confirm?: boolean; label?: string }) => {
@@ -569,7 +623,7 @@ export default function FlowerRoom() {
 
     const handoverHost = useCallback(
         async (targetSessionId: string | null, displayName?: string | null) => {
-            await transferHostInternal(targetSessionId, {confirm: true, label: displayName || undefined});
+            await transferHostInternal(targetSessionId, { confirm: true, label: displayName || undefined });
         },
         [transferHostInternal]
     );
@@ -646,7 +700,7 @@ export default function FlowerRoom() {
             return;
         }
 
-        const payload = {room: roomCode, sessionId: getSessionId()};
+        const payload = { room: roomCode, sessionId: getSessionId() };
         const events = ["room:start", "flower:start", "flower:start_night", "flower:begin"];
         let lastErr: unknown = null;
         for (const evt of events) {
@@ -674,23 +728,43 @@ export default function FlowerRoom() {
 
     /** ———— UI ———— */
 
-    const connText = connected ? "已连接" : "未连接";
+
 
     if (flowerPhase === "game_over" && flowerSnapshot && gameResult) {
         return (
             <div className="min-h-screen p-6 max-w-3xl mx-auto space-y-4">
+                <VantaBackground isNight={isNight} />
                 <div className="flex items-center justify-between">
-                    <h1 className="text-2xl font-bold">花蝴蝶九人局 · 终局结算</h1>
-                    <Button variant="outline" onClick={leaveRoom}>离开房间</Button>
+                    <h1 className={`text-2xl font-bold ${isNight ? "text-white" : ""}`}>花蝴蝶九人局 · 终局结算</h1>
+                    <div className="flex gap-2">
+                        {isHost && (
+                            <Button
+                                variant="default"
+                                onClick={async () => {
+                                    const confirmed = await confirm({
+                                        title: "重新开始",
+                                        description: "确定要重新开始游戏吗？聊天记录将会保留。"
+                                    });
+                                    if (!confirmed) return;
+                                    resetGame();
+                                    await broadcastSnapshot();
+                                }}
+                            >
+                                <House className="h-4 w-4 mr-2" />
+                                重新开始
+                            </Button>
+                        )}
+                        <Button variant="outline" onClick={leaveRoom}>离开房间</Button>
+                    </div>
                 </div>
-                <Card>
+                <Card className={themeClass}>
                     <CardContent className="pt-6">
                         <div
                             className="text-lg font-semibold">{gameResult.winner === "good" ? "好人胜利" : gameResult.winner === "bad" ? "坏人胜利" : "平局"}</div>
                         <div className="text-sm text-muted-foreground">{gameResult.reason}</div>
                     </CardContent>
                 </Card>
-                <div className="border rounded-md">
+                <div className={themeClass + " rounded-lg"}>
                     <Table>
                         <TableHeader>
                             <TableRow>
@@ -719,12 +793,19 @@ export default function FlowerRoom() {
                     </Table>
                 </div>
                 {/* Dialog Components */}
-                <ConfirmDialogComponent/>
-                <Accordion type="single" collapsible className="w-full border rounded-md px-4">
-                    <AccordionItem value="logs" className="border-b-0">
-                        <AccordionTrigger>系统日志</AccordionTrigger>
+                <ConfirmDialogComponent />
+                <Accordion type="single" collapsible className={`w-full border rounded-md px-4 ${themeClass}`}>
+                    <AccordionItem value="logs" className={isNight ? "border-white/10" : "border-black/10"}>
+                        <AccordionTrigger className={isNight ? "text-white" : ""}>系统日志</AccordionTrigger>
                         <AccordionContent>
-                            <div className="max-h-80 overflow-auto text-sm">
+                            <div
+                                ref={(node) => {
+                                    if (node) {
+                                        node.scrollTop = node.scrollHeight;
+                                    }
+                                }}
+                                className="max-h-80 overflow-auto text-sm"
+                            >
                                 <ol className="list-decimal list-inside space-y-1">
                                     {flowerSnapshot.logs.map((entry, idx) => (
                                         <li key={`gameover-log-${idx}`}>{new Date(entry.at).toLocaleTimeString()} - {entry.text}</li>
@@ -739,171 +820,191 @@ export default function FlowerRoom() {
     }
 
     return (
-        <>
+        <div className="h-screen flex flex-col overflow-hidden">
+            <VantaBackground isNight={isNight} />
+
+            {/* Fixed Top Card - 不滚动 */}
+            <div className="flex-none z-10 p-2 md:p-4">
+                <Card className={`w-full shadow-lg ${themeClass}`}>
+                    <CardHeader className="pb-2 pt-4 px-4">
+                        <div className="flex items-center gap-2">
+                            {connected ? (
+                                <Wifi className="h-4 w-4 text-green-600" />
+                            ) : (
+                                <WifiOff className="h-4 w-4 text-destructive" />
+                            )}
+                            <CardTitle className="text-lg md:text-xl">花蝴蝶 九人局</CardTitle>
+                        </div>
+                    </CardHeader>
+                    <CardContent className="px-4 pb-4 pt-0">
+                        <div className="grid grid-cols-2 gap-4">
+                            {/* Left Column: Player & Room */}
+                            <div className="flex flex-col justify-center space-y-2 border-r border-white/10 pr-4">
+                                <div>
+                                    <div className={`text-xs ${mutedTextClass}`}>玩家昵称</div>
+                                    <div className="flex items-center gap-2">
+                                        <div className="font-medium truncate text-lg">{name.replace(/\u200B/g, "")}</div>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-6 w-6"
+                                            onClick={async () => {
+                                                const newName = await showEditNameDialog(name.replace(/\u200B/g, ""));
+                                                if (newName) {
+                                                    let finalName = newName;
+                                                    // 只有在房间内时，才立即进行机器人伪装处理
+                                                    if (newName === "机器人" && roomCode) {
+                                                        const usedNames = new Set(flowerPlayers.map(p => p.name?.replace(/\u200B/g, "")).filter(Boolean) as string[]);
+                                                        const aiName = getAvailableAiName(usedNames);
+                                                        finalName = aiName + "\u200B";
+                                                    }
+                                                    setName(finalName);
+                                                    localStorage.setItem("name", finalName);
+                                                    if (roomCode) {
+                                                        try {
+                                                            await rt.updateName(roomCode, finalName);
+                                                        } catch (e) {
+                                                            console.error("Failed to update name on server", e);
+                                                        }
+                                                    }
+                                                }
+                                            }}
+                                        >
+                                            <Pencil className="h-3 w-3" />
+                                        </Button>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className={`text-xs ${mutedTextClass}`}>房间号</div>
+                                    <div className="font-mono font-bold text-xl truncate">
+                                        {roomCode || "未加入"}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Right Column: Phase & Day */}
+                            <div className="flex flex-col justify-center space-y-2 pl-4">
+                                <div>
+                                    <div className={`text-xs ${mutedTextClass}`}>当前阶段</div>
+                                    <div className="font-medium flex items-center gap-2 text-lg">
+                                        {flowerPhaseText}
+                                        {flowerPhase === "night_actions" && <Moon className="h-4 w-4 text-indigo-200" />}
+                                        {flowerPhase === "day_vote" && <Sun className="h-4 w-4 text-orange-500" />}
+                                    </div>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <div className={`text-xs ${mutedTextClass}`}>天数</div>
+                                        <div className="font-bold text-xl">第 {flowerDayCount} 天</div>
+                                    </div>
+                                    {myRole && (
+                                        <Badge variant="outline" className={isNight ? "text-white border-white/50" : ""}>
+                                            {myRole}
+                                        </Badge>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+
+            {/* Scrollable Content Area - 独立滚动 */}
             <div
-                className="min-h-screen bg-background p-5"
+                className="flex-1 overflow-y-auto transition-colors duration-1000 p-5"
                 onClick={handleInteraction}
                 onTouchStart={handleInteraction}
             >
-                <div className="max-w-6xl mx-auto space-y-4">
-                    {/* 顶部标题和连接状态 */}
-                    <Card>
-                        <CardHeader>
-                            <div className="flex items-center justify-between flex-wrap gap-4">
-                                <CardTitle className="text-2xl">花蝴蝶 九人局</CardTitle>
-                                <div className="flex items-center gap-2">
-                                    {connected ? (
-                                        <Wifi className="h-4 w-4 text-green-600"/>
-                                    ) : (
-                                        <WifiOff className="h-4 w-4 text-destructive"/>
-                                    )}
-                                    <Badge variant={connected ? "default" : "destructive"}>
-                                        {connText}
-                                    </Badge>
-                                </div>
-                            </div>
-                        </CardHeader>
-                    </Card>
-
-                    {/* 顶部：连接 + 建/加房 */}
-                    <Card>
-                        <CardContent className="pt-6">
-                            <div className="flex flex-wrap items-center gap-3">
-                                <Input
-                                    value={name}
-                                    onChange={(e) => setName(e.target.value)}
-                                    placeholder="昵称"
-                                    className="w-40"
-                                />
-                                <Button onClick={createRoom}>
-                                    <UserPlus className="h-4 w-4 mr-2"/>
-                                    创建花蝴蝶房间
-                                </Button>
-                                <Button variant="outline" onClick={joinRoom}>
-                                    加入房间
-                                </Button>
-                                {roomCode && (
-                                    <Button
-                                        variant="destructive"
-                                        onClick={leaveRoom}
-                                    >
-                                        <LogOut className="h-4 w-4 mr-2"/>
-                                        离开房间
-                                    </Button>
-                                )}
-                            </div>
-                        </CardContent>
-                    </Card>
-
-                    {/* 房间信息 */}
-                    {roomCode ? (
-                        <Card>
-                            <CardContent className="py-3">
-                                <div className="flex items-center gap-2 text-sm">
-                                    <span className="text-muted-foreground">房间号:</span>
-                                    <Badge variant="outline" className="font-mono text-base">
-                                        {roomCode}
-                                    </Badge>
-                                    <Separator orientation="vertical" className="h-4"/>
-                                    <Badge variant={isHost ? "default" : "secondary"}>
-                                        {isHost ? (
-                                            <>
-                                                <Crown className="h-3 w-3 mr-1"/>
-                                                房主
-                                            </>
-                                        ) : (
-                                            "玩家"
-                                        )}
-                                    </Badge>
-                                </div>
-                            </CardContent>
-                        </Card>
-                    ) : (
-                        <Card>
-                            <CardContent className="py-3">
-                                <p className="text-sm text-muted-foreground">
-                                    （当前无房间，创建/加入后出现）
-                                </p>
-                            </CardContent>
-                        </Card>
-                    )}
-
-                    {/* 当前阶段信息卡片 */}
-                    {flowerSnapshot && (
-                        <Card className="mb-4">
-                            <CardHeader>
-                                <CardTitle className="flex items-center justify-between">
-                                    <span>当前阶段</span>
-                                    <Badge variant="outline" className="text-lg">
-                                        {flowerPhaseText} - 第{flowerDayCount}天
-                                    </Badge>
-                                </CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                                <div className="space-y-2">
-                                    {myRole && (
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-sm font-medium">你的角色：</span>
-                                            <Badge variant="default">{myRole}</Badge>
-                                            {!myAlive && <Badge variant="destructive">已死亡</Badge>}
-                                            {myMuted && <Badge variant="outline">禁言</Badge>}
-                                        </div>
-                                    )}
-                                    {flowerPhase === "lobby" && (
-                                        <div className="flex flex-wrap gap-2">
-                                            <Button
-                                                variant={(me as any)?.ready ? "default" : "outline"}
-                                                onClick={toggleReady}
-                                                disabled={!roomCode}
-                                            >
-                                                {(me as any)?.ready ? "取消准备" : "准备"}
-                                            </Button>
-                                            {isHost && (
-                                                <Button
-                                                    onClick={startFirstNight}
-                                                    disabled={occupiedSeats < 9 || !everyoneReady}
-                                                >
-                                                    开始游戏
-                                                </Button>
-                                            )}
-                                            <Button
-                                                variant="outline"
-                                                onClick={addBotPlaceholder}
-                                                disabled={!canAddBot}
-                                            >
-                                                添加机器人 ({remainingSeats})
-                                            </Button>
-                                        </div>
-                                    )}
-                                </div>
-                            </CardContent>
-                        </Card>
-                    )}
+                <div className="max-w-6xl mx-auto space-y-4 pb-20">
 
                     {/* Accordion 工作区域 */}
                     <Accordion type="multiple" defaultValue={["players", "actions", "chat"]} className="space-y-2">
                         {/* 玩家列表区域 */}
-                        <AccordionItem value="players">
-                            <AccordionTrigger className="px-4">
+                        <AccordionItem value="players" className={isNight ? "border-white/10" : "border-black/10"}>
+                            <AccordionTrigger className={`px-4 ${isNight ? "text-white" : ""}`}>
                                 <div className="flex items-center gap-2">
-                                    <Users className="h-5 w-5"/>
+                                    <Users className="h-5 w-5" />
                                     <span className="font-semibold">
-                    玩家列表（{flowerSnapshot ? flowerPlayers.length : users.length} 人）
-                  </span>
+                                        玩家列表
+                                    </span>
                                 </div>
                             </AccordionTrigger>
                             <AccordionContent className="px-4">
+                                {/* Room Actions Section */}
+                                <div className="mb-4 space-y-3">
+                                    {!roomCode ? (
+                                        <div className="flex flex-wrap gap-2 items-center">
+                                            <Button onClick={createRoom} size="sm">
+                                                <House className="h-4 w-4 mr-2" />
+                                                创建
+                                            </Button>
+                                            <Button variant="outline" onClick={joinRoom} size="sm" className={isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}>
+                                                <UserPlus className="h-4 w-4 mr-2" />
+                                                加入
+                                            </Button>
+                                        </div>
+                                    ) : (
+                                        <div className="flex flex-wrap gap-2 items-center">
+                                            {flowerPhase === "lobby" && (
+                                                <>
+                                                    <Button
+                                                        variant={(me as any)?.ready ? "default" : "outline"}
+                                                        onClick={toggleReady}
+                                                        size="sm"
+                                                        className={isNight && !(me as any)?.ready ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}
+                                                    >
+                                                        {(me as any)?.ready ? "取消" : "准备"}
+                                                    </Button>
+                                                    {isHost && (
+                                                        <Button
+                                                            onClick={startFirstNight}
+                                                            disabled={occupiedSeats < 9 || !everyoneReady}
+                                                            size="sm"
+                                                        >
+                                                            <Swords className="h-4 w-4 mr-2" />
+                                                            开始游戏
+                                                        </Button>
+                                                    )}
+                                                    {isHost && (
+                                                        <Button
+                                                            variant="outline"
+                                                            onClick={addBotPlaceholder}
+                                                            disabled={!canAddBot}
+                                                            size="sm"
+                                                            className={isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}
+                                                        >
+                                                            <Bot className="h-4 w-4 mr-2" />
+                                                            添加人机
+                                                        </Button>
+                                                    )}
+                                                </>
+                                            )}
+                                            <Button
+                                                variant="destructive"
+                                                onClick={leaveRoom}
+                                                size="sm"
+                                            >
+                                                <LogOut className="h-4 w-4 mr-2" />
+                                                离开房间
+                                            </Button>
+                                        </div>
+                                    )}
+                                </div>
+                                <Separator className="mb-4" />
+
                                 <ScrollArea className="max-h-[500px] pr-4">
                                     <div className="space-y-2">
                                         {flowerSnapshot
                                             ? flowerPlayers.map((player: FlowerPlayerState) => {
+                                                const isFake = isFakeBot(player.name);
+                                                const displayName = player.name?.replace(/\u200B/g, "") || `座位${player.seat}`;
                                                 const tags: string[] = [];
                                                 const presenceInfo = player.sessionId ? presenceMap.get(player.sessionId) : undefined;
                                                 if (player.isHost) tags.push("房主");
                                                 if (player.sessionId === getSessionId()) tags.push("我");
-                                                if (presenceInfo?.isDisconnected) tags.push("暂离");
-                                                if (player.isReady && flowerPhase === "lobby") tags.push("已准备");
-                                                if (player.isBot) tags.push("BOT");
+                                                if (presenceInfo?.isDisconnected && !isFake) tags.push("暂离");
+                                                if ((player.isReady || isFake) && flowerPhase === "lobby") tags.push("已准备");
+                                                if (player.isBot || isFake) tags.push("BOT");
 
                                                 const statusParts: string[] = [];
                                                 statusParts.push(player.sessionId ? (player.isAlive ? "存活" : "死亡") : "空位");
@@ -911,13 +1012,13 @@ export default function FlowerRoom() {
                                                 if (player.hasVotedToday && flowerPhase === "day_vote") statusParts.push("已投票");
 
                                                 return (
-                                                    <Card key={`seat-${player.seat}`}>
+                                                    <Card key={`seat-${player.seat}`} className={themeClass}>
                                                         <CardContent className="p-4">
                                                             <div className="flex items-center gap-3">
                                                                 {/* Avatar */}
                                                                 {player.sessionId || player.isBot ? (
                                                                     <Avvvatars
-                                                                        value={player.name || `座位${player.seat}`}
+                                                                        value={displayName}
                                                                         size={48}
                                                                         style="shape"
                                                                     />
@@ -925,20 +1026,18 @@ export default function FlowerRoom() {
                                                                     <div
                                                                         className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
                                                                         <User
-                                                                            className="h-6 w-6 text-muted-foreground"/>
+                                                                            className="h-6 w-6 text-muted-foreground" />
                                                                     </div>
                                                                 )}
 
                                                                 {/* Player Info */}
                                                                 <div className="flex-1">
-                                                                    <div className="font-medium">
-                                                                        {player.sessionId ? (player.name || `座位${player.seat}`) : `座位${player.seat}（空）`}
+                                                                    <div className={`font-medium ${isNight ? "text-white" : ""}`}>
+                                                                        {player.sessionId ? displayName : `座位${player.seat}（空）`}
                                                                     </div>
-                                                                    <div
-                                                                        className="text-xs text-muted-foreground">座位 {player.seat}</div>
+                                                                    <div className={`text-xs ${mutedTextClass}`}>座位 {player.seat}</div>
                                                                     {statusParts.length > 0 && (
-                                                                        <div
-                                                                            className="text-xs text-muted-foreground mt-1">
+                                                                        <div className={`text-xs ${mutedTextClass} mt-1`}>
                                                                             {statusParts.join(" · ")}
                                                                         </div>
                                                                     )}
@@ -947,37 +1046,37 @@ export default function FlowerRoom() {
                                                                 {/* Tags and Actions */}
                                                                 <div className="flex flex-col items-end gap-2">
                                                                     {tags.length > 0 && (
-                                                                        <div
-                                                                            className="flex flex-wrap gap-1 justify-end">
+                                                                        <div className="flex flex-wrap gap-1 justify-end">
                                                                             {player.isHost && (
-                                                                                <Badge variant="default"
-                                                                                       className="gap-1">
-                                                                                    <Crown className="h-3 w-3"/>
+                                                                                <Badge variant="default" className={`gap-1 ${isNight ? "bg-white text-black hover:bg-white/90" : ""}`}>
+                                                                                    <Crown className="h-3 w-3" />
                                                                                     房主
                                                                                 </Badge>
                                                                             )}
                                                                             {player.sessionId === getSessionId() && (
-                                                                                <Badge variant="secondary">我</Badge>
+                                                                                <Badge variant="secondary" className={isNight ? "bg-white/20 text-white border-white/30" : ""}>
+                                                                                    我
+                                                                                </Badge>
                                                                             )}
-                                                                            {player.isBot && (
-                                                                                <Badge variant="outline"
-                                                                                       className="gap-1">
-                                                                                    <Bot className="h-3 w-3"/>
+                                                                            {(player.isBot || isFake) && (
+                                                                                <Badge variant="outline" className={`gap-1 ${isNight ? "text-white border-white/50" : "border-black/50"}`}>
+                                                                                    <Bot className="h-3 w-3" />
                                                                                     BOT
                                                                                 </Badge>
                                                                             )}
-                                                                            {player.isReady && flowerPhase === "lobby" && (
-                                                                                <Badge variant="outline">已准备</Badge>
+                                                                            {(player.isReady || isFake) && flowerPhase === "lobby" && (
+                                                                                <Badge variant="outline" className={isNight ? "text-white border-white/50" : "border-black/50"}>
+                                                                                    已准备
+                                                                                </Badge>
                                                                             )}
-                                                                            {presenceInfo?.isDisconnected && (
-                                                                                <Badge
-                                                                                    variant="destructive">暂离</Badge>
+                                                                            {presenceInfo?.isDisconnected && !isFake && (
+                                                                                <Badge variant="destructive">暂离</Badge>
                                                                             )}
                                                                         </div>
                                                                     )}
                                                                     {isHost && player.sessionId && player.sessionId !== getSessionId() && (
                                                                         <div className="flex gap-1">
-                                                                            {!player.isBot && (
+                                                                            {!player.isBot && !isFake && (
                                                                                 <Button
                                                                                     variant="outline"
                                                                                     size="sm"
@@ -992,7 +1091,7 @@ export default function FlowerRoom() {
                                                                                 size="sm"
                                                                                 onClick={() => kickPlayer(player.sessionId)}
                                                                             >
-                                                                                {player.isBot ? "移除" : "踢出"}
+                                                                                {player.isBot || isFake ? "移除" : "踢出"}
                                                                             </Button>
                                                                         </div>
                                                                     )}
@@ -1003,24 +1102,26 @@ export default function FlowerRoom() {
                                                 );
                                             })
                                             : users.map((u: any) => {
+                                                const isFake = isFakeBot(u.name);
+                                                const displayName = u.name?.replace(/\u200B/g, "") || "未命名";
                                                 const tags: string[] = [];
                                                 if (u.isHost) tags.push("房主");
                                                 if (u.sessionId === getSessionId()) tags.push("我");
-                                                if (u.isDisconnected) tags.push("暂离");
-                                                if (u.ready) tags.push("已准备");
-                                                if (u.isBot) tags.push("BOT");
+                                                if (u.isDisconnected && !isFake) tags.push("暂离");
+                                                if (u.ready || isFake) tags.push("已准备");
+                                                if (u.isBot || isFake) tags.push("BOT");
                                                 return (
-                                                    <Card key={u.sessionId}>
+                                                    <Card key={u.sessionId} className={themeClass}>
                                                         <CardContent className="p-4">
                                                             <div className="flex items-center gap-3">
                                                                 <Avvvatars
-                                                                    value={u.name || "未命名"}
+                                                                    value={displayName}
                                                                     size={48}
                                                                     style="shape"
                                                                 />
                                                                 <div className="flex-1">
                                                                     <div
-                                                                        className="font-medium">{u.name || "（未命名）"}</div>
+                                                                        className="font-medium">{displayName}</div>
                                                                     <div
                                                                         className="text-xs text-muted-foreground">座位 {u.seat}</div>
                                                                 </div>
@@ -1029,25 +1130,25 @@ export default function FlowerRoom() {
                                                                         <div className="flex flex-wrap gap-1">
                                                                             {u.isHost && (
                                                                                 <Badge variant="default"
-                                                                                       className="gap-1">
-                                                                                    <Crown className="h-3 w-3"/>
+                                                                                    className="gap-1">
+                                                                                    <Crown className="h-3 w-3" />
                                                                                     房主
                                                                                 </Badge>
                                                                             )}
                                                                             {u.sessionId === getSessionId() && (
                                                                                 <Badge variant="secondary">我</Badge>
                                                                             )}
-                                                                            {u.isBot && (
+                                                                            {(u.isBot || isFake) && (
                                                                                 <Badge variant="outline"
-                                                                                       className="gap-1">
-                                                                                    <Bot className="h-3 w-3"/>
+                                                                                    className="gap-1">
+                                                                                    <Bot className="h-3 w-3" />
                                                                                     BOT
                                                                                 </Badge>
                                                                             )}
-                                                                            {u.ready && (
+                                                                            {(u.ready || isFake) && (
                                                                                 <Badge variant="outline">已准备</Badge>
                                                                             )}
-                                                                            {u.isDisconnected && (
+                                                                            {u.isDisconnected && !isFake && (
                                                                                 <Badge
                                                                                     variant="destructive">暂离</Badge>
                                                                             )}
@@ -1055,7 +1156,7 @@ export default function FlowerRoom() {
                                                                     )}
                                                                     {isHost && u.sessionId !== getSessionId() && (
                                                                         <div className="flex gap-1">
-                                                                            {!u.isBot && (
+                                                                            {!u.isBot && !isFake && (
                                                                                 <Button
                                                                                     variant="outline"
                                                                                     size="sm"
@@ -1070,7 +1171,7 @@ export default function FlowerRoom() {
                                                                                 size="sm"
                                                                                 onClick={() => kickPlayer(u.sessionId)}
                                                                             >
-                                                                                {u.isBot ? "移除" : "踢出"}
+                                                                                {u.isBot || isFake ? "移除" : "踢出"}
                                                                             </Button>
                                                                         </div>
                                                                     )}
@@ -1081,7 +1182,7 @@ export default function FlowerRoom() {
                                                 );
                                             })}
                                         {!flowerSnapshot && users.length === 0 && (
-                                            <p className="text-sm text-muted-foreground text-center py-8">
+                                            <p className="text-sm text-black/50 text-center py-8">
                                                 （当前无玩家，创建/加入房间后会出现）
                                             </p>
                                         )}
@@ -1092,10 +1193,10 @@ export default function FlowerRoom() {
 
                         {/* 聊天区域 */}
                         {roomCode && flowerSnapshot && (
-                            <AccordionItem value="chat">
-                                <AccordionTrigger className="px-4">
+                            <AccordionItem value="chat" className={isNight ? "border-white/10" : "border-black/10"}>
+                                <AccordionTrigger className={`px-4 ${isNight ? "text-white" : ""}`}>
                                     <div className="flex items-center gap-2">
-                                        <MessageSquare className="h-5 w-5"/>
+                                        <MessageSquare className="h-5 w-5" />
                                         <span className="font-semibold">聊天室</span>
                                     </div>
                                 </AccordionTrigger>
@@ -1106,6 +1207,7 @@ export default function FlowerRoom() {
                                         players={flowerPlayers}
                                         onSendMessage={addChatMessage}
                                         mySessionId={getSessionId()}
+                                        isNight={isNight}
                                     />
                                 </AccordionContent>
                             </AccordionItem>
@@ -1113,15 +1215,15 @@ export default function FlowerRoom() {
 
                         {/* 游戏操作区域 */}
                         {flowerSnapshot && flowerPhase !== "lobby" && (
-                            <AccordionItem value="actions">
-                                <AccordionTrigger className="px-4">
+                            <AccordionItem value="actions" className={isNight ? "border-white/10" : "border-black/10"}>
+                                <AccordionTrigger className={`px-4 ${isNight ? "text-white" : ""}`}>
                                     <div className="flex items-center gap-2">
-                                        {flowerPhase === "night_actions" ? <Moon className="h-5 w-5"/> :
-                                            flowerPhase === "day_vote" ? <Sun className="h-5 w-5"/> :
-                                                <Gamepad2 className="h-5 w-5"/>}
+                                        {flowerPhase === "night_actions" ? <Moon className="h-5 w-5" /> :
+                                            flowerPhase === "day_vote" ? <Sun className="h-5 w-5" /> :
+                                                <Gamepad2 className="h-5 w-5" />}
                                         <span className="font-semibold">
-                      {flowerPhase === "night_actions" ? "夜晚行动" : flowerPhase === "day_vote" ? "白天投票" : "游戏操作"}
-                    </span>
+                                            {flowerPhase === "night_actions" ? "夜晚行动" : flowerPhase === "day_vote" ? "白天投票" : "游戏操作"}
+                                        </span>
                                     </div>
                                 </AccordionTrigger>
                                 <AccordionContent className="px-4 space-y-4">
@@ -1137,21 +1239,18 @@ export default function FlowerRoom() {
                                                         <>
                                                             <Button
                                                                 variant="outline"
-                                                                className="w-full justify-start"
+                                                                className={`w-full justify-start ${isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}`}
                                                                 onClick={() => setNightActionDrawerOpen(true)}
                                                             >
                                                                 {nightActionSelections[myRole] ? `已选择：座位 ${nightActionSelections[myRole]}` : "选择行动目标"}
                                                             </Button>
-                                                            <div className="text-xs text-gray-500">
-                                                                当前已提交：{myFlowerPlayer?.nightAction?.targetSeat ? `座位 ${myFlowerPlayer.nightAction.targetSeat}` : "尚未提交"}
-                                                            </div>
                                                         </>
                                                     )}
 
                                                     {isHost && (
                                                         <Button
                                                             variant="outline"
-                                                            className="w-full"
+                                                            className={`w-full ${isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}`}
                                                             onClick={handleResolveNight}
                                                             disabled={flowerPhase !== "night_actions"}
                                                         >
@@ -1160,7 +1259,7 @@ export default function FlowerRoom() {
                                                     )}
                                                 </div>
                                             ) : flowerPhase === "day_vote" ? (
-                                                <Card>
+                                                <Card className={themeClass}>
                                                     <CardHeader>
                                                         <CardTitle>白天投票</CardTitle>
                                                     </CardHeader>
@@ -1174,9 +1273,6 @@ export default function FlowerRoom() {
                                                                 >
                                                                     {dayVoteSelection ? `已选择：座位 ${dayVoteSelection}` : "选择投票目标"}
                                                                 </Button>
-                                                                <div className="text-sm text-muted-foreground">
-                                                                    当前已投票：{myDayVoteTarget ? `座位 ${myDayVoteTarget}` : "尚未投票"}
-                                                                </div>
                                                             </>
                                                         ) : (
                                                             <div className="text-sm text-destructive">
@@ -1204,22 +1300,23 @@ export default function FlowerRoom() {
 
                                     {/* 结算结果显示 */}
                                     {showDaySummary && (
-                                        <div className="p-3 border rounded space-y-2">
-                                            <div className="font-medium">白天结算</div>
-                                            <div className="text-sm text-gray-700">
+                                        <div className={`p-3 border rounded space-y-2 ${isNight ? "border-white/20" : ""}`}>
+                                            <div className={`font-medium ${isNight ? "text-white" : ""}`}>白天结算</div>
+                                            <div className={`text-sm ${mutedTextClass}`}>
                                                 处决：{latestDaySummary.executionText || "无人被处决"}
                                             </div>
                                             {latestDaySummary.votesText && (
-                                                <div
-                                                    className="text-sm text-gray-700">票型：{latestDaySummary.votesText}</div>
+                                                <div className={`text-sm ${mutedTextClass}`}>
+                                                    票型：{latestDaySummary.votesText}
+                                                </div>
                                             )}
                                         </div>
                                     )}
 
                                     {showNightSummary && flowerSnapshot?.night?.result && (
-                                        <div className="p-3 border rounded space-y-2">
-                                            <div className="font-medium">夜晚结算</div>
-                                            <div className="text-sm text-gray-700">
+                                        <div className={`p-3 border rounded space-y-2 ${isNight ? "border-white/20" : ""}`}>
+                                            <div className={`font-medium ${isNight ? "text-white" : ""}`}>夜晚结算</div>
+                                            <div className={`text-sm ${mutedTextClass}`}>
                                                 死亡：
                                                 {flowerSnapshot.night.result.deaths.length === 0
                                                     ? " 无"
@@ -1227,7 +1324,7 @@ export default function FlowerRoom() {
                                                         .map(d => `座位 ${d.seat}`)
                                                         .join("、")}
                                             </div>
-                                            <div className="text-sm text-gray-700">
+                                            <div className={`text-sm ${mutedTextClass}`}>
                                                 禁言：
                                                 {flowerSnapshot.night.result.mutedSeats.length === 0
                                                     ? " 无"
@@ -1240,19 +1337,26 @@ export default function FlowerRoom() {
                         )}
 
                         {/* 调试区域 */}
-                        <AccordionItem value="debug">
-                            <AccordionTrigger className="px-4">
+                        <AccordionItem value="debug" className={isNight ? "border-white/10" : "border-black/10"}>
+                            <AccordionTrigger className={`px-4 ${isNight ? "text-white" : ""}`}>
                                 <div className="flex items-center gap-2">
-                                    <Wrench className="h-5 w-5"/>
+                                    <Wrench className="h-5 w-5" />
                                     <span className="font-semibold">调试信息</span>
                                 </div>
                             </AccordionTrigger>
                             <AccordionContent className="px-4 space-y-4">
                                 {/* 系统日志 */}
                                 {flowerSnapshot && (
-                                    <div className="p-3 border rounded">
+                                    <div className={`p-3 border rounded ${isNight ? "border-white/20" : ""}`}>
                                         <div className="font-medium mb-1">系统日志</div>
-                                        <div className="max-h-80 overflow-auto text-sm">
+                                        <div
+                                            ref={(node) => {
+                                                if (node) {
+                                                    node.scrollTop = node.scrollHeight;
+                                                }
+                                            }}
+                                            className="max-h-80 overflow-auto text-sm"
+                                        >
                                             <ol className="list-decimal list-inside space-y-1">
                                                 {flowerSnapshot.logs.map((entry, idx) => (
                                                     <li key={idx}>{new Date(entry.at).toLocaleTimeString()} - {entry.text}</li>
@@ -1264,7 +1368,7 @@ export default function FlowerRoom() {
 
                                 {/* 角色调试 */}
                                 {flowerSnapshot && (
-                                    <div className="p-3 border rounded">
+                                    <div className={`p-3 border rounded ${isNight ? "border-white/20" : ""}`}>
                                         <div className="font-medium mb-1">调试：角色与夜间行动</div>
                                         <div className="text-xs grid grid-cols-1 md:grid-cols-2 gap-2">
                                             {flowerPlayers.map((p) => (
@@ -1326,16 +1430,23 @@ export default function FlowerRoom() {
                                 )}
 
                                 {/* 事件日志 */}
-                                <Card>
+                                <Card className={themeClass}>
                                     <CardHeader>
                                         <CardTitle>事件日志（调试用）</CardTitle>
                                     </CardHeader>
                                     <CardContent>
-                                        <ScrollArea className="max-h-80">
+                                        <div
+                                            ref={(node) => {
+                                                if (node) {
+                                                    node.scrollTop = node.scrollHeight;
+                                                }
+                                            }}
+                                            className="max-h-80 overflow-auto"
+                                        >
                                             <ul className="list-disc pl-5 space-y-1 text-sm">
                                                 {logs.map((l, i) => (<li key={i}>{l}</li>))}
                                             </ul>
-                                        </ScrollArea>
+                                        </div>
                                     </CardContent>
                                 </Card>
                             </AccordionContent>
@@ -1345,10 +1456,11 @@ export default function FlowerRoom() {
             </div>
 
             {/* Dialog Components */}
-            <ConfirmDialogComponent/>
-            <AlertDialogComponent/>
-            <JoinRoomDialogComponent/>
-            <AddBotDialogComponent/>
+            <ConfirmDialogComponent />
+            <AlertDialogComponent />
+            <JoinRoomDialogComponent />
+            <AddBotDialogComponent />
+            <EditNameDialogComponent />
 
             {/* Target Selection Drawers */}
             <TargetSelectionDrawer
@@ -1384,6 +1496,7 @@ export default function FlowerRoom() {
                 disabled={!myAlive}
                 disabledMessage="你已死亡，无法行动"
                 filterPlayers={(p) => p.isAlive}
+                isNight={isNight}
             />
 
             <TargetSelectionDrawer
@@ -1398,7 +1511,7 @@ export default function FlowerRoom() {
                         setDayVoteSelection(targetSeat);
 
                         if (!mySeat) return;
-                        const payload: SubmitDayVotePayload = {voterSeat: mySeat, targetSeat};
+                        const payload: SubmitDayVotePayload = { voterSeat: mySeat, targetSeat };
                         const res = await submitDayVote(payload);
                         if (!res.ok) {
                             await alert(res.error || "投票失败");
@@ -1408,7 +1521,8 @@ export default function FlowerRoom() {
                 disabled={!myAlive || myMuted}
                 disabledMessage={!myAlive ? "你已死亡，无法投票" : "你被禁言，无法投票"}
                 filterPlayers={(p) => p.isAlive}
+                isNight={false}
             />
-        </>
+        </div>
     );
 }

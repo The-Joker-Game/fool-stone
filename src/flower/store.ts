@@ -43,6 +43,7 @@ export interface FlowerStore {
   submitDayVote: (payload: SubmitDayVotePayload) => Promise<SubmitResult>;
   broadcastSnapshot: (targetSessionId?: string) => Promise<void>;
   addChatMessage: (content: string, mentions: ChatMention[]) => Promise<{ ok: boolean; error?: string }>;
+  resetGame: () => void;
 }
 
 export const useFlowerStore = create<FlowerStore>()(
@@ -257,6 +258,56 @@ export const useFlowerStore = create<FlowerStore>()(
         return { ok: true }; // Still return ok since message is shown locally
       }
     },
+    resetGame: () =>
+      set((state) => {
+        if (!state.snapshot) return;
+
+        const roomCode = state.snapshot.roomCode;
+        const hostSessionId = state.snapshot.hostSessionId;
+        const savedChatMessages = [...(state.snapshot.chatMessages || [])];
+        const savedPlayers = state.snapshot.players.map(p => ({
+          seat: p.seat,
+          sessionId: p.sessionId,
+          name: p.name,
+          isHost: p.isHost,
+          isBot: p.isBot,
+        }));
+
+        // 创建新的快照，保留聊天记录和玩家信息
+        const now = Date.now();
+        state.snapshot = {
+          engine: "flower",
+          roomCode,
+          hostSessionId,
+          phase: "lobby",
+          dayCount: 0,
+          players: Array.from({ length: MAX_SEATS }, (_, idx) => {
+            const seat = idx + 1;
+            const savedPlayer = savedPlayers.find(p => p.seat === seat);
+            if (savedPlayer?.sessionId) {
+              return {
+                ...createEmptyPlayer(seat),
+                sessionId: savedPlayer.sessionId,
+                name: savedPlayer.name,
+                isHost: savedPlayer.isHost,
+                isBot: savedPlayer.isBot,
+                isAlive: true,
+                isReady: false,
+              };
+            }
+            return createEmptyPlayer(seat);
+          }),
+          night: createEmptyNightState(),
+          day: createEmptyDayState(),
+          logs: [{ at: now, text: "游戏已重置，等待重新开始" }],
+          pendingAction: null,
+          gameResult: null,
+          updatedAt: now,
+          chatMessages: savedChatMessages,
+        };
+
+        saveSnapshotToCache(state.snapshot);
+      }),
   }))
 );
 

@@ -13,8 +13,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import Avvvatars from "avvvatars-react";
-import { Check, X } from "lucide-react";
+import { Check, X, Bot } from "lucide-react";
 import type { FlowerPlayerState } from "@/flower/types";
+
+const isFakeBot = (name: string | undefined) => name?.endsWith("\u200B") ?? false;
 
 interface TargetSelectionDrawerProps {
     open: boolean;
@@ -28,6 +30,7 @@ interface TargetSelectionDrawerProps {
     disabledMessage?: string;
     allowNoTarget?: boolean;
     filterPlayers?: (player: FlowerPlayerState) => boolean;
+    isNight?: boolean;
 }
 
 export function TargetSelectionDrawer({
@@ -42,6 +45,7 @@ export function TargetSelectionDrawer({
     disabledMessage,
     allowNoTarget = false,
     filterPlayers,
+    isNight = false,
 }: TargetSelectionDrawerProps) {
     const [selectedSeat, setSelectedSeat] = useState<number | null>(currentSelection ?? null);
 
@@ -61,11 +65,11 @@ export function TargetSelectionDrawer({
 
     return (
         <Drawer open={open} onOpenChange={onOpenChange}>
-            <DrawerContent>
+            <DrawerContent className={isNight ? "backdrop-blur-sm bg-gray-900/80 text-white border-white/20" : "backdrop-blur-sm bg-white/80 text-slate-900 border-white/40"}>
                 <div className="mx-auto w-full max-w-2xl">
                     <DrawerHeader>
                         <DrawerTitle>{title}</DrawerTitle>
-                        {description && <DrawerDescription>{description}</DrawerDescription>}
+                        {description && <DrawerDescription className={isNight ? "text-white/70" : ""}>{description}</DrawerDescription>}
                         {disabled && disabledMessage && (
                             <div className="text-sm text-destructive mt-2">
                                 {disabledMessage}
@@ -82,21 +86,21 @@ export function TargetSelectionDrawer({
                             <div className="flex flex-col gap-3 max-h-[60vh] overflow-y-auto p-1">
                                 {allowNoTarget && (
                                     <Card
-                                        className={`cursor-pointer transition-all ${selectedSeat === null
+                                        className={`cursor-pointer transition-all ${isNight ? "backdrop-blur-sm bg-white/10 border-white/20" : ""} ${selectedSeat === null
                                             ? "ring-2 ring-primary bg-primary/5"
-                                            : "hover:bg-accent"
+                                            : isNight ? "hover:bg-white/20" : "hover:bg-accent"
                                             }`}
                                         onClick={() => setSelectedSeat(null)}
                                     >
                                         <CardContent className="p-4">
                                             <div className="flex items-center justify-between">
                                                 <div className="flex items-center gap-3">
-                                                    <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
-                                                        <X className="h-6 w-6 text-muted-foreground" />
+                                                    <div className={`h-12 w-12 rounded-full flex items-center justify-center ${isNight ? "bg-white/10" : "bg-muted"}`}>
+                                                        <X className={`h-6 w-6 ${isNight ? "text-white/70" : "text-muted-foreground"}`} />
                                                     </div>
                                                     <div>
-                                                        <div className="font-medium">不选择目标</div>
-                                                        <div className="text-sm text-muted-foreground">
+                                                        <div className={`font-medium ${isNight ? "text-white" : ""}`}>不选择目标</div>
+                                                        <div className={`text-sm ${isNight ? "text-white/70" : "text-muted-foreground"}`}>
                                                             本回合不使用技能
                                                         </div>
                                                     </div>
@@ -109,47 +113,54 @@ export function TargetSelectionDrawer({
                                     </Card>
                                 )}
 
-                                {filteredPlayers.map((player) => (
-                                    <Card
-                                        key={`target-${player.seat}`}
-                                        className={`cursor-pointer transition-all ${selectedSeat === player.seat
-                                            ? "ring-2 ring-primary bg-primary/5"
-                                            : "hover:bg-accent"
-                                            }`}
-                                        onClick={() => setSelectedSeat(player.seat)}
-                                    >
-                                        <CardContent className="p-4">
-                                            <div className="flex items-center justify-between">
-                                                <div className="flex items-center gap-3">
-                                                    <Avvvatars
-                                                        value={player.name || `座位${player.seat}`}
-                                                        size={48}
-                                                        style="shape"
-                                                    />
-                                                    <div>
-                                                        <div className="font-medium">
-                                                            {player.name || `玩家${player.seat}`}
-                                                        </div>
-                                                        <div className="text-sm text-muted-foreground">
-                                                            座位 {player.seat}
+                                {filteredPlayers.map((player) => {
+                                    const isFake = isFakeBot(player.name);
+                                    const displayName = player.name?.replace(/\u200B/g, "") || `玩家${player.seat}`;
+                                    return (
+                                        <Card
+                                            key={`target-${player.seat}`}
+                                            className={`cursor-pointer transition-all ${isNight ? "backdrop-blur-sm bg-white/10 border-white/20" : ""} ${selectedSeat === player.seat
+                                                ? "ring-2 ring-primary bg-primary/5"
+                                                : isNight ? "hover:bg-white/20" : "hover:bg-accent"
+                                                }`}
+                                            onClick={() => setSelectedSeat(player.seat)}
+                                        >
+                                            <CardContent className="p-4">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-3">
+                                                        <Avvvatars
+                                                            value={displayName}
+                                                            size={48}
+                                                            style="shape"
+                                                        />
+                                                        <div>
+                                                            <div className={`font-medium ${isNight ? "text-white" : ""}`}>
+                                                                {displayName}
+                                                            </div>
+                                                            <div className={`text-sm ${isNight ? "text-white/70" : "text-muted-foreground"}`}>
+                                                                座位 {player.seat}
+                                                            </div>
                                                         </div>
                                                     </div>
+                                                    <div className="flex items-center gap-2">
+                                                        {!player.isAlive && (
+                                                            <Badge variant="destructive">已死亡</Badge>
+                                                        )}
+                                                        {(player.isBot || isFake) && (
+                                                            <Badge variant="outline" className={`gap-1 ${isNight ? "text-white border-white/50" : ""}`}>
+                                                                <Bot className="h-3 w-3" />
+                                                                BOT
+                                                            </Badge>
+                                                        )}
+                                                        {selectedSeat === player.seat && (
+                                                            <Check className="h-5 w-5 text-primary" />
+                                                        )}
+                                                    </div>
                                                 </div>
-                                                <div className="flex items-center gap-2">
-                                                    {!player.isAlive && (
-                                                        <Badge variant="destructive">已死亡</Badge>
-                                                    )}
-                                                    {player.isBot && (
-                                                        <Badge variant="outline">BOT</Badge>
-                                                    )}
-                                                    {selectedSeat === player.seat && (
-                                                        <Check className="h-5 w-5 text-primary" />
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </CardContent>
-                                    </Card>
-                                ))}
+                                            </CardContent>
+                                        </Card>
+                                    );
+                                })}
 
                                 {filteredPlayers.length === 0 && (
                                     <div className="text-center py-8 text-muted-foreground">
@@ -171,7 +182,11 @@ export function TargetSelectionDrawer({
                             {selectedSeat === null && allowNoTarget && " - 不使用技能"}
                         </Button>
                         <DrawerClose asChild>
-                            <Button variant="outline" onClick={handleCancel} className="w-full">
+                            <Button
+                                variant="outline"
+                                onClick={handleCancel}
+                                className={`w-full ${isNight ? "bg-transparent text-white border-white/40 hover:bg-white/10 hover:text-white" : ""}`}
+                            >
                                 取消
                             </Button>
                         </DrawerClose>
