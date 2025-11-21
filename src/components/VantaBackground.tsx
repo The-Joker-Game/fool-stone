@@ -28,7 +28,7 @@ export function VantaBackground({ isNight }: VantaBackgroundProps) {
     const [vantaEffect, setVantaEffect] = useState<any>(null);
 
     // 用来存储动画帧ID，以便在组件卸载或快速切换时取消上一帧动画
-    const requestRef = useRef<number>();
+    const requestRef = useRef<number | undefined>(undefined);
 
     // 用来记录"当前"正在显示的颜色状态，用于从任意状态开始过渡
     const currentColors = useRef({ ...CONFIG.day });
