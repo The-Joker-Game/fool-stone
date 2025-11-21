@@ -231,7 +231,7 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
         ],
         editorProps: {
             attributes: {
-                class: "prose prose-sm focus:outline-none min-h-[44px] max-h-32 overflow-y-auto px-4 py-3",
+                class: "prose prose-sm focus:outline-none min-h-[44px] max-h-32 overflow-y-auto px-4 py-3 text-[1rem]",
                 enterkeyhint: "send",
             },
             handleKeyDown: (view: any, event: any) => {
