@@ -44,7 +44,7 @@ const cleanupTimers = new Map<string, NodeJS.Timeout>();
 const disconnectCleanupTimers = new Map<string, NodeJS.Timeout>();
 const MAX_SEATS = 9;
 const ROOM_EMPTY_GRACE_MS = Number(process.env.ROOM_EMPTY_GRACE_MS ?? 5 * 60 * 1000);
-const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS ?? 2 * 60 * 1000);
+const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS ?? 15 * 60 * 1000);
 
 function cancelRoomCleanup(code: string) {
   const timer = cleanupTimers.get(code);

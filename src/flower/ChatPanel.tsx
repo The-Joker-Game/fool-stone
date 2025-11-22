@@ -14,6 +14,9 @@ import { cn } from "@/lib/utils";
 import type { ChatMessage, ChatMention, FlowerPlayerState } from "./types";
 import { getSessionId } from "../realtime/socket";
 
+// --- 辅助函数 ---
+const cleanName = (name: string | undefined) => name?.replace(/\u200B/g, "") || "";
+
 // --- 类型定义 ---
 
 declare global {
@@ -43,7 +46,7 @@ const MentionList = ({ items, command }: MentionListProps) => {
     const selectItem = useCallback((index: number) => {
         const item = items[index];
         if (item) {
-            command({ id: item.seat, label: item.name });
+            command({ id: item.seat, label: cleanName(item.name) });
         }
     }, [items, command]);
 
@@ -83,8 +86,8 @@ const MentionList = ({ items, command }: MentionListProps) => {
                     )}
                     onClick={() => selectItem(index)}
                 >
-                    <Avvvatars value={item.name} size={20} style="shape" />
-                    <span className="flex-1 text-left truncate font-medium">{item.name}</span>
+                    <Avvvatars value={cleanName(item.name)} size={20} style="shape" />
+                    <span className="flex-1 text-left truncate font-medium">{cleanName(item.name)}</span>
                     <span className="text-xs text-muted-foreground opacity-70">#{item.seat}</span>
                 </button>
             ))}
@@ -160,8 +163,8 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
                         // 使用 ref 获取最新的 players
                         return playersRef.current
                             .filter(p => (p.sessionId || p.isBot) && p.sessionId !== getSessionId())
-                            .filter(p => p.name.toLowerCase().includes(q) || String(p.seat).includes(q))
-                            .slice(0, 5);
+                            .filter(p => cleanName(p.name).toLowerCase().includes(q) || String(p.seat).includes(q))
+                            .slice(0, 9);
                     },
                     command: ({ editor, range, props }) => {
                         // 使用 ProseMirror transaction 直接操作
@@ -399,8 +402,8 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
 
     return (
         <div className={cn(
-            "flex flex-col h-[560px] border rounded-xl overflow-hidden shadow-sm relative transition-colors duration-500",
-            isNight ? "bg-black/20 border-white/10" : "bg-[#F5F7FB]/80 border-gray-200"
+            "flex flex-col h-full border rounded-xl overflow-hidden shadow-sm relative transition-colors duration-500",
+            isNight ? "bg-black/20 border-white/10" : "bg-white/20 border-gray-200"
         )}>
             <ScrollArea
                 ref={scrollRef}
@@ -456,7 +459,7 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
                                 <div className={cn("flex gap-3", isMe ? "flex-row-reverse" : "flex-row")}>
                                     {/* 头像 */}
                                     <div className="flex-shrink-0 flex flex-col justify-end">
-                                        <Avvvatars value={msg.senderName} size={36} style="shape" />
+                                        <Avvvatars value={cleanName(msg.senderName)} size={36} style="shape" />
                                     </div>
 
                                     {/* 气泡主体 */}
@@ -466,7 +469,7 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
                                             "flex items-center gap-1 mb-1",
                                             isMe ? "mr-1 flex-row-reverse" : "ml-1 flex-row"
                                         )}>
-                                            <span className={cn("text-xs font-medium", isNight ? "text-white/70" : "text-gray-500")}>{msg.senderName}</span>
+                                            <span className={cn("text-xs font-medium", isNight ? "text-white/70" : "text-gray-500")}>{cleanName(msg.senderName)}</span>
                                             <span className={cn("text-[10px] px-1 rounded", isNight ? "text-white/50 bg-white/10" : "text-gray-400 bg-gray-100")}>#{msg.senderSeat}</span>
                                         </div>
 
@@ -497,7 +500,7 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
             {!isAtBottom && unreadCount > 0 && (
                 <button
                     onClick={scrollToBottom}
-                    className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-blue-500 hover:bg-blue-600 text-white text-xs px-3 py-1.5 rounded-full shadow-md z-20 flex items-center gap-1.5 transition-all animate-in fade-in slide-in-from-bottom-2 cursor-pointer"
+                    className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-shite hover:bg-gray-200 text-black text-xs px-3 py-1.5 rounded-full shadow-md z-20 flex items-center gap-1.5 transition-all animate-in fade-in slide-in-from-bottom-2 cursor-pointer"
                 >
                     <ArrowDown className="w-3 h-3" />
                     <span>{unreadCount} 条新消息</span>

@@ -15,9 +15,13 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import {
+    Carousel,
+    CarouselContent,
+    CarouselItem,
+    type CarouselApi,
+} from "@/components/ui/carousel";
+
 import {
     Table,
     TableBody,
@@ -46,12 +50,24 @@ import {
     Moon,
     Sun,
     Gamepad2,
-    Wrench,
     User,
     Pencil,
     Swords,
-    House
+    House,
+    CircleAlert, ThumbsUp, ThumbsDown, Heart, HeartCrack
 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+
+import {
+    GiButterfly,
+    GiCrosshair,
+    GiDoctorFace, GiEntMouth,
+    GiFarmer,
+    GiHoodedAssassin,
+    GiPoliceBadge, GiRobber,
+    GiWizardStaff
+} from "react-icons/gi";
+import { ScrollArea } from "@/components/ui/scroll-area.tsx";
 
 
 /** ———————————————————————— 小工具 ———————————————————————— */
@@ -85,6 +101,17 @@ function getAvailableAiName(usedNames: Set<string>): string {
 const isUserReady = (u: unknown): boolean => !!(u as any)?.ready;
 const GOOD_ROLE_SET = new Set<FlowerRole>(["花蝴蝶", "狙击手", "医生", "警察", "善民"]);
 const BAD_ROLE_SET = new Set<FlowerRole>(["杀手", "魔法师", "森林老人", "恶民"]);
+const ROLE_ICONS: Record<string, React.ElementType> = {
+    "花蝴蝶": GiButterfly,
+    "狙击手": GiCrosshair,
+    "医生": GiDoctorFace,
+    "警察": GiPoliceBadge,
+    "善民": GiFarmer,
+    "杀手": GiHoodedAssassin,
+    "魔法师": GiWizardStaff,
+    "森林老人": GiEntMouth,
+    "恶民": GiRobber,
+};
 const PHASE_TEXT_MAP: Record<FlowerPhase, string> = {
     lobby: "准备阶段",
     night_actions: "夜晚行动",
@@ -122,6 +149,82 @@ function pickBotTarget(role: FlowerRole | null, actorSeat: number, aliveSeats: n
 /** ———————————————————————— 页面组件 ———————————————————————— */
 type NightSelectionMap = Record<string, number | "" | null>;
 
+type TabId = "players" | "chat" | "actions";
+
+const TAB_LABELS: Record<TabId, string> = {
+    players: "玩家",
+    chat: "聊天",
+    actions: "操作",
+};
+
+const TAB_ICONS: Record<TabId, React.ElementType> = {
+    players: Users,
+    chat: MessageSquare,
+    actions: Gamepad2,
+};
+
+function MobileNavBar({
+    tabs,
+    activeTab,
+    onTabChange,
+    isNight
+}: {
+    tabs: TabId[];
+    activeTab: TabId;
+    onTabChange: (t: TabId) => void;
+    isNight: boolean;
+}) {
+    return (
+        <div className="flex justify-center mb-4 z-20 sticky top-0 pt-2">
+            <div className={`flex items-center p-1 rounded-full border backdrop-blur-md transition-colors duration-500 ${isNight
+                ? "bg-black/40 border-white/20 shadow-[0_0_15px_rgba(255,255,255,0.1)]"
+                : "bg-white/60 border-white/40 shadow-sm"
+                }`}>
+                {tabs.map((tab) => {
+                    const isActive = activeTab === tab;
+                    const Icon = TAB_ICONS[tab];
+                    return (
+                        <button
+                            key={tab}
+                            onClick={() => onTabChange(tab)}
+                            className={`relative flex items-center justify-center h-9 px-4 rounded-full transition-all duration-300 ${isActive ? "flex-grow" : ""
+                                }`}
+                            style={{ minWidth: "3rem" }}
+                        >
+                            {isActive && (
+                                <motion.div
+                                    layoutId="nav-pill"
+                                    className={`absolute inset-0 rounded-full ${isNight ? "bg-white text-black" : "bg-orange-500/50 text-gray-200"
+                                        }`}
+                                    transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                                />
+                            )}
+                            <div className={`relative z-10 flex items-center gap-2 ${isActive
+                                ? (isNight ? "text-black" : "text-white")
+                                : (isNight ? "text-white/60" : "text-black/60")
+                                }`}>
+                                <Icon className="w-4 h-4" />
+                                <AnimatePresence mode="popLayout">
+                                    {isActive && (
+                                        <motion.span
+                                            initial={{ opacity: 0, width: 0, scale: 0.8 }}
+                                            animate={{ opacity: 1, width: "auto", scale: 1 }}
+                                            exit={{ opacity: 0, width: 0, scale: 0.8 }}
+                                            className="text-sm font-medium whitespace-nowrap overflow-hidden"
+                                        >
+                                            {TAB_LABELS[tab]}
+                                        </motion.span>
+                                    )}
+                                </AnimatePresence>
+                            </div>
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
 export default function FlowerRoom() {
     const [connected, setConnected] = useState(false);
     const [roomCode, setRoomCode] = useState<string | null>(null);
@@ -135,6 +238,7 @@ export default function FlowerRoom() {
     const [dayVoteDrawerOpen, setDayVoteDrawerOpen] = useState(false);
     const [nightActionDrawerOpen, setNightActionDrawerOpen] = useState(false);
 
+    const [activeTab, setActiveTab] = useState<TabId>("players");
 
     const flowerSnapshot = useFlowerStore((state: FlowerStore) => state.snapshot);
     const ensureSnapshotFromPresence = useFlowerStore((state: FlowerStore) => state.ensureSnapshotFromPresence);
@@ -150,6 +254,128 @@ export default function FlowerRoom() {
     const addChatMessage = useFlowerStore((state: FlowerStore) => state.addChatMessage);
     const resetGame = useFlowerStore((state: FlowerStore) => state.resetGame);
 
+    /** 列表派生 */
+    const users = presence?.users ?? [];
+    const presenceMap = useMemo(() => {
+        const map = new Map<string, PresenceState["users"][number]>();
+        for (const u of users) {
+            if (u?.sessionId) map.set(u.sessionId, u);
+        }
+        return map;
+    }, [users]);
+    const me = useMemo(() => users.find(u => u.sessionId === getSessionId()) ?? null, [users]);
+    const flowerPlayers: FlowerPlayerState[] = flowerSnapshot?.players ?? [];
+
+    const flowerPhase = flowerSnapshot?.phase ?? "lobby";
+    const flowerPhaseText = PHASE_TEXT_MAP[flowerPhase] ?? flowerPhase;
+    const flowerDayCount = flowerSnapshot?.dayCount ?? 0;
+    const gameResult = flowerSnapshot?.gameResult ?? null;
+    const latestDaySummary = useMemo(() => {
+        const logs = flowerSnapshot?.logs;
+        if (!logs || logs.length === 0) {
+            return { executionText: null as string | null, votesText: null as string | null, hasSummary: false };
+        }
+        let executionText: string | null = null;
+        let votesText: string | null = null;
+        for (let i = logs.length - 1; i >= 0; i -= 1) {
+            const text = logs[i].text || "";
+            if (!executionText) {
+                if (text.startsWith("白天票决：")) {
+                    executionText = text.replace(/^白天票决：/, "");
+                } else if (text.startsWith("白天投票平票") || text.includes("平票，无人死亡")) {
+                    executionText = "无人被处决";
+                }
+            }
+            if (!votesText && text.startsWith("白天票型：")) {
+                votesText = text.replace(/^白天票型：/, "");
+            }
+            if (executionText && votesText) break;
+        }
+        const hasSummary = !!executionText || !!votesText;
+        return { executionText, votesText, hasSummary };
+    }, [flowerSnapshot?.logs, flowerSnapshot?.updatedAt]);
+    const everyoneReady = useMemo(() => {
+        if (flowerPhase !== "lobby") return true;
+        const playerReadyCheck = (p: FlowerPlayerState) => (p.isBot ? true : !!p.isReady);
+        if (flowerPlayers.length > 0) {
+            return flowerPlayers
+                .filter(p => p.sessionId)
+                .every(playerReadyCheck);
+        }
+        return users.length > 0 && users.every(u => (u as any).isBot ? true : isUserReady(u));
+    }, [flowerPhase, flowerPlayers, users]);
+    const occupiedSeats = flowerSnapshot
+        ? flowerPlayers.filter(p => p.sessionId).length
+        : users.length;
+    const remainingSeats = Math.max(0, 9 - occupiedSeats);
+    const canAddBot = isHost && !!roomCode && flowerPhase === "lobby" && remainingSeats > 0;
+    const myFlowerPlayer = useMemo(
+        () => flowerPlayers.find(p => p.sessionId === getSessionId()) ?? null,
+        [flowerPlayers]
+    );
+    const mySeat = myFlowerPlayer?.seat ?? null;
+    const myRole = myFlowerPlayer?.role ?? null;
+    const RoleIcon = ({ myRole }: { myRole: keyof typeof ROLE_ICONS }) => {
+        const Icon = ROLE_ICONS[myRole];
+        return <Icon className="w-4 h-4" />;
+    }; const myAlive = !!myFlowerPlayer?.isAlive;
+    const myMuted = !!myFlowerPlayer?.isMutedToday;
+    const showDaySummary = flowerPhase === "night_actions" && latestDaySummary.hasSummary;
+    const showNightSummary = flowerPhase === "day_vote" && !!flowerSnapshot?.night?.result;
+
+    const isNight = flowerPhase === "night_actions" || flowerPhase === "night_result";
+    const themeClass = isNight
+        ? "backdrop-blur-sm bg-black/50 text-white border-white/20 shadow-none"
+        : "backdrop-blur-sm bg-white/50 text-slate-900 border-white/40 shadow-sm";
+    const mutedTextClass = isNight ? "text-white/70" : "text-slate-500";
+
+    const availableTabs = useMemo<TabId[]>(() => {
+        const tabs: TabId[] = ["players"];
+        if (roomCode) tabs.push("chat");
+        if (flowerSnapshot && flowerPhase !== "lobby") tabs.push("actions");
+        return tabs;
+    }, [roomCode, flowerSnapshot, flowerPhase]);
+
+    // Smart Persistence
+    useEffect(() => {
+        if (!availableTabs.includes(activeTab)) {
+            setActiveTab(availableTabs[0]);
+        }
+    }, [availableTabs, activeTab]);
+
+    // —— Carousel State & Sync ——
+    const [api, setApi] = useState<CarouselApi>();
+
+    // Sync 1: Carousel -> Tab
+    useEffect(() => {
+        if (!api) return;
+
+        const onSelect = () => {
+            const index = api.selectedScrollSnap();
+            const tab = availableTabs[index];
+            if (tab) {
+                setActiveTab(tab);
+            }
+        };
+
+        api.on("select", onSelect);
+        return () => {
+            api.off("select", onSelect);
+        };
+    }, [api, availableTabs]);
+
+    // Sync 2: Tab -> Carousel
+    useEffect(() => {
+        if (!api) return;
+        const index = availableTabs.indexOf(activeTab);
+        if (index !== -1) {
+            api.scrollTo(index);
+        }
+    }, [activeTab, api, availableTabs]);
+
+
+
+
     // Dialog hooks to replace native alert/confirm
     const { confirm, ConfirmDialogComponent } = useConfirm(flowerSnapshot?.phase === "night_actions" || flowerSnapshot?.phase === "night_result");
     const { alert, AlertDialogComponent } = useAlert();
@@ -157,7 +383,7 @@ export default function FlowerRoom() {
     const { showAddBotDialog, AddBotDialogComponent } = useAddBotDialog(flowerSnapshot?.phase === "night_actions" || flowerSnapshot?.phase === "night_result");
     const { showEditNameDialog, EditNameDialogComponent } = useEditNameDialog(flowerSnapshot?.phase === "night_actions" || flowerSnapshot?.phase === "night_result");
 
-    const [logs, setLogs] = useState<string[]>([]);
+    const [_logs, setLogs] = useState<string[]>([]);
     const pushLog = useCallback((line: string) => setLogs(prev => [...prev, line]), []);
 
 
@@ -346,77 +572,7 @@ export default function FlowerRoom() {
         wasHostRef.current = isHost;
     }, [isHost, flowerSnapshot, broadcastSnapshot]);
 
-    /** 列表派生 */
-    const users = presence?.users ?? [];
-    const presenceMap = useMemo(() => {
-        const map = new Map<string, PresenceState["users"][number]>();
-        for (const u of users) {
-            if (u?.sessionId) map.set(u.sessionId, u);
-        }
-        return map;
-    }, [users]);
-    const me = useMemo(() => users.find(u => u.sessionId === getSessionId()) ?? null, [users]);
-    const flowerPlayers: FlowerPlayerState[] = flowerSnapshot?.players ?? [];
-    const darkVoteMap = (flowerSnapshot?.day?.tally ?? {}) as Record<string, number>;
-    const flowerPhase = flowerSnapshot?.phase ?? "lobby";
-    const flowerPhaseText = PHASE_TEXT_MAP[flowerPhase] ?? flowerPhase;
-    const flowerDayCount = flowerSnapshot?.dayCount ?? 0;
-    const gameResult = flowerSnapshot?.gameResult ?? null;
-    const latestDaySummary = useMemo(() => {
-        const logs = flowerSnapshot?.logs;
-        if (!logs || logs.length === 0) {
-            return { executionText: null as string | null, votesText: null as string | null, hasSummary: false };
-        }
-        let executionText: string | null = null;
-        let votesText: string | null = null;
-        for (let i = logs.length - 1; i >= 0; i -= 1) {
-            const text = logs[i].text || "";
-            if (!executionText) {
-                if (text.startsWith("白天票决：")) {
-                    executionText = text.replace(/^白天票决：/, "");
-                } else if (text.startsWith("白天投票平票") || text.includes("平票，无人死亡")) {
-                    executionText = "无人被处决";
-                }
-            }
-            if (!votesText && text.startsWith("白天票型：")) {
-                votesText = text.replace(/^白天票型：/, "");
-            }
-            if (executionText && votesText) break;
-        }
-        const hasSummary = !!executionText || !!votesText;
-        return { executionText, votesText, hasSummary };
-    }, [flowerSnapshot?.logs, flowerSnapshot?.updatedAt]);
-    const everyoneReady = useMemo(() => {
-        if (flowerPhase !== "lobby") return true;
-        const playerReadyCheck = (p: FlowerPlayerState) => (p.isBot ? true : !!p.isReady);
-        if (flowerPlayers.length > 0) {
-            return flowerPlayers
-                .filter(p => p.sessionId)
-                .every(playerReadyCheck);
-        }
-        return users.length > 0 && users.every(u => (u as any).isBot ? true : isUserReady(u));
-    }, [flowerPhase, flowerPlayers, users]);
-    const occupiedSeats = flowerSnapshot
-        ? flowerPlayers.filter(p => p.sessionId).length
-        : users.length;
-    const remainingSeats = Math.max(0, 9 - occupiedSeats);
-    const canAddBot = isHost && !!roomCode && flowerPhase === "lobby" && remainingSeats > 0;
-    const myFlowerPlayer = useMemo(
-        () => flowerPlayers.find(p => p.sessionId === getSessionId()) ?? null,
-        [flowerPlayers]
-    );
-    const mySeat = myFlowerPlayer?.seat ?? null;
-    const myRole = myFlowerPlayer?.role ?? null;
-    const myAlive = !!myFlowerPlayer?.isAlive;
-    const myMuted = !!myFlowerPlayer?.isMutedToday;
-    const showDaySummary = flowerPhase === "night_actions" && latestDaySummary.hasSummary;
-    const showNightSummary = flowerPhase === "day_vote" && !!flowerSnapshot?.night?.result;
 
-    const isNight = flowerPhase === "night_actions" || flowerPhase === "night_result";
-    const themeClass = isNight
-        ? "backdrop-blur-sm bg-black/50 text-white border-white/20 shadow-none"
-        : "backdrop-blur-sm bg-white/50 text-slate-900 border-white/40 shadow-sm";
-    const mutedTextClass = isNight ? "text-white/70" : "text-slate-500";
 
     // game over UI handled before return (see bottom)
 
@@ -732,800 +888,682 @@ export default function FlowerRoom() {
 
 
 
-    if (flowerPhase === "game_over" && flowerSnapshot && gameResult) {
-        return (
-            <div className="h-[dvh] p-6 max-w-3xl mx-auto space-y-4">
-                <VantaBackground isNight={isNight} />
-                <div className="flex items-center justify-between">
-                    <h1 className={`text-2xl font-bold ${isNight ? "text-white" : ""}`}>花蝴蝶九人局 · 终局结算</h1>
-                    <div className="flex gap-2">
-                        {isHost && (
-                            <Button
-                                variant="default"
-                                onClick={async () => {
-                                    const confirmed = await confirm({
-                                        title: "重新开始",
-                                        description: "确定要重新开始游戏吗？聊天记录将会保留。"
-                                    });
-                                    if (!confirmed) return;
-                                    resetGame();
-                                    await broadcastSnapshot();
-                                }}
-                            >
-                                <House className="h-4 w-4 mr-2" />
-                                重新开始
-                            </Button>
-                        )}
-                        <Button variant="outline" onClick={leaveRoom}>离开房间</Button>
-                        <LogOut className="h-4 w-4 mr-2" />
-                    </div>
-                </div>
-                <Card className={themeClass}>
-                    <CardContent className="pt-6">
-                        <div
-                            className="text-lg font-semibold">{gameResult.winner === "good" ? "好人胜利" : gameResult.winner === "bad" ? "坏人胜利" : "平局"}</div>
-                        <div className="text-sm text-muted-foreground">{gameResult.reason}</div>
-                    </CardContent>
-                </Card>
-                <div className={themeClass + " rounded-lg"}>
-                    <Table>
-                        <TableHeader>
-                            <TableRow>
-                                <TableHead className="w-[60px]">座位</TableHead>
-                                <TableHead>玩家</TableHead>
-                                <TableHead>角色</TableHead>
-                                <TableHead>阵营</TableHead>
-                                <TableHead>状态</TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {flowerPlayers.map((p) => {
-                                const role = (p.role ?? "") as FlowerRole;
-                                const camp = GOOD_ROLE_SET.has(role) ? "好人" : BAD_ROLE_SET.has(role) ? "坏人" : "未知";
-                                return (
-                                    <TableRow key={`final-${p.seat}`}>
-                                        <TableCell>{p.seat}</TableCell>
-                                        <TableCell>{p.name || `玩家${p.seat}`}</TableCell>
-                                        <TableCell>{p.role ?? "未知"}</TableCell>
-                                        <TableCell>{camp}</TableCell>
-                                        <TableCell>{p.isAlive ? "存活" : "死亡"}</TableCell>
-                                    </TableRow>
-                                );
-                            })}
-                        </TableBody>
-                    </Table>
-                </div>
-                {/* Dialog Components */}
-                <ConfirmDialogComponent />
-                <Accordion type="single" collapsible className={`w-full border rounded-md px-4 ${themeClass}`}>
-                    <AccordionItem value="logs" className={isNight ? "border-white/10" : "border-black/10"}>
-                        <AccordionTrigger className={isNight ? "text-white" : ""}>系统日志</AccordionTrigger>
-                        <AccordionContent>
-                            <div
-                                ref={(node) => {
-                                    if (node) {
-                                        node.scrollTop = node.scrollHeight;
-                                    }
-                                }}
-                                className="max-h-80 overflow-auto text-sm"
-                            >
-                                <ol className="list-decimal list-inside space-y-1">
-                                    {flowerSnapshot.logs.map((entry, idx) => (
-                                        <li key={`gameover-log-${idx}`}>{new Date(entry.at).toLocaleTimeString()} - {entry.text}</li>
-                                    ))}
-                                </ol>
-                            </div>
-                        </AccordionContent>
-                    </AccordionItem>
-                </Accordion>
-            </div>
-        );
-    }
+    // Game Over logic integrated into main return
+
 
     return (
         <div className="h-[100dvh] flex flex-col overflow-hidden">
             <VantaBackground isNight={isNight} />
 
-            {/* Fixed Top Card - 不滚动 */}
-            <div className="sticky flex-none z-10 p-2 md:p-4">
-                <Card className={`w-full shadow-lg ${themeClass}`}>
-                    <CardHeader className="pb-2 pt-4 px-4">
-                        <div className="flex items-center gap-2">
-                            {connected ? (
-                                <Wifi className="h-4 w-4 text-green-600" />
-                            ) : (
-                                <WifiOff className="h-4 w-4 text-destructive" />
-                            )}
-                            <CardTitle className="text-lg md:text-xl">花蝴蝶 九人局</CardTitle>
-                        </div>
-                    </CardHeader>
-                    <CardContent className="px-4 pb-4 pt-0">
-                        <div className="grid grid-cols-2 gap-4">
-                            {/* Left Column: Player & Room */}
-                            <div className="flex flex-col justify-center space-y-2 border-r border-white/10 pr-4">
-                                <div>
-                                    <div className={`text-xs ${mutedTextClass}`}>玩家昵称</div>
-                                    <div className="flex items-center gap-2">
-                                        <div className="font-medium truncate text-lg">{name.replace(/\u200B/g, "")}</div>
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className="h-6 w-6"
-                                            onClick={async () => {
-                                                const newName = await showEditNameDialog(name.replace(/\u200B/g, ""));
-                                                if (newName) {
-                                                    let finalName = newName;
-                                                    // 只有在房间内时，才立即进行机器人伪装处理
-                                                    if (newName === "机器人" && roomCode) {
-                                                        const usedNames = new Set(flowerPlayers.map(p => p.name?.replace(/\u200B/g, "")).filter(Boolean) as string[]);
-                                                        const aiName = getAvailableAiName(usedNames);
-                                                        finalName = aiName + "\u200B";
-                                                    }
-                                                    setName(finalName);
-                                                    localStorage.setItem("name", finalName);
-                                                    if (roomCode) {
-                                                        try {
-                                                            await rt.updateName(roomCode, finalName);
-                                                        } catch (e) {
-                                                            console.error("Failed to update name on server", e);
+            <div className="w-full max-w-md mx-auto flex flex-col h-full relative z-10">
+
+                {/* Fixed Top Card - 不滚动 */}
+                <div className="sticky flex-none z-10 p-2 md:p-4">
+                    <Card className={`w-full shadow-lg ${themeClass}`}>
+                        <CardHeader className="pb-2 pt-4 px-4">
+                            <div className="flex items-center gap-2">
+                                {connected ? (
+                                    <Wifi className="h-4 w-4 text-green-600" />
+                                ) : (
+                                    <WifiOff className="h-4 w-4 text-destructive" />
+                                )}
+                                <CardTitle className="text-lg md:text-xl">花蝴蝶 九人局</CardTitle>
+                                {myRole && (
+                                    <Badge variant="outline" className={`flex items-center gap-1.5 ml-auto backdrop-sm ${isNight ? "text-white border-black/50 bg-white/50" : "border-black/50 bg-white/50"
+                                        }`}>
+                                        {RoleIcon && <RoleIcon myRole={myRole} />}
+                                        <span>{myRole}</span>
+                                    </Badge>
+                                )}
+                            </div>
+                        </CardHeader>
+                        <CardContent className="px-4 pb-4 pt-0">
+                            <div className="grid grid-cols-2 gap-4">
+                                {/* Left Column: Player & Room */}
+                                <div className="flex flex-col justify-center space-y-2 border-r border-white/10 pr-4">
+                                    <div>
+                                        <div className={`text-xs ${mutedTextClass}`}>玩家昵称</div>
+                                        <div className="flex items-center gap-2">
+                                            <div className="font-medium truncate text-lg">{name.replace(/\u200B/g, "")}</div>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-6 w-6"
+                                                onClick={async () => {
+                                                    const newName = await showEditNameDialog(name.replace(/\u200B/g, ""));
+                                                    if (newName) {
+                                                        let finalName = newName;
+                                                        // 只有在房间内时，才立即进行机器人伪装处理
+                                                        if (newName === "机器人" && roomCode) {
+                                                            const usedNames = new Set(flowerPlayers.map(p => p.name?.replace(/\u200B/g, "")).filter(Boolean) as string[]);
+                                                            const aiName = getAvailableAiName(usedNames);
+                                                            finalName = aiName + "\u200B";
+                                                        }
+                                                        setName(finalName);
+                                                        localStorage.setItem("name", finalName);
+                                                        if (roomCode) {
+                                                            try {
+                                                                await rt.updateName(roomCode, finalName);
+                                                            } catch (e) {
+                                                                console.error("Failed to update name on server", e);
+                                                            }
                                                         }
                                                     }
-                                                }
-                                            }}
-                                        >
-                                            <Pencil className="h-3 w-3" />
-                                        </Button>
-                                    </div>
-                                </div>
-                                <div>
-                                    <div className={`text-xs ${mutedTextClass}`}>房间号</div>
-                                    <div className="font-mono font-bold text-xl truncate">
-                                        {roomCode || "未加入"}
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Right Column: Phase & Day */}
-                            <div className="flex flex-col justify-center space-y-2 pl-4">
-                                <div>
-                                    <div className={`text-xs ${mutedTextClass}`}>当前阶段</div>
-                                    <div className="font-medium flex items-center gap-2 text-lg">
-                                        {flowerPhaseText}
-                                        {flowerPhase === "night_actions" && <Moon className="h-4 w-4 text-indigo-200" />}
-                                        {flowerPhase === "day_vote" && <Sun className="h-4 w-4 text-orange-500" />}
-                                    </div>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <div className={`text-xs ${mutedTextClass}`}>天数</div>
-                                        <div className="font-bold text-xl">第 {flowerDayCount} 天</div>
-                                    </div>
-                                    {myRole && (
-                                        <Badge variant="outline" className={isNight ? "text-white border-white/50" : ""}>
-                                            {myRole}
-                                        </Badge>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                    </CardContent>
-                </Card>
-            </div>
-
-            {/* Scrollable Content Area - 独立滚动 */}
-            <div
-                className="flex-1 overflow-y-auto transition-colors duration-1000 p-5"
-                onClick={handleInteraction}
-                onTouchStart={handleInteraction}
-            >
-                <div className="max-w-6xl mx-auto space-y-4 pb-20">
-
-                    {/* Accordion 工作区域 */}
-                    <Accordion type="multiple" defaultValue={["players", "actions", "chat"]} className="space-y-2">
-                        {/* 玩家列表区域 */}
-                        <AccordionItem value="players" className={isNight ? "border-white/10" : "border-black/10"}>
-                            <AccordionTrigger className={`px-4 ${isNight ? "text-white" : ""}`}>
-                                <div className="flex items-center gap-2">
-                                    <Users className="h-5 w-5" />
-                                    <span className="font-semibold">
-                                        玩家列表
-                                    </span>
-                                </div>
-                            </AccordionTrigger>
-                            <AccordionContent className="px-4">
-                                {/* Room Actions Section */}
-                                <div className="mb-4 space-y-3">
-                                    {!roomCode ? (
-                                        <div className="flex flex-wrap gap-2 items-center">
-                                            <Button onClick={createRoom} size="sm">
-                                                <House className="h-4 w-4 mr-2" />
-                                                创建
-                                            </Button>
-                                            <Button variant="outline" onClick={joinRoom} size="sm" className={isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}>
-                                                <UserPlus className="h-4 w-4 mr-2" />
-                                                加入
-                                            </Button>
-                                        </div>
-                                    ) : (
-                                        <div className="flex flex-wrap gap-2 items-center">
-                                            {flowerPhase === "lobby" && (
-                                                <>
-                                                    <Button
-                                                        variant={(me as any)?.ready ? "default" : "outline"}
-                                                        onClick={toggleReady}
-                                                        size="sm"
-                                                        className={isNight && !(me as any)?.ready ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}
-                                                    >
-                                                        {(me as any)?.ready ? "取消" : "准备"}
-                                                    </Button>
-                                                    {isHost && (
-                                                        <Button
-                                                            onClick={startFirstNight}
-                                                            disabled={occupiedSeats < 9 || !everyoneReady}
-                                                            size="sm"
-                                                        >
-                                                            <Swords className="h-4 w-4 mr-2" />
-                                                            开始游戏
-                                                        </Button>
-                                                    )}
-                                                    {isHost && (
-                                                        <Button
-                                                            variant="outline"
-                                                            onClick={addBotPlaceholder}
-                                                            disabled={!canAddBot}
-                                                            size="sm"
-                                                            className={isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}
-                                                        >
-                                                            <Bot className="h-4 w-4 mr-2" />
-                                                            添加人机
-                                                        </Button>
-                                                    )}
-                                                </>
-                                            )}
-                                            <Button
-                                                variant="destructive"
-                                                onClick={leaveRoom}
-                                                size="sm"
+                                                }}
                                             >
-                                                <LogOut className="h-4 w-4 mr-2" />
-                                                离开房间
+                                                <Pencil className="h-3 w-3" />
                                             </Button>
                                         </div>
+                                    </div>
+                                    <div>
+                                        <div className={`text-xs ${mutedTextClass}`}>房间号</div>
+                                        <div className="font-mono font-bold text-xl truncate">
+                                            {roomCode || "未加入"}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Right Column: Phase & Day or Result */}
+                                <div className="flex flex-col justify-center space-y-2 pl-4">
+                                    {flowerPhase === "game_over" && gameResult ? (
+                                        <>
+                                            <div>
+                                                <div className={`text-xs ${mutedTextClass}`}>对局结果</div>
+                                                <div className={`font-bold text-lg ${gameResult.winner === "good" ? "text-green-600" : gameResult.winner === "bad" ? "text-red-600" : "text-gray-400"}`}>
+                                                    {gameResult.winner === "good" ? "好人胜利" : gameResult.winner === "bad" ? "坏人胜利" : "平局"}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div className={`text-xs ${mutedTextClass}`}>原因</div>
+                                                <div className="text-sm font-medium leading-tight line-clamp-2" title={gameResult.reason}>{gameResult.reason}</div>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <div>
+                                                <div className={`text-xs ${mutedTextClass}`}>当前阶段</div>
+                                                <div className="font-medium flex items-center gap-2 text-lg">
+                                                    {flowerPhaseText}
+                                                    {flowerPhase === "night_actions" && <Moon className="h-4 w-4 text-indigo-200" />}
+                                                    {flowerPhase === "day_vote" && <Sun className="h-4 w-4 text-orange-500" />}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div className={`text-xs ${mutedTextClass}`}>天数</div>
+                                                <div className="font-bold text-xl">第 {flowerDayCount} 天</div>
+                                            </div>
+                                        </>
                                     )}
                                 </div>
-                                <Separator className="mb-4" />
+                            </div>
+                        </CardContent>
+                    </Card>
+                </div>
 
-                                <ScrollArea className="max-h-[500px] pr-4">
-                                    <div className="space-y-2">
-                                        {flowerSnapshot
-                                            ? flowerPlayers.map((player: FlowerPlayerState) => {
-                                                const isFake = isFakeBot(player.name);
-                                                const displayName = player.name?.replace(/\u200B/g, "") || `座位${player.seat}`;
-                                                const tags: string[] = [];
-                                                const presenceInfo = player.sessionId ? presenceMap.get(player.sessionId) : undefined;
-                                                if (player.isHost) tags.push("房主");
-                                                if (player.sessionId === getSessionId()) tags.push("我");
-                                                if (presenceInfo?.isDisconnected && !isFake) tags.push("暂离");
-                                                if ((player.isReady || isFake) && flowerPhase === "lobby") tags.push("已准备");
-                                                if (player.isBot || isFake) tags.push("BOT");
+                {/* Game Over Buttons */}
+                {flowerPhase === "game_over" && (
+                    <div className="flex-none px-4 pb-2 z-10">
+                        <div className="flex gap-3 justify-center">
+                            {isHost && (
+                                <Button
+                                    variant="default"
+                                    className="flex-1 max-w-[200px]"
+                                    onClick={async () => {
+                                        const confirmed = await confirm({
+                                            title: "重新开始",
+                                            description: "确定要重新开始游戏吗？聊天记录将会保留。"
+                                        });
+                                        if (!confirmed) return;
+                                        resetGame();
+                                        await broadcastSnapshot();
+                                    }}
+                                >
+                                    <House className="h-4 w-4 mr-2" />
+                                    重新开始
+                                </Button>
+                            )}
+                            <Button
+                                variant="outline"
+                                className={`flex-1 max-w-[200px] ${isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}`}
+                                onClick={leaveRoom}
+                            >
+                                <LogOut className="h-4 w-4 mr-2" />
+                                离开房间
+                            </Button>
+                        </div>
+                    </div>
+                )}
 
-                                                const statusParts: string[] = [];
-                                                statusParts.push(player.sessionId ? (player.isAlive ? "存活" : "死亡") : "空位");
-                                                if (player.isMutedToday) statusParts.push("禁言");
-                                                if (player.hasVotedToday && flowerPhase === "day_vote") statusParts.push("已投票");
+                {/* Main Content Area with Dynamic Island Nav */}
+                <div
+                    className="flex-1 flex flex-col min-h-0 bg-transparent"
+                    onClick={handleInteraction}
+                    onTouchStart={handleInteraction}
+                >
+                    {flowerPhase !== "game_over" && roomCode && (
+                        <MobileNavBar
+                            tabs={availableTabs}
+                            activeTab={activeTab}
+                            onTabChange={setActiveTab}
+                            isNight={isNight}
+                        />
+                    )}
 
+                    <div className="flex-1 relative min-h-0 overflow-hidden">
+                        {flowerPhase === "game_over" && gameResult ? (
+                            <div className="h-full overflow-y-auto px-4 pb-20">
+                                <div className={themeClass + " rounded-lg overflow-hidden"}>
+                                    <Table>
+                                        <TableHeader>
+                                            <TableRow className={isNight ? "hover:bg-white/5 border-white/20" : "border-black/10"}>
+                                                <TableHead className={`font-bold ${isNight ? "text-gray-300" : "text-gray-600"}`}>座位</TableHead>
+                                                <TableHead className={`font-bold ${isNight ? "text-gray-300" : "text-gray-600"}`}>玩家</TableHead>
+                                                <TableHead className={`font-bold ${isNight ? "text-gray-300" : "text-gray-600"}`}>角色</TableHead>
+                                                <TableHead className={`font-bold ${isNight ? "text-gray-300" : "text-gray-600"}`}>阵营</TableHead>
+                                                <TableHead className={`font-bold ${isNight ? "text-gray-300" : "text-gray-600"}`}>状态</TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {flowerPlayers.map((p) => {
+                                                const role = (p.role ?? "") as FlowerRole;
+                                                const camp = GOOD_ROLE_SET.has(role) ? "好人" : BAD_ROLE_SET.has(role) ? "坏人" : "未知";
                                                 return (
-                                                    <Card key={`seat-${player.seat}`} className={themeClass}>
-                                                        <CardContent className="p-4">
-                                                            <div className="flex items-center gap-3">
-                                                                {/* Avatar */}
-                                                                {player.sessionId || player.isBot ? (
-                                                                    <Avvvatars
-                                                                        value={displayName}
-                                                                        size={48}
-                                                                        style="shape"
-                                                                    />
-                                                                ) : (
-                                                                    <div
-                                                                        className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
-                                                                        <User
-                                                                            className="h-6 w-6 text-muted-foreground" />
-                                                                    </div>
-                                                                )}
-
-                                                                {/* Player Info */}
-                                                                <div className="flex-1">
-                                                                    <div className={`font-medium ${isNight ? "text-white" : ""}`}>
-                                                                        {player.sessionId ? displayName : `座位${player.seat}（空）`}
-                                                                    </div>
-                                                                    <div className={`text-xs ${mutedTextClass}`}>座位 {player.seat}</div>
-                                                                    {statusParts.length > 0 && (
-                                                                        <div className={`text-xs ${mutedTextClass} mt-1`}>
-                                                                            {statusParts.join(" · ")}
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-
-                                                                {/* Tags and Actions */}
-                                                                <div className="flex flex-col items-end gap-2">
-                                                                    {tags.length > 0 && (
-                                                                        <div className="flex flex-wrap gap-1 justify-end">
-                                                                            {player.isHost && (
-                                                                                <Badge variant="default" className={`gap-1 ${isNight ? "bg-white text-black hover:bg-white/90" : ""}`}>
-                                                                                    <Crown className="h-3 w-3" />
-                                                                                    房主
-                                                                                </Badge>
-                                                                            )}
-                                                                            {player.sessionId === getSessionId() && (
-                                                                                <Badge variant="secondary" className={isNight ? "bg-white/20 text-white border-white/30" : ""}>
-                                                                                    我
-                                                                                </Badge>
-                                                                            )}
-                                                                            {(player.isBot || isFake) && (
-                                                                                <Badge variant="outline" className={`gap-1 ${isNight ? "text-white border-white/50" : "border-black/50"}`}>
-                                                                                    <Bot className="h-3 w-3" />
-                                                                                    BOT
-                                                                                </Badge>
-                                                                            )}
-                                                                            {(player.isReady || isFake) && flowerPhase === "lobby" && (
-                                                                                <Badge variant="outline" className={isNight ? "text-white border-white/50" : "border-black/50"}>
-                                                                                    已准备
-                                                                                </Badge>
-                                                                            )}
-                                                                            {presenceInfo?.isDisconnected && !isFake && (
-                                                                                <Badge variant="destructive">暂离</Badge>
-                                                                            )}
-                                                                        </div>
-                                                                    )}
-                                                                    {isHost && player.sessionId && player.sessionId !== getSessionId() && (
-                                                                        <div className="flex gap-1">
-                                                                            {!player.isBot && !isFake && (
-                                                                                <Button
-                                                                                    variant="outline"
-                                                                                    size="sm"
-                                                                                    onClick={() => handoverHost(player.sessionId, player.name || `座位${player.seat}`)}
-                                                                                    disabled={!!presenceInfo?.isDisconnected}
-                                                                                >
-                                                                                    交接房主
-                                                                                </Button>
-                                                                            )}
-                                                                            <Button
-                                                                                variant="destructive"
-                                                                                size="sm"
-                                                                                onClick={() => kickPlayer(player.sessionId)}
-                                                                            >
-                                                                                {player.isBot || isFake ? "移除" : "踢出"}
-                                                                            </Button>
-                                                                        </div>
-                                                                    )}
-                                                                </div>
+                                                    <TableRow key={`final-${p.seat}`} className={isNight ? "hover:bg-white/5 border-white/20" : "border-black/10"}>
+                                                        <TableCell className="font-medium">{p.seat}</TableCell>
+                                                        <TableCell>{p.name || `玩家${p.seat}`}</TableCell>
+                                                        <TableCell>{p.role ? <span>{p.role}</span> : "未知"}</TableCell>
+                                                        <TableCell className={camp === "好人" ? "text-green-700" : "text-red-700"}>
+                                                            <div className={'flex items-center'}>
+                                                                {camp === "好人" ? <ThumbsUp /> : <ThumbsDown />}
                                                             </div>
-                                                        </CardContent>
-                                                    </Card>
-                                                );
-                                            })
-                                            : users.map((u: any) => {
-                                                const isFake = isFakeBot(u.name);
-                                                const displayName = u.name?.replace(/\u200B/g, "") || "未命名";
-                                                const tags: string[] = [];
-                                                if (u.isHost) tags.push("房主");
-                                                if (u.sessionId === getSessionId()) tags.push("我");
-                                                if (u.isDisconnected && !isFake) tags.push("暂离");
-                                                if (u.ready || isFake) tags.push("已准备");
-                                                if (u.isBot || isFake) tags.push("BOT");
-                                                return (
-                                                    <Card key={u.sessionId} className={themeClass}>
-                                                        <CardContent className="p-4">
-                                                            <div className="flex items-center gap-3">
-                                                                <Avvvatars
-                                                                    value={displayName}
-                                                                    size={48}
-                                                                    style="shape"
-                                                                />
-                                                                <div className="flex-1">
-                                                                    <div
-                                                                        className="font-medium">{displayName}</div>
-                                                                    <div
-                                                                        className="text-xs text-muted-foreground">座位 {u.seat}</div>
-                                                                </div>
-                                                                <div className="flex flex-col items-end gap-2">
-                                                                    {tags.length > 0 && (
-                                                                        <div className="flex flex-wrap gap-1">
-                                                                            {u.isHost && (
-                                                                                <Badge variant="default"
-                                                                                    className="gap-1">
-                                                                                    <Crown className="h-3 w-3" />
-                                                                                    房主
-                                                                                </Badge>
-                                                                            )}
-                                                                            {u.sessionId === getSessionId() && (
-                                                                                <Badge variant="secondary">我</Badge>
-                                                                            )}
-                                                                            {(u.isBot || isFake) && (
-                                                                                <Badge variant="outline"
-                                                                                    className="gap-1">
-                                                                                    <Bot className="h-3 w-3" />
-                                                                                    BOT
-                                                                                </Badge>
-                                                                            )}
-                                                                            {(u.ready || isFake) && (
-                                                                                <Badge variant="outline">已准备</Badge>
-                                                                            )}
-                                                                            {u.isDisconnected && !isFake && (
-                                                                                <Badge
-                                                                                    variant="destructive">暂离</Badge>
-                                                                            )}
-                                                                        </div>
-                                                                    )}
-                                                                    {isHost && u.sessionId !== getSessionId() && (
-                                                                        <div className="flex gap-1">
-                                                                            {!u.isBot && !isFake && (
-                                                                                <Button
-                                                                                    variant="outline"
-                                                                                    size="sm"
-                                                                                    onClick={() => handoverHost(u.sessionId, u.name || `座位${u.seat}`)}
-                                                                                    disabled={!!u.isDisconnected}
-                                                                                >
-                                                                                    交接房主
-                                                                                </Button>
-                                                                            )}
-                                                                            <Button
-                                                                                variant="destructive"
-                                                                                size="sm"
-                                                                                onClick={() => kickPlayer(u.sessionId)}
-                                                                            >
-                                                                                {u.isBot || isFake ? "移除" : "踢出"}
-                                                                            </Button>
-                                                                        </div>
-                                                                    )}
-                                                                </div>
+                                                        </TableCell>
+                                                        <TableCell className={p.isAlive ? "text-red-700 " : "text-gray-400"}>
+                                                            <div className={'flex items-center'}>
+                                                                {p.isAlive ? <Heart /> : <HeartCrack />}
                                                             </div>
-                                                        </CardContent>
-                                                    </Card>
+                                                        </TableCell>
+                                                    </TableRow>
                                                 );
                                             })}
-                                        {!flowerSnapshot && users.length === 0 && (
-                                            <p className="text-sm text-black/50 text-center py-8">
-                                                （当前无玩家，创建/加入房间后会出现）
-                                            </p>
-                                        )}
-                                    </div>
-                                </ScrollArea>
-                            </AccordionContent>
-                        </AccordionItem>
+                                        </TableBody>
+                                    </Table>
+                                </div>
+                            </div>
+                        ) : (
+                            <Carousel setApi={setApi} opts={{ watchDrag: true, loop: false, axis: "x" }} className="w-full h-full">
+                                <CarouselContent className="h-full ml-0">
+                                    {availableTabs.map((tab) => (
+                                        <CarouselItem key={tab} className="h-full basis-full pl-0 overflow-hidden">
+                                            <div className="h-full w-full pb-5">
 
-                        {/* 聊天区域 */}
-                        {roomCode && flowerSnapshot && (
-                            <AccordionItem value="chat" className={isNight ? "border-white/10" : "border-black/10"}>
-                                <AccordionTrigger className={`px-4 ${isNight ? "text-white" : ""}`}>
-                                    <div className="flex items-center gap-2">
-                                        <MessageSquare className="h-5 w-5" />
-                                        <span className="font-semibold">聊天室</span>
-                                    </div>
-                                </AccordionTrigger>
-                                <AccordionContent className="px-4">
-                                    <ChatPanel
-                                        key={roomCode}
-                                        messages={flowerSnapshot.chatMessages || []}
-                                        players={flowerPlayers}
-                                        onSendMessage={addChatMessage}
-                                        mySessionId={getSessionId()}
-                                        isNight={isNight}
-                                    />
-                                </AccordionContent>
-                            </AccordionItem>
-                        )}
+                                                {tab === "players" && (
+                                                    <div className="px-4 h-full flex flex-col gap-4">
+                                                        {/* Room Actions Section */}
+                                                        <div className="flex-none">
+                                                            {!roomCode ? (
+                                                                <div className="flex flex-col gap-4 mt-20 px-12">
+                                                                    <Button onClick={createRoom} size="lg" className="w-full shadow-lg h-12 text-base">
+                                                                        <House className="h-5 w-5 mr-2" />
+                                                                        创建房间
+                                                                    </Button>
+                                                                    <Button variant="outline" onClick={joinRoom} size="lg" className={`w-full shadow-lg h-12 text-base ${isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}`}>
+                                                                        <UserPlus className="h-5 w-5 mr-2" />
+                                                                        加入房间
+                                                                    </Button>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="flex flex-wrap gap-2 items-center">
+                                                                    {flowerPhase === "lobby" && (
+                                                                        <>
+                                                                            <Button
+                                                                                variant={(me as any)?.ready ? "default" : "outline"}
+                                                                                onClick={toggleReady}
+                                                                                size="sm"
+                                                                                className={isNight && !(me as any)?.ready ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}
+                                                                            >
+                                                                                {(me as any)?.ready ? "取消" : "准备"}
+                                                                            </Button>
+                                                                            {isHost && (
+                                                                                <Button
+                                                                                    onClick={startFirstNight}
+                                                                                    disabled={occupiedSeats < 9 || !everyoneReady}
+                                                                                    size="sm"
+                                                                                >
+                                                                                    <Swords className="h-4 w-4 mr-2" />
+                                                                                    开始游戏
+                                                                                </Button>
+                                                                            )}
+                                                                            {isHost && (
+                                                                                <Button
+                                                                                    variant="outline"
+                                                                                    onClick={addBotPlaceholder}
+                                                                                    disabled={!canAddBot}
+                                                                                    size="sm"
+                                                                                    className={isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}
+                                                                                >
+                                                                                    <Bot className="h-4 w-4 mr-2" />
+                                                                                    添加人机
+                                                                                </Button>
+                                                                            )}
+                                                                        </>
+                                                                    )}
+                                                                    <Button
+                                                                        variant="destructive"
+                                                                        onClick={leaveRoom}
+                                                                        size="sm"
+                                                                    >
+                                                                        <LogOut className="h-4 w-4 mr-2" />
+                                                                        离开房间
+                                                                    </Button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <ScrollArea className="space-y-2 min-h-0 flex-1 gap-4">
+                                                            {flowerSnapshot
+                                                                ? flowerPlayers.map((player: FlowerPlayerState) => {
+                                                                    const isFake = isFakeBot(player.name);
+                                                                    const displayName = player.name?.replace(/\u200B/g, "") || `座位${player.seat}`;
+                                                                    const tags: string[] = [];
+                                                                    const presenceInfo = player.sessionId ? presenceMap.get(player.sessionId) : undefined;
+                                                                    if (player.isHost) tags.push("房主");
+                                                                    if (player.sessionId === getSessionId()) tags.push("我");
+                                                                    if (presenceInfo?.isDisconnected && !isFake) tags.push("暂离");
+                                                                    if ((player.isReady || isFake) && flowerPhase === "lobby") tags.push("已准备");
+                                                                    if (player.isBot || isFake) tags.push("BOT");
 
-                        {/* 游戏操作区域 */}
-                        {flowerSnapshot && flowerPhase !== "lobby" && (
-                            <AccordionItem value="actions" className={isNight ? "border-white/10" : "border-black/10"}>
-                                <AccordionTrigger className={`px-4 ${isNight ? "text-white" : ""}`}>
-                                    <div className="flex items-center gap-2">
-                                        {flowerPhase === "night_actions" ? <Moon className="h-5 w-5" /> :
-                                            flowerPhase === "day_vote" ? <Sun className="h-5 w-5" /> :
-                                                <Gamepad2 className="h-5 w-5" />}
-                                        <span className="font-semibold">
-                                            {flowerPhase === "night_actions" ? "夜晚行动" : flowerPhase === "day_vote" ? "白天投票" : "游戏操作"}
-                                        </span>
-                                    </div>
-                                </AccordionTrigger>
-                                <AccordionContent className="px-4 space-y-4">
-                                    {myRole && (
-                                        <div className="space-y-2">
-                                            {!myAlive && (
-                                                <div className="text-xs text-red-600">你已死亡，无法执行玩家行动。</div>
-                                            )}
+                                                                    const statusParts: string[] = [];
+                                                                    statusParts.push(player.sessionId ? (player.isAlive ? "存活" : "死亡") : "空位");
+                                                                    if (player.isMutedToday) statusParts.push("禁言");
+                                                                    if (player.hasVotedToday && flowerPhase === "day_vote") statusParts.push("已投票");
 
-                                            {flowerPhase === "night_actions" ? (
-                                                <div className="space-y-2">
-                                                    {myAlive && (
-                                                        <>
-                                                            <Button
-                                                                variant="outline"
-                                                                className={`w-full justify-start ${isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}`}
-                                                                onClick={() => setNightActionDrawerOpen(true)}
-                                                            >
-                                                                {nightActionSelections[myRole] ? `已选择：座位 ${nightActionSelections[myRole]}` : "选择行动目标"}
-                                                            </Button>
-                                                        </>
-                                                    )}
+                                                                    return (
+                                                                        <Card key={`seat-${player.seat}`} className={themeClass}>
+                                                                            <CardContent className="p-4">
+                                                                                <div className="flex items-center gap-3">
+                                                                                    {/* Avatar */}
+                                                                                    {player.sessionId || player.isBot ? (
+                                                                                        <div className="relative">
+                                                                                            <div className={presenceInfo?.isDisconnected && !isFake ? "opacity-50 grayscale" : ""}>
+                                                                                                <Avvvatars
+                                                                                                    value={displayName}
+                                                                                                    size={48}
+                                                                                                    style="shape"
+                                                                                                />
+                                                                                            </div>
+                                                                                            {presenceInfo?.isDisconnected && !isFake && (
+                                                                                                <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center border-2 border-white">
+                                                                                                    <CircleAlert className="h-3 w-3 text-white" />
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    ) : (
+                                                                                        <div
+                                                                                            className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
+                                                                                            <User
+                                                                                                className="h-6 w-6 text-muted-foreground" />
+                                                                                        </div>
+                                                                                    )}
 
-                                                    {isHost && (
-                                                        <Button
-                                                            variant="outline"
-                                                            className={`w-full ${isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}`}
-                                                            onClick={handleResolveNight}
-                                                            disabled={flowerPhase !== "night_actions"}
-                                                        >
-                                                            结算夜晚
-                                                        </Button>
-                                                    )}
-                                                </div>
-                                            ) : flowerPhase === "day_vote" ? (
-                                                <Card className={themeClass}>
-                                                    <CardHeader>
-                                                        <CardTitle>白天投票</CardTitle>
-                                                    </CardHeader>
-                                                    <CardContent className="space-y-3">
-                                                        {myAlive && !myMuted ? (
-                                                            <>
-                                                                <Button
-                                                                    variant="outline"
-                                                                    className="w-full justify-start"
-                                                                    onClick={() => setDayVoteDrawerOpen(true)}
-                                                                >
-                                                                    {dayVoteSelection ? `已选择：座位 ${dayVoteSelection}` : "选择投票目标"}
-                                                                </Button>
-                                                            </>
-                                                        ) : (
-                                                            <div className="text-sm text-destructive">
-                                                                {!myAlive ? "你已死亡，无法投票。" : "你被禁言，无法投票。"}
+                                                                                    {/* Player Info */}
+                                                                                    <div className="flex-1">
+                                                                                        <div className={`font-medium ${isNight ? "text-white" : ""}`}>
+                                                                                            {player.sessionId ? displayName : `座位${player.seat}`}
+                                                                                        </div>
+                                                                                        <div className={`text-xs ${mutedTextClass}`}>#{player.seat}</div>
+                                                                                        {statusParts.length > 0 && (
+                                                                                            <div className={`text-xs ${mutedTextClass} mt-1`}>
+                                                                                                {statusParts.join(" · ")}
+                                                                                            </div>
+                                                                                        )}
+                                                                                    </div>
+
+                                                                                    {/* Tags and Actions */}
+                                                                                    <div className="flex flex-col items-end gap-2">
+                                                                                        {tags.length > 0 && (
+                                                                                            <div className="flex flex-wrap gap-1 justify-end">
+                                                                                                {player.isHost && (
+                                                                                                    <Badge variant="default" className={`gap-1 ${isNight ? "bg-white text-black hover:bg-white/90" : ""}`}>
+                                                                                                        <Crown className="h-3 w-3" />
+                                                                                                        房主
+                                                                                                    </Badge>
+                                                                                                )}
+                                                                                                {player.sessionId === getSessionId() && (
+                                                                                                    <Badge variant="secondary" className={isNight ? "bg-white/20 text-white border-white/30" : ""}>
+                                                                                                        我
+                                                                                                    </Badge>
+                                                                                                )}
+                                                                                                {(player.isBot || isFake) && (
+                                                                                                    <Badge variant="outline" className={`gap-1 ${isNight ? "text-white border-white/50" : "border-black/50"}`}>
+                                                                                                        <Bot className="h-3 w-3" />
+                                                                                                        BOT
+                                                                                                    </Badge>
+                                                                                                )}
+                                                                                                {(player.isReady || isFake) && flowerPhase === "lobby" && (
+                                                                                                    <Badge variant="outline" className={isNight ? "text-white border-white/50" : "border-black/50"}>
+                                                                                                        已准备
+                                                                                                    </Badge>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        )}
+                                                                                        {isHost && player.sessionId && player.sessionId !== getSessionId() && (
+                                                                                            <div className="flex gap-1">
+                                                                                                {!player.isBot && !isFake && (
+                                                                                                    <Button
+                                                                                                        variant="outline"
+                                                                                                        size="sm"
+                                                                                                        onClick={() => handoverHost(player.sessionId, player.name || `座位${player.seat}`)}
+                                                                                                        disabled={!!presenceInfo?.isDisconnected}
+                                                                                                    >
+                                                                                                        交接房主
+                                                                                                    </Button>
+                                                                                                )}
+                                                                                                <Button
+                                                                                                    variant="destructive"
+                                                                                                    size="sm"
+                                                                                                    onClick={() => kickPlayer(player.sessionId)}
+                                                                                                >
+                                                                                                    {player.isBot || isFake ? "移除" : "踢出"}
+                                                                                                </Button>
+                                                                                            </div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </div>
+                                                                            </CardContent>
+                                                                        </Card>
+                                                                    );
+                                                                })
+                                                                : users.map((u: any) => {
+                                                                    const isFake = isFakeBot(u.name);
+                                                                    const displayName = u.name?.replace(/\u200B/g, "") || "未命名";
+                                                                    const tags: string[] = [];
+                                                                    if (u.isHost) tags.push("房主");
+                                                                    if (u.sessionId === getSessionId()) tags.push("我");
+                                                                    if (u.isDisconnected && !isFake) tags.push("暂离");
+                                                                    if (u.ready || isFake) tags.push("已准备");
+                                                                    if (u.isBot || isFake) tags.push("BOT");
+                                                                    return (
+                                                                        <Card key={u.sessionId} className={themeClass}>
+                                                                            <CardContent className="p-4">
+                                                                                <div className="flex items-center gap-3">
+                                                                                    <div className={`relative ${u.isDisconnected && !isFake ? "opacity-50 grayscale" : ""}`}>
+                                                                                        <Avvvatars
+                                                                                            value={displayName}
+                                                                                            size={48}
+                                                                                            style="shape"
+                                                                                        />
+                                                                                        {u.isDisconnected && !isFake && (
+                                                                                            <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center border-2 border-white">
+                                                                                                <CircleAlert className="h-3 w-3 text-white" />
+                                                                                            </div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                    <div className="flex-1">
+                                                                                        <div
+                                                                                            className="font-medium">{displayName}</div>
+                                                                                        <div
+                                                                                            className="text-xs text-muted-foreground">座位 {u.seat}</div>
+                                                                                    </div>
+                                                                                    <div className="flex flex-col items-end gap-2">
+                                                                                        {tags.length > 0 && (
+                                                                                            <div className="flex flex-wrap gap-1">
+                                                                                                {u.isHost && (
+                                                                                                    <Badge variant="default"
+                                                                                                        className="gap-1">
+                                                                                                        <Crown className="h-3 w-3" />
+                                                                                                        房主
+                                                                                                    </Badge>
+                                                                                                )}
+                                                                                                {u.sessionId === getSessionId() && (
+                                                                                                    <Badge variant="secondary">我</Badge>
+                                                                                                )}
+                                                                                                {(u.isBot || isFake) && (
+                                                                                                    <Badge variant="outline"
+                                                                                                        className="gap-1">
+                                                                                                        <Bot className="h-3 w-3" />
+                                                                                                        BOT
+                                                                                                    </Badge>
+                                                                                                )}
+                                                                                                {(u.ready || isFake) && (
+                                                                                                    <Badge variant="outline">已准备</Badge>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        )}
+                                                                                        {isHost && u.sessionId !== getSessionId() && (
+                                                                                            <div className="flex gap-1">
+                                                                                                {!u.isBot && !isFake && (
+                                                                                                    <Button
+                                                                                                        variant="outline"
+                                                                                                        size="sm"
+                                                                                                        onClick={() => handoverHost(u.sessionId, u.name || `座位${u.seat}`)}
+                                                                                                        disabled={!!u.isDisconnected}
+                                                                                                    >
+                                                                                                        交接房主
+                                                                                                    </Button>
+                                                                                                )}
+                                                                                                <Button
+                                                                                                    variant="destructive"
+                                                                                                    size="sm"
+                                                                                                    onClick={() => kickPlayer(u.sessionId)}
+                                                                                                >
+                                                                                                    {u.isBot || isFake ? "移除" : "踢出"}
+                                                                                                </Button>
+                                                                                            </div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </div>
+                                                                            </CardContent>
+                                                                        </Card>
+                                                                    );
+                                                                })}
+                                                            {roomCode && !flowerSnapshot && users.length === 0 && (
+                                                                <p className="text-sm text-black/50 text-center py-8">
+                                                                    （当前无玩家，创建/加入房间后会出现）
+                                                                </p>
+                                                            )}
+                                                        </ScrollArea>
+                                                    </div>
+                                                )}
+
+                                                {tab === "chat" && (
+                                                    <div className="h-full px-4">
+                                                        <ChatPanel
+                                                            key={roomCode}
+                                                            messages={flowerSnapshot?.chatMessages || []}
+                                                            players={flowerPlayers}
+                                                            onSendMessage={addChatMessage}
+                                                            mySessionId={getSessionId()}
+                                                            isNight={isNight}
+                                                        />
+                                                    </div>
+                                                )}
+
+                                                {tab === "actions" && (
+                                                    <div className="space-y-4 px-4">
+                                                        {myRole && (
+                                                            <div className="space-y-2">
+                                                                {!myAlive && (
+                                                                    <div className="text-xs text-red-600">你已死亡，无法执行玩家行动。</div>
+                                                                )}
+
+                                                                {flowerPhase === "night_actions" ? (
+                                                                    <div className="space-y-2">
+                                                                        {myAlive && (
+                                                                            <>
+                                                                                <Button
+                                                                                    variant="outline"
+                                                                                    className={`w-full justify-start ${isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}`}
+                                                                                    onClick={() => setNightActionDrawerOpen(true)}
+                                                                                >
+                                                                                    {nightActionSelections[myRole] ? `已选择：座位 ${nightActionSelections[myRole]}` : "选择行动目标"}
+                                                                                </Button>
+                                                                            </>
+                                                                        )}
+
+                                                                        {isHost && (
+                                                                            <Button
+                                                                                variant="outline"
+                                                                                className={`w-full ${isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}`}
+                                                                                onClick={handleResolveNight}
+                                                                                disabled={flowerPhase !== "night_actions"}
+                                                                            >
+                                                                                结算夜晚
+                                                                            </Button>
+                                                                        )}
+                                                                    </div>
+                                                                ) : flowerPhase === "day_vote" ? (
+                                                                    <Card className={themeClass}>
+                                                                        <CardHeader>
+                                                                            <CardTitle>白天投票</CardTitle>
+                                                                        </CardHeader>
+                                                                        <CardContent className="space-y-3">
+                                                                            {myAlive && !myMuted ? (
+                                                                                <>
+                                                                                    <Button
+                                                                                        variant="outline"
+                                                                                        className="w-full justify-start"
+                                                                                        onClick={() => setDayVoteDrawerOpen(true)}
+                                                                                    >
+                                                                                        {dayVoteSelection ? `已选择：座位 ${dayVoteSelection}` : "选择投票目标"}
+                                                                                    </Button>
+                                                                                </>
+                                                                            ) : (
+                                                                                <div className="text-sm text-destructive">
+                                                                                    {!myAlive ? "你已死亡，无法投票。" : "你被禁言，无法投票。"}
+                                                                                </div>
+                                                                            )}
+
+                                                                            {isHost && (
+                                                                                <Button
+                                                                                    variant="outline"
+                                                                                    onClick={handleResolveDayVote}
+                                                                                    disabled={flowerPhase !== "day_vote"}
+                                                                                    className="w-full"
+                                                                                >
+                                                                                    结算投票
+                                                                                </Button>
+                                                                            )}
+                                                                        </CardContent>
+                                                                    </Card>
+                                                                ) : (
+                                                                    <div className="text-xs text-gray-500">当前阶段无需提交行动。</div>
+                                                                )}
                                                             </div>
                                                         )}
 
-                                                        {isHost && (
-                                                            <Button
-                                                                variant="outline"
-                                                                onClick={handleResolveDayVote}
-                                                                disabled={flowerPhase !== "day_vote"}
-                                                                className="w-full"
-                                                            >
-                                                                结算投票
-                                                            </Button>
+                                                        {/* 结算结果显示 */}
+                                                        {showDaySummary && (
+                                                            <div className={`p-3 border rounded space-y-2 ${isNight ? "border-white/20" : ""}`}>
+                                                                <div className={`font-medium ${isNight ? "text-white" : ""}`}>白天结算</div>
+                                                                <div className={`text-sm ${mutedTextClass}`}>
+                                                                    处决：{latestDaySummary.executionText || "无人被处决"}
+                                                                </div>
+                                                                {latestDaySummary.votesText && (
+                                                                    <div className={`text-sm ${mutedTextClass}`}>
+                                                                        票型：{latestDaySummary.votesText}
+                                                                    </div>
+                                                                )}
+                                                            </div>
                                                         )}
-                                                    </CardContent>
-                                                </Card>
-                                            ) : (
-                                                <div className="text-xs text-gray-500">当前阶段无需提交行动。</div>
-                                            )}
-                                        </div>
-                                    )}
 
-                                    {/* 结算结果显示 */}
-                                    {showDaySummary && (
-                                        <div className={`p-3 border rounded space-y-2 ${isNight ? "border-white/20" : ""}`}>
-                                            <div className={`font-medium ${isNight ? "text-white" : ""}`}>白天结算</div>
-                                            <div className={`text-sm ${mutedTextClass}`}>
-                                                处决：{latestDaySummary.executionText || "无人被处决"}
-                                            </div>
-                                            {latestDaySummary.votesText && (
-                                                <div className={`text-sm ${mutedTextClass}`}>
-                                                    票型：{latestDaySummary.votesText}
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
-
-                                    {showNightSummary && flowerSnapshot?.night?.result && (
-                                        <div className={`p-3 border rounded space-y-2 ${isNight ? "border-white/20" : ""}`}>
-                                            <div className={`font-medium ${isNight ? "text-white" : ""}`}>夜晚结算</div>
-                                            <div className={`text-sm ${mutedTextClass}`}>
-                                                死亡：
-                                                {flowerSnapshot.night.result.deaths.length === 0
-                                                    ? " 无"
-                                                    : flowerSnapshot.night.result.deaths
-                                                        .map(d => `座位 ${d.seat}`)
-                                                        .join("、")}
-                                            </div>
-                                            <div className={`text-sm ${mutedTextClass}`}>
-                                                禁言：
-                                                {flowerSnapshot.night.result.mutedSeats.length === 0
-                                                    ? " 无"
-                                                    : flowerSnapshot.night.result.mutedSeats.map(seat => `座位 ${seat}`).join("、")}
-                                            </div>
-                                        </div>
-                                    )}
-                                </AccordionContent>
-                            </AccordionItem>
-                        )}
-
-                        {/* 调试区域 */}
-                        <AccordionItem value="debug" className={isNight ? "border-white/10" : "border-black/10"}>
-                            <AccordionTrigger className={`px-4 ${isNight ? "text-white" : ""}`}>
-                                <div className="flex items-center gap-2">
-                                    <Wrench className="h-5 w-5" />
-                                    <span className="font-semibold">调试信息</span>
-                                </div>
-                            </AccordionTrigger>
-                            <AccordionContent className="px-4 space-y-4">
-                                {/* 系统日志 */}
-                                {flowerSnapshot && (
-                                    <div className={`p-3 border rounded ${isNight ? "border-white/20" : ""}`}>
-                                        <div className="font-medium mb-1">系统日志</div>
-                                        <div
-                                            ref={(node) => {
-                                                if (node) {
-                                                    node.scrollTop = node.scrollHeight;
-                                                }
-                                            }}
-                                            className="max-h-80 overflow-auto text-sm"
-                                        >
-                                            <ol className="list-decimal list-inside space-y-1">
-                                                {flowerSnapshot.logs.map((entry, idx) => (
-                                                    <li key={idx}>{new Date(entry.at).toLocaleTimeString()} - {entry.text}</li>
-                                                ))}
-                                            </ol>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* 角色调试 */}
-                                {flowerSnapshot && (
-                                    <div className={`p-3 border rounded ${isNight ? "border-white/20" : ""}`}>
-                                        <div className="font-medium mb-1">调试：角色与夜间行动</div>
-                                        <div className="text-xs grid grid-cols-1 md:grid-cols-2 gap-2">
-                                            {flowerPlayers.map((p) => (
-                                                <div key={`debug-role-${p.seat}`} className="border rounded px-2 py-1">
-                                                    <div>座位 {p.seat}：{p.name || "玩家"}｜角色：{p.role ?? "未分配"}{p.isAlive ? "" : "（死亡）"}</div>
-                                                    <div>
-                                                        夜晚行动：
-                                                        {p.nightAction?.targetSeat
-                                                            ? `指向座位 ${p.nightAction.targetSeat}`
-                                                            : "未提交/无目标"}
+                                                        {showNightSummary && flowerSnapshot?.night?.result && (
+                                                            <div className={`p-3 border rounded space-y-2 ${isNight ? "border-white/20" : ""}`}>
+                                                                <div className={`font-medium ${isNight ? "text-white" : ""}`}>夜晚结算</div>
+                                                                <div className={`text-sm ${mutedTextClass}`}>
+                                                                    死亡：
+                                                                    {flowerSnapshot.night.result.deaths.length === 0
+                                                                        ? " 无"
+                                                                        : flowerSnapshot.night.result.deaths
+                                                                            .map(d => `座位 ${d.seat}`)
+                                                                            .join("、")}
+                                                                </div>
+                                                                <div className={`text-sm ${mutedTextClass}`}>
+                                                                    禁言：
+                                                                    {flowerSnapshot.night.result.mutedSeats.length === 0
+                                                                        ? " 无"
+                                                                        : flowerSnapshot.night.result.mutedSeats.map(seat => `座位 ${seat}`).join("、")}
+                                                                </div>
+                                                            </div>
+                                                        )}
                                                     </div>
-                                                    {(p.needleCount > 0 || p.pendingNeedleDeath) && (
-                                                        <div>
-                                                            空针：{p.needleCount}
-                                                            {p.pendingNeedleDeath && <span>（将于下一日死亡）</span>}
-                                                        </div>
-                                                    )}
-                                                    {darkVoteMap?.[String(p.seat)] > 0 && (
-                                                        <div>暗票：+{darkVoteMap[String(p.seat)]}</div>
-                                                    )}
-                                                </div>
-                                            ))}
-                                        </div>
-                                        {flowerSnapshot.night.lastActions && flowerSnapshot.night.lastActions.length > 0 && (
-                                            <div className="mt-3 text-xs">
-                                                <div className="font-medium text-sm mb-1">上一夜行动回顾</div>
-                                                <ul className="space-y-1">
-                                                    {Array.from(flowerSnapshot.night.lastActions)
-                                                        .sort((a, b) => a.actorSeat - b.actorSeat)
-                                                        .map((action, idx) => {
-                                                            const actor = flowerPlayers.find(p => p.seat === action.actorSeat);
-                                                            const roleAtAction = action.role ?? actor?.role ?? "?";
-                                                            const actorLabel = actor ? `${actor.name || "玩家"}（座位 ${actor.seat}｜${roleAtAction}）` : `座位 ${action.actorSeat}`;
-                                                            const targetLabel = action.targetSeat ? `座位 ${action.targetSeat}` : "无目标";
-                                                            return (
-                                                                <li key={`last-action-${idx}`}>
-                                                                    {actorLabel} → {targetLabel}
-                                                                </li>
-                                                            );
-                                                        })}
-                                                </ul>
+                                                )}
                                             </div>
-                                        )}
-                                        {flowerSnapshot.day?.votes && flowerSnapshot.day.votes.length > 0 && (
-                                            <div className="mt-3 text-xs">
-                                                <div className="font-medium text-sm mb-1">白天投票（实时）</div>
-                                                <ul className="space-y-1">
-                                                    {Array.from(flowerSnapshot.day.votes)
-                                                        .sort((a, b) => a.voterSeat - b.voterSeat)
-                                                        .map((vote, idx) => (
-                                                            <li key={`day-vote-${idx}`}>
-                                                                座位 {vote.voterSeat} → 座位 {vote.targetSeat}
-                                                            </li>
-                                                        ))}
-                                                </ul>
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
+                                        </CarouselItem>
+                                    ))}
+                                </CarouselContent>
+                            </Carousel>
+                        )}
+                    </div>
 
-                                {/* 事件日志 */}
-                                <Card className={themeClass}>
-                                    <CardHeader>
-                                        <CardTitle>事件日志（调试用）</CardTitle>
-                                    </CardHeader>
-                                    <CardContent>
-                                        <div
-                                            ref={(node) => {
-                                                if (node) {
-                                                    node.scrollTop = node.scrollHeight;
-                                                }
-                                            }}
-                                            className="max-h-80 overflow-auto"
-                                        >
-                                            <ul className="list-disc pl-5 space-y-1 text-sm">
-                                                {logs.map((l, i) => (<li key={i}>{l}</li>))}
-                                            </ul>
-                                        </div>
-                                    </CardContent>
-                                </Card>
-                            </AccordionContent>
-                        </AccordionItem>
-                    </Accordion>
+                    {/* Dialog Components */}
+                    <ConfirmDialogComponent />
+                    <AlertDialogComponent />
+                    <JoinRoomDialogComponent />
+                    <AddBotDialogComponent />
+                    <EditNameDialogComponent />
+
+                    {/* Target Selection Drawers */}
+                    <TargetSelectionDrawer
+                        open={nightActionDrawerOpen}
+                        onOpenChange={setNightActionDrawerOpen}
+                        title="选择夜晚行动目标"
+                        description={`你的身份是 ${myRole}，请选择目标`}
+                        players={flowerPlayers}
+                        currentSelection={
+                            myRole && nightActionSelections[myRole] !== "" && nightActionSelections[myRole] != null
+                                ? Number(nightActionSelections[myRole])
+                                : null
+                        }
+                        onConfirm={async (targetSeat) => {
+                            if (!myRole || !mySeat) return;
+                            // Update local state
+                            setNightActionSelections(prev => ({
+                                ...prev,
+                                [myRole]: targetSeat ?? ""
+                            }));
+
+                            // Submit immediately
+                            const payload: SubmitNightActionPayload = {
+                                role: myRole,
+                                actorSeat: mySeat,
+                                targetSeat,
+                            };
+                            const res = await submitNightAction(payload);
+                            if (!res.ok) {
+                                await alert(res.error || "提交失败");
+                            }
+                        }}
+                        disabled={!myAlive}
+                        disabledMessage="你已死亡，无法行动"
+                        filterPlayers={(p) => p.isAlive}
+                        isNight={isNight}
+                    />
+
+                    <TargetSelectionDrawer
+                        open={dayVoteDrawerOpen}
+                        onOpenChange={setDayVoteDrawerOpen}
+                        title="选择投票目标"
+                        description="请选择你要投票淘汰的玩家"
+                        players={flowerPlayers}
+                        currentSelection={typeof dayVoteSelection === "number" ? dayVoteSelection : null}
+                        onConfirm={async (targetSeat) => {
+                            if (targetSeat !== null) {
+                                setDayVoteSelection(targetSeat);
+
+                                if (!mySeat) return;
+                                const payload: SubmitDayVotePayload = { voterSeat: mySeat, targetSeat };
+                                const res = await submitDayVote(payload);
+                                if (!res.ok) {
+                                    await alert(res.error || "投票失败");
+                                }
+                            }
+                        }}
+                        disabled={!myAlive || myMuted}
+                        disabledMessage={!myAlive ? "你已死亡，无法投票" : "你被禁言，无法投票"}
+                        filterPlayers={(p) => p.isAlive}
+                        isNight={false}
+                    />
                 </div>
             </div>
-
-            {/* Dialog Components */}
-            <ConfirmDialogComponent />
-            <AlertDialogComponent />
-            <JoinRoomDialogComponent />
-            <AddBotDialogComponent />
-            <EditNameDialogComponent />
-
-            {/* Target Selection Drawers */}
-            <TargetSelectionDrawer
-                open={nightActionDrawerOpen}
-                onOpenChange={setNightActionDrawerOpen}
-                title="选择夜晚行动目标"
-                description={`你的身份是 ${myRole}，请选择目标`}
-                players={flowerPlayers}
-                currentSelection={
-                    myRole && nightActionSelections[myRole] !== "" && nightActionSelections[myRole] != null
-                        ? Number(nightActionSelections[myRole])
-                        : null
-                }
-                onConfirm={async (targetSeat) => {
-                    if (!myRole || !mySeat) return;
-                    // Update local state
-                    setNightActionSelections(prev => ({
-                        ...prev,
-                        [myRole]: targetSeat ?? ""
-                    }));
-
-                    // Submit immediately
-                    const payload: SubmitNightActionPayload = {
-                        role: myRole,
-                        actorSeat: mySeat,
-                        targetSeat,
-                    };
-                    const res = await submitNightAction(payload);
-                    if (!res.ok) {
-                        await alert(res.error || "提交失败");
-                    }
-                }}
-                disabled={!myAlive}
-                disabledMessage="你已死亡，无法行动"
-                filterPlayers={(p) => p.isAlive}
-                isNight={isNight}
-            />
-
-            <TargetSelectionDrawer
-                open={dayVoteDrawerOpen}
-                onOpenChange={setDayVoteDrawerOpen}
-                title="选择投票目标"
-                description="请选择你要投票淘汰的玩家"
-                players={flowerPlayers}
-                currentSelection={typeof dayVoteSelection === "number" ? dayVoteSelection : null}
-                onConfirm={async (targetSeat) => {
-                    if (targetSeat !== null) {
-                        setDayVoteSelection(targetSeat);
-
-                        if (!mySeat) return;
-                        const payload: SubmitDayVotePayload = { voterSeat: mySeat, targetSeat };
-                        const res = await submitDayVote(payload);
-                        if (!res.ok) {
-                            await alert(res.error || "投票失败");
-                        }
-                    }
-                }}
-                disabled={!myAlive || myMuted}
-                disabledMessage={!myAlive ? "你已死亡，无法投票" : "你被禁言，无法投票"}
-                filterPlayers={(p) => p.isAlive}
-                isNight={false}
-            />
         </div>
     );
 }
