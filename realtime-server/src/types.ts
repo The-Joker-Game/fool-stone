@@ -8,8 +8,11 @@ export type Player = {
   online: boolean;
 };
 
-export type Snapshot = {
+import { FlowerSnapshot } from "./game-flower/types.js";
+
+export type FoolStoneSnapshot = {
   // 直接把你前端的可序列化状态做一份快照
+  engine?: undefined; // Discriminate from FlowerSnapshot
   game: unknown;
   isOver: boolean;
   finalRanks: Array<Record<string, unknown>> | null;
@@ -21,6 +24,8 @@ export type Snapshot = {
   chatMessages?: Array<unknown>;
   updatedAt?: number;
 };
+
+export type Snapshot = FoolStoneSnapshot | FlowerSnapshot;
 
 export type Room = {
   code: RoomCode;

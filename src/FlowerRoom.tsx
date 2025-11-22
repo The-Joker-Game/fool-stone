@@ -1,10 +1,9 @@
 // src/FlowerRoom.tsx
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { rt, getSessionId, type PresenceState } from "./realtime/socket";
-import type { FlowerPlayerState, FlowerRole, FlowerPhase, ChatMessage } from "./flower/types";
+import type { FlowerPlayerState, FlowerRole, FlowerPhase, ChatMessage, SubmitNightActionPayload, SubmitDayVotePayload } from "./flower/types";
 import { useFlowerStore } from "./flower/store";
 import type { FlowerStore } from "./flower/store";
-import type { SubmitNightActionPayload, SubmitDayVotePayload } from "./flower/engine";
 import type { WakeLockSentinel } from "./types";
 import { ChatPanel } from "./flower/ChatPanel";
 import {
@@ -68,7 +67,7 @@ import {
     GiWizardStaff
 } from "react-icons/gi";
 import { ScrollArea } from "@/components/ui/scroll-area.tsx";
-import { generateBotSpeech } from "./flower/bot_logic";
+
 
 
 /** ———————————————————————— 小工具 ———————————————————————— */
@@ -122,30 +121,12 @@ const PHASE_TEXT_MAP: Record<FlowerPhase, string> = {
     game_over: "游戏结束",
 };
 
+
 function randomFrom<T>(list: T[]): T | null {
     if (!list.length) return null;
     return list[Math.floor(Math.random() * list.length)];
 }
 
-function pickBotTarget(role: FlowerRole | null, actorSeat: number, aliveSeats: number[]): number | null {
-    if (!role) return null;
-    const others = aliveSeats.filter(seat => seat !== actorSeat);
-    switch (role) {
-        case "花蝴蝶":
-        case "狙击手":
-        case "杀手":
-        case "魔法师":
-        case "警察":
-        case "森林老人":
-        case "善民":
-        case "恶民":
-            return randomFrom(others) ?? null;
-        case "医生":
-            return randomFrom(aliveSeats) ?? null;
-        default:
-            return null;
-    }
-}
 
 /** ———————————————————————— 页面组件 ———————————————————————— */
 type NightSelectionMap = Record<string, number | "" | null>;
@@ -233,27 +214,26 @@ export default function FlowerRoom() {
     const [presence, setPresence] = useState<PresenceState | null>(null);
     const [name, setName] = useState<string>(randName());
     const autoJoinAttempted = useRef(false);
-    const wasHostRef = useRef<boolean>(false);
     const [nightActionSelections, setNightActionSelections] = useState<NightSelectionMap>({});
     const [dayVoteSelection, setDayVoteSelection] = useState<number | "">("");
     const [dayVoteDrawerOpen, setDayVoteDrawerOpen] = useState(false);
     const [nightActionDrawerOpen, setNightActionDrawerOpen] = useState(false);
+
+    const [notificationCountdown, setNotificationCountdown] = useState<number>(0);
+    const [notificationType, setNotificationType] = useState<'vote' | 'night' | null>(null);
 
     const [activeTab, setActiveTab] = useState<TabId>("players");
 
     const flowerSnapshot = useFlowerStore((state: FlowerStore) => state.snapshot);
     const ensureSnapshotFromPresence = useFlowerStore((state: FlowerStore) => state.ensureSnapshotFromPresence);
     const setFlowerSnapshot = useFlowerStore((state: FlowerStore) => state.setSnapshot);
-    const hostSubmitNightAction = useFlowerStore((state: FlowerStore) => state.hostSubmitNightAction);
     const submitNightAction = useFlowerStore((state: FlowerStore) => state.submitNightAction);
-    const hostSubmitDayVote = useFlowerStore((state: FlowerStore) => state.hostSubmitDayVote);
     const submitDayVote = useFlowerStore((state: FlowerStore) => state.submitDayVote);
-    const hostAssignRoles = useFlowerStore((state: FlowerStore) => state.hostAssignRoles);
-    const hostResolveNight = useFlowerStore((state: FlowerStore) => state.hostResolveNight);
-    const hostResolveDayVote = useFlowerStore((state: FlowerStore) => state.hostResolveDayVote);
-    const broadcastSnapshot = useFlowerStore((state: FlowerStore) => state.broadcastSnapshot);
+    const assignRoles = useFlowerStore((state: FlowerStore) => state.assignRoles);
+    const resolveNight = useFlowerStore((state: FlowerStore) => state.resolveNight);
+    const resolveDayVote = useFlowerStore((state: FlowerStore) => state.resolveDayVote);
     const addChatMessage = useFlowerStore((state: FlowerStore) => state.addChatMessage);
-    const addBotChatMessage = useFlowerStore((state: FlowerStore) => state.addBotChatMessage);
+
     const resetGame = useFlowerStore((state: FlowerStore) => state.resetGame);
     const passTurn = useFlowerStore((state: FlowerStore) => state.passTurn);
 
@@ -338,6 +318,37 @@ export default function FlowerRoom() {
         if (flowerSnapshot && flowerPhase !== "lobby") tabs.push("actions");
         return tabs;
     }, [roomCode, flowerSnapshot, flowerPhase]);
+
+    // —— Notification Logic ——
+    useEffect(() => {
+        let timer: NodeJS.Timeout;
+        if (flowerPhase === 'day_vote') {
+            setNotificationType('vote');
+            setNotificationCountdown(30);
+            timer = setInterval(() => {
+                setNotificationCountdown(prev => Math.max(0, prev - 1));
+            }, 1000);
+        } else if (flowerPhase === 'night_actions') {
+            setNotificationType('night');
+            setNotificationCountdown(30);
+            timer = setInterval(() => {
+                setNotificationCountdown(prev => Math.max(0, prev - 1));
+            }, 1000);
+        } else {
+            setNotificationType(null);
+            setNotificationCountdown(0);
+        }
+        return () => clearInterval(timer);
+    }, [flowerPhase]);
+
+    const isMyTurn = useMemo(() => {
+        if (flowerPhase !== 'day_discussion') return false;
+        if (!flowerSnapshot?.day?.speechOrder) return false;
+        const currentSpeakerSeat = flowerSnapshot.day.speechOrder[flowerSnapshot.day.currentSpeakerIndex];
+        return currentSpeakerSeat === mySeat;
+    }, [flowerPhase, flowerSnapshot?.day, mySeat]);
+
+
 
     // Smart Persistence
     useEffect(() => {
@@ -486,31 +497,7 @@ export default function FlowerRoom() {
         };
     }, [pushLog, ensureSnapshotFromPresence, setFlowerSnapshot, presence]);
 
-    useEffect(() => {
-        if (!isHost) return;
-        const off = rt.subscribeIntent(async (msg) => {
-            if (msg.action === "flower:submit_night_action") {
-                const payload = msg.payload as SubmitNightActionPayload;
-                const res = hostSubmitNightAction(payload);
-                if (res.ok) {
-                    await broadcastSnapshot();
-                } else {
-                    console.warn("处理夜间技能失败", res.error);
-                }
-            }
-            if (msg.action === "flower:submit_day_vote") {
-                const payload = msg.payload as SubmitDayVotePayload;
-                const res = hostSubmitDayVote(payload);
-                if (res.ok) {
-                    await broadcastSnapshot();
-                } else {
-                    console.warn("处理白天投票失败", res.error);
-                }
-            }
-            // 房主不再需要处理聊天消息，因为服务器会直接广播给所有成员
-        });
-        return () => off();
-    }, [isHost, hostSubmitNightAction, hostSubmitDayVote, broadcastSnapshot, setFlowerSnapshot, flowerSnapshot]);
+
 
     // 添加对聊天消息的订阅处理
     useEffect(() => {
@@ -568,67 +555,19 @@ export default function FlowerRoom() {
         return () => off();
     }, [setFlowerSnapshot, alert]);
 
-    useEffect(() => {
-        if (isHost && !wasHostRef.current && flowerSnapshot) {
-            broadcastSnapshot();
-        }
-        wasHostRef.current = isHost;
-    }, [isHost, flowerSnapshot, broadcastSnapshot]);
+
 
 
 
     // game over UI handled before return (see bottom)
 
-    useEffect(() => {
-        if (!isHost || flowerPhase !== "night_actions" || !flowerSnapshot) return;
-        const aliveSeats = flowerPlayers.filter(p => p.isAlive).map(p => p.seat);
-        let changed = false;
-        for (const player of flowerPlayers) {
-            if (!player.isBot || !player.isAlive || !player.role) continue;
-            if (player.nightAction && player.nightAction.status === "locked") continue;
-            const targetSeat = pickBotTarget(player.role, player.seat, aliveSeats);
-            const res = hostSubmitNightAction({
-                role: player.role,
-                actorSeat: player.seat,
-                targetSeat,
-            });
-            if (res.ok) changed = true;
-        }
-        if (changed) {
-            broadcastSnapshot();
-        }
-    }, [isHost, flowerPhase, flowerSnapshot?.updatedAt, flowerPlayers, hostSubmitNightAction, broadcastSnapshot]);
+
+
+    // —— Bot Voting Logic ——
+
 
     // —— Bot Speaking Logic ——
-    useEffect(() => {
-        if (!isHost || flowerPhase !== "day_discussion" || !flowerSnapshot) return;
 
-        const currentSpeakerSeat = flowerSnapshot.day.speechOrder[flowerSnapshot.day.currentSpeakerIndex];
-        const currentSpeaker = flowerPlayers.find(p => p.seat === currentSpeakerSeat);
-
-        if (currentSpeaker && currentSpeaker.isBot && currentSpeaker.isAlive) {
-            const delay = Math.floor(Math.random() * 3000) + 3000; // 3-6 seconds
-            const timer = setTimeout(async () => {
-                // Double check state hasn't changed
-                const freshSnapshot = useFlowerStore.getState().snapshot;
-                if (!freshSnapshot || freshSnapshot.phase !== "day_discussion") return;
-                const freshSpeakerIndex = freshSnapshot.day.currentSpeakerIndex;
-                const freshSpeakerSeat = freshSnapshot.day.speechOrder[freshSpeakerIndex];
-
-                if (freshSpeakerSeat === currentSpeakerSeat) {
-                    const speech = generateBotSpeech(freshSnapshot, currentSpeakerSeat);
-
-                    // 1. Send message
-                    await addBotChatMessage(currentSpeakerSeat, speech, []);
-
-                    // 2. Pass turn
-                    await passTurn();
-                }
-            }, delay);
-
-            return () => clearTimeout(timer);
-        }
-    }, [isHost, flowerPhase, flowerSnapshot?.day?.currentSpeakerIndex, flowerPlayers, flowerSnapshot, addBotChatMessage, passTurn]);
 
     /** ———— 发送端 ———— */
 
@@ -850,13 +789,12 @@ export default function FlowerRoom() {
             description: "确认要结算当前白天投票吗？（请确保所有玩家都已完成投票）"
         });
         if (!confirmed) return;
-        const res = hostResolveDayVote();
+        const res = await resolveDayVote();
         if (!res.ok) {
             await alert(res.error || "结算失败");
             return;
         }
-        await broadcastSnapshot();
-    }, [isHost, hostResolveDayVote, broadcastSnapshot, confirm, alert]);
+    }, [isHost, resolveDayVote, confirm, alert]);
 
     const handleResolveNight = useCallback(async () => {
         if (!isHost) {
@@ -868,13 +806,12 @@ export default function FlowerRoom() {
             description: "确认要结算当前夜晚吗？（请确保所有夜间技能都已提交）"
         });
         if (!confirmed) return;
-        const res = hostResolveNight();
+        const res = await resolveNight();
         if (!res.ok) {
             await alert(res.error || "结算失败");
             return;
         }
-        await broadcastSnapshot();
-    }, [isHost, hostResolveNight, broadcastSnapshot, confirm, alert]);
+    }, [isHost, resolveNight, confirm, alert]);
 
     // 开始第一夜（仍走容错事件名；是否被实现取决于你的后端）
     const startFirstNight = useCallback(async () => {
@@ -901,11 +838,9 @@ export default function FlowerRoom() {
                 pushLog(`${evt} ack: ${JSON.stringify(resp)}`);
                 if ((resp as any)?.ok !== false) {
                     if (isHost) {
-                        const assignRes = hostAssignRoles();
+                        const assignRes = await assignRoles();
                         if (!assignRes.ok) {
                             await alert(assignRes.error || "分配角色失败，请检查人数是否满 9 人");
-                        } else {
-                            await broadcastSnapshot();
                         }
                     }
                     return; // 有回就认为成功
@@ -916,7 +851,7 @@ export default function FlowerRoom() {
         }
         console.error("startFirstNight last error:", lastErr);
         await alert("开始失败：服务端未响应开始事件（详见控制台/事件日志）");
-    }, [roomCode, isHost, pushLog, hostAssignRoles, broadcastSnapshot, occupiedSeats, everyoneReady]);
+    }, [roomCode, isHost, pushLog, assignRoles, occupiedSeats, everyoneReady]);
 
     /** ———— UI ———— */
 
@@ -1030,6 +965,31 @@ export default function FlowerRoom() {
                                     )}
                                 </div>
                             </div>
+
+                            {/* Notification Row */}
+                            <div className="mt-4 pt-3 border-t border-white/10 flex justify-center items-center min-h-[24px]">
+                                {isMyTurn ? (
+                                    <motion.div
+                                        animate={{ opacity: [1, 0.2, 1] }}
+                                        transition={{ duration: 0.2, repeat: 4 }}
+                                        className="font-bold text-lg text-red-500"
+                                    >
+                                        轮到你发言了
+                                    </motion.div>
+                                ) : notificationType === 'vote' ? (
+                                    <div className={`font-medium ${isNight ? "text-white" : "text-slate-700"}`}>
+                                        {notificationCountdown > 0 ? `投票倒计时: ${notificationCountdown}s` : "倒计时结束"}
+                                    </div>
+                                ) : notificationType === 'night' ? (
+                                    <div className={`font-medium ${isNight ? "text-white" : "text-slate-700"}`}>
+                                        {notificationCountdown > 0 ? `黑夜倒计时: ${notificationCountdown}s` : "倒计时结束"}
+                                    </div>
+                                ) : (
+                                    <div className={`text-sm ${isNight ? "text-white/30" : "text-slate-400/50"}`}>
+                                        暂无消息
+                                    </div>
+                                )}
+                            </div>
                         </CardContent>
                     </Card>
                 </div>
@@ -1048,8 +1008,7 @@ export default function FlowerRoom() {
                                             description: "确定要重新开始游戏吗？聊天记录将会保留。"
                                         });
                                         if (!confirmed) return;
-                                        resetGame();
-                                        await broadcastSnapshot();
+                                        await resetGame();
                                     }}
                                 >
                                     <House className="h-4 w-4 mr-2" />
@@ -1441,15 +1400,128 @@ export default function FlowerRoom() {
                                                                             <span>被禁言</span>
                                                                         </div>
                                                                     )}
-                                                                    {myRole === "医生" && (
-                                                                        <div className="flex items-center gap-1.5 text-blue-400">
-                                                                            <GiDoctorFace className="w-4 h-4" />
-                                                                            <span>空针: {myFlowerPlayer?.needleCount || 0}/2</span>
-                                                                        </div>
-                                                                    )}
+
                                                                 </div>
 
-                                                                {/* 行动区域 */}
+                                                                {/* 2. 警察验人记录 (仅警察可见) */}
+                                                                {myRole === "警察" && (
+                                                                    <Card className={themeClass}>
+                                                                        <CardHeader className="pb-2">
+                                                                            <CardTitle className="text-base flex items-center gap-2">
+                                                                                验人记录本
+                                                                            </CardTitle>
+                                                                        </CardHeader>
+                                                                        <CardContent className="space-y-2">
+                                                                            {(() => {
+                                                                                // Parse logs for police history
+                                                                                const history: { target: string, result: string, type: 'bad' | 'good' | 'unknown' }[] = [];
+                                                                                const logs = flowerSnapshot?.logs || [];
+                                                                                // Regex to match police logs
+                                                                                const badRegex = /警察验出座位 (\d+) 为坏特殊/;
+                                                                                const goodRegex = /警察验出座位 (\d+) 非坏特殊/;
+                                                                                const unknownRegex = /警察无法验出座位 (\d+)/;
+
+                                                                                logs.forEach(log => {
+                                                                                    let match = log.text.match(badRegex);
+                                                                                    if (match) {
+                                                                                        history.push({ target: match[1], result: "坏人特殊身份", type: 'bad' });
+                                                                                        return;
+                                                                                    }
+                                                                                    match = log.text.match(goodRegex);
+                                                                                    if (match) {
+                                                                                        history.push({ target: match[1], result: "非坏人特殊身份", type: 'good' });
+                                                                                        return;
+                                                                                    }
+                                                                                    match = log.text.match(unknownRegex);
+                                                                                    if (match) {
+                                                                                        history.push({ target: match[1], result: "未知", type: 'unknown' });
+                                                                                        return;
+                                                                                    }
+                                                                                });
+
+                                                                                if (history.length === 0) {
+                                                                                    return <div className="text-sm opacity-50 text-center py-2">暂无验人记录</div>;
+                                                                                }
+
+                                                                                return (
+                                                                                    <div className="space-y-2">
+                                                                                        {history.map((record, idx) => (
+                                                                                            <div key={idx} className={`flex items-center justify-between p-2 rounded border ${isNight ? "bg-white/5 border-white/10" : "bg-black/5 border-black/5"
+                                                                                                }`}>
+                                                                                                <div className="flex items-center gap-2">
+                                                                                                    <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-xs font-bold">
+                                                                                                        {record.target}
+                                                                                                    </div>
+                                                                                                    <span className="text-sm">座位 {record.target}</span>
+                                                                                                </div>
+                                                                                                <Badge variant={record.type === 'bad' ? "destructive" : "default"}
+                                                                                                    className={`
+                                                                                                    ${record.type === 'good' && "bg-green-600 hover:bg-green-700"}
+                                                                                                    ${record.type === 'unknown' && "bg-white hover:bg-gray-200 text-black"}
+                                                                                                    `}>
+                                                                                                    {record.result}
+                                                                                                </Badge>
+                                                                                            </div>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                );
+                                                                            })()}
+                                                                        </CardContent>
+                                                                    </Card>
+                                                                )}
+
+                                                                {/* 3. 空针计数器 (仅医生可见) - Shows all players' needle counts */}
+                                                                {myRole === "医生" && (
+                                                                    <Card className={themeClass}>
+                                                                        <CardHeader className="pb-2">
+                                                                            <CardTitle className="text-base flex items-center gap-2">
+                                                                                空针计数
+                                                                            </CardTitle>
+                                                                        </CardHeader>
+                                                                        <CardContent className="space-y-2">
+                                                                            {(() => {
+                                                                                // Filter players who have needle counts > 0
+                                                                                const needlePlayers = flowerSnapshot?.players.filter(p => (p.needleCount || 0) > 0) || [];
+
+                                                                                if (needlePlayers.length === 0) {
+                                                                                    return <div className="text-sm opacity-50 text-center py-2">暂无空针记录</div>;
+                                                                                }
+
+                                                                                return (
+                                                                                    <div className="space-y-2">
+                                                                                        {needlePlayers.map((player) => {
+                                                                                            const needleCount = player.needleCount || 0;
+                                                                                            const isDangerous = needleCount >= 2;
+                                                                                            const isWarning = needleCount === 1;
+
+                                                                                            return (
+                                                                                                <div key={player.seat} className={`flex items-center justify-between p-2 rounded border ${isNight ? "bg-white/5 border-white/10" : "bg-black/5 border-black/5"
+                                                                                                    }`}>
+                                                                                                    <div className="flex items-center gap-2">
+                                                                                                        <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-xs font-bold">
+                                                                                                            {player.seat}
+                                                                                                        </div>
+                                                                                                        <span className="text-sm">座位 {player.seat}</span>
+                                                                                                    </div>
+                                                                                                    <Badge
+                                                                                                        variant={isDangerous ? "destructive" : "default"}
+                                                                                                        className={`
+                                                                                                            ${isWarning && "bg-yellow-600 hover:bg-yellow-700"}
+                                                                                                        `}
+                                                                                                    >
+                                                                                                        {needleCount}/2 空针
+                                                                                                    </Badge>
+                                                                                                </div>
+                                                                                            );
+                                                                                        })}
+                                                                                    </div>
+                                                                                );
+                                                                            })()}
+                                                                        </CardContent>
+                                                                    </Card>
+                                                                )}
+
+                                                                {/* 4. 行动区域 */}
                                                                 {flowerPhase === "night_actions" ? (
                                                                     <div className="space-y-3 pt-2 border-t border-white/10">
                                                                         <div className="flex items-center justify-between">
@@ -1486,7 +1558,7 @@ export default function FlowerRoom() {
                                                                             </div>
                                                                         )}
                                                                     </div>
-                                                                ) : flowerPhase === "day_vote" ? (
+                                                                ) : (flowerPhase === "day_discussion" || flowerPhase === "day_vote") ? (
                                                                     <div className="space-y-3 pt-2 border-t border-white/10">
                                                                         <div className="flex items-center justify-between">
                                                                             <span className="text-sm font-medium opacity-80">白天投票</span>
@@ -1527,74 +1599,7 @@ export default function FlowerRoom() {
                                                             </CardContent>
                                                         </Card>
 
-                                                        {/* 2. 警察验人记录 (仅警察可见) */}
-                                                        {myRole === "警察" && (
-                                                            <Card className={themeClass}>
-                                                                <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
-                                                                    {myRole && RoleIcon && <RoleIcon myRole="警察" />}
-                                                                </div>
-                                                                <CardHeader className="pb-2">
-                                                                    <CardTitle className="text-base flex items-center gap-2">
-                                                                        验人记录本
-                                                                    </CardTitle>
-                                                                </CardHeader>
-                                                                <CardContent className="space-y-2">
-                                                                    {(() => {
-                                                                        // Parse logs for police history
-                                                                        const history: { target: string, result: string, type: 'bad' | 'good' | 'unknown' }[] = [];
-                                                                        const logs = flowerSnapshot?.logs || [];
-                                                                        // Regex to match police logs
-                                                                        const badRegex = /警察验出座位 (\d+) 为坏特殊/;
-                                                                        const goodRegex = /警察验出座位 (\d+) 非坏特殊/;
-                                                                        const unknownRegex = /警察无法验出座位 (\d+)/;
-
-                                                                        logs.forEach(log => {
-                                                                            let match = log.text.match(badRegex);
-                                                                            if (match) {
-                                                                                history.push({ target: match[1], result: "坏人特殊身份", type: 'bad' });
-                                                                                return;
-                                                                            }
-                                                                            match = log.text.match(goodRegex);
-                                                                            if (match) {
-                                                                                history.push({ target: match[1], result: "非坏人特殊身份", type: 'good' });
-                                                                                return;
-                                                                            }
-                                                                            match = log.text.match(unknownRegex);
-                                                                            if (match) {
-                                                                                history.push({ target: match[1], result: "未知 (被阻挡/死亡)", type: 'unknown' });
-                                                                                return;
-                                                                            }
-                                                                        });
-
-                                                                        if (history.length === 0) {
-                                                                            return <div className="text-sm opacity-50 text-center py-2">暂无验人记录</div>;
-                                                                        }
-
-                                                                        return (
-                                                                            <div className="space-y-2">
-                                                                                {history.map((record, idx) => (
-                                                                                    <div key={idx} className={`flex items-center justify-between p-2 rounded border ${isNight ? "bg-white/5 border-white/10" : "bg-black/5 border-black/5"
-                                                                                        }`}>
-                                                                                        <div className="flex items-center gap-2">
-                                                                                            <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-xs font-bold">
-                                                                                                {record.target}
-                                                                                            </div>
-                                                                                            <span className="text-sm">座位 {record.target}</span>
-                                                                                        </div>
-                                                                                        <Badge variant={record.type === 'bad' ? "destructive" : record.type === 'good' ? "default" : "outline"}
-                                                                                            className={record.type === 'good' ? "bg-green-600 hover:bg-green-700" : ""}>
-                                                                                            {record.result}
-                                                                                        </Badge>
-                                                                                    </div>
-                                                                                ))}
-                                                                            </div>
-                                                                        );
-                                                                    })()}
-                                                                </CardContent>
-                                                            </Card>
-                                                        )}
-
-                                                        {/* 3. 房主控制台 */}
+                                                        {/* 5. 房主控制台 */}
                                                         {isHost && (flowerPhase === "night_actions" || flowerPhase === "day_vote") && (
                                                             <Card className={`${themeClass} border-yellow-500/30`}>
                                                                 <CardHeader className="pb-2">
@@ -1628,7 +1633,7 @@ export default function FlowerRoom() {
                                                             </Card>
                                                         )}
 
-                                                        {/* 4. 结算结果显示 (保留原有逻辑，美化样式) */}
+                                                        {/* 6. 结算结果显示 (保留原有逻辑，美化样式) */}
                                                         {showDaySummary && (
                                                             <Card className={themeClass}>
                                                                 <CardHeader className="pb-2">

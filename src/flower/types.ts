@@ -126,3 +126,22 @@ export interface FlowerSnapshot {
   gameResult?: FlowerGameResult | null;
   updatedAt: number;
 }
+
+// Result types for game operations
+export type AssignResult = { ok: boolean; error?: string };
+export type ResolveResult = { ok: boolean; error?: string };
+export type SubmitResult = { ok: boolean; error?: string };
+export type VoteResult = { ok: boolean; error?: string };
+
+// Payload types for client-server communication
+export interface SubmitNightActionPayload {
+  role: FlowerRole;
+  actorSeat: number;
+  targetSeat?: number | null;
+  secondarySeat?: number | null;
+}
+
+export interface SubmitDayVotePayload {
+  voterSeat: number;
+  targetSeat: number;
+}

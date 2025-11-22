@@ -4,6 +4,19 @@ import cors from "cors";
 import http from "http";
 import { Server, Socket } from "socket.io";
 import type { Snapshot } from "./types.js";
+import {
+  initFlowerRoom,
+  flowerPlayerReady,
+  assignFlowerRoles,
+  submitNightAction,
+  resolveNight,
+  submitDayVote,
+  resolveDayVote,
+  passTurn,
+  resetFlowerGame,
+} from "./game-flower/engine.js";
+import type { FlowerPlayerState } from "./game-flower/types.js";
+import { checkAndScheduleBotActions, clearRoomTimeouts } from "./game-flower/bot-manager.js";
 
 /** ===== 简单内存房间状态 ===== */
 type PresenceUser = {
@@ -215,7 +228,7 @@ function currentStillAlive(room: Room, sessionId: string) {
 }
 
 function genBotSessionId() {
-  return `bot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  return `bot_${Date.now()}_${Math.random().toString(36).slice(2, 6)} `;
 }
 
 /** ===== 基础服务 ===== */
@@ -247,18 +260,19 @@ io.on("connection", (socket: Socket) => {
         if (!name || !sessionId) return cb({ ok: false, msg: "缺少 name 或 sessionId" });
 
         const code = pickRoomCode();
+        const seat = 1;
         const room: Room = {
           code,
           users: new Map(),
           hostSessionId: sessionId,
           createdAt: Date.now(),
           lastKeepaliveAt: Date.now(),
-          snapshot: null, // 初始化为 null，等待客户端上传
+          snapshot: initFlowerRoom(code, [{ name, seat, sessionId }]),
         };
 
-        const seat = nextAvailableSeat(room) ?? 1;
+        // const seat = nextAvailableSeat(room) ?? 1;
         const me: PresenceUser = {
-          id: `U_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
+          id: `U_${Date.now()}_${Math.random().toString(16).slice(2, 6)} `,
           name,
           sessionId,
           seat,
@@ -308,7 +322,7 @@ io.on("connection", (socket: Socket) => {
             disconnectedAt: undefined,
           }
           : {
-            id: `U_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
+            id: `U_${Date.now()}_${Math.random().toString(16).slice(2, 6)} `,
             name,
             sessionId,
             seat,
@@ -317,6 +331,17 @@ io.on("connection", (socket: Socket) => {
           };
         room.users.set(sessionId, me);
         ensureHost(room);
+
+        // Sync to snapshot
+        if (room.snapshot && room.snapshot.engine === "flower") {
+          const players = room.snapshot.players;
+          if (players[seat - 1]) {
+            players[seat - 1].name = me.name;
+            players[seat - 1].sessionId = me.sessionId;
+            players[seat - 1].isAlive = true;
+            room.snapshot.updatedAt = Date.now();
+          }
+        }
 
         socket.join(code);
         socket.data.roomCode = code;
@@ -362,8 +387,8 @@ io.on("connection", (socket: Socket) => {
             disconnectedAt: undefined,
           }
           : {
-            id: `U_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
-            name: name?.trim() || `玩家${seat}`,
+            id: `U_${Date.now()}_${Math.random().toString(16).slice(2, 6)} `,
+            name: name?.trim() || `玩家${seat} `,
             sessionId,
             seat,
             ready: false,
@@ -421,6 +446,26 @@ io.on("connection", (socket: Socket) => {
         if (!u) return cb({ ok: false, msg: "玩家不存在" });
 
         room.users.set(sessionId, { ...u, ready: !!ready });
+
+        // Sync to snapshot
+        if (room.snapshot && room.snapshot.engine === "flower") {
+          const players = room.snapshot.players;
+          const p = players.find((p: FlowerPlayerState) => p.sessionId === sessionId);
+          if (p) {
+            p.isReady = !!ready;
+            if (ready) {
+              const newSnap = flowerPlayerReady(room.snapshot, p.seat);
+              room.snapshot = newSnap;
+              io.to(code).emit("state:full", { snapshot: room.snapshot, from: "server", at: Date.now() });
+            } else {
+              // Just update timestamp if unready
+              room.snapshot.updatedAt = Date.now();
+              io.to(code).emit("state:full", { snapshot: room.snapshot, from: "server", at: Date.now() });
+              checkAndScheduleBotActions(room, io);
+            }
+          }
+        }
+
         broadcastPresence(room);
         cb({ ok: true });
       } catch {
@@ -562,8 +607,8 @@ io.on("connection", (socket: Socket) => {
 
         const botSessionId = genBotSessionId();
         const bot: PresenceUser = {
-          id: `BOT_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
-          name: name?.trim() || `机器人-${seat}`,
+          id: `BOT_${Date.now()}_${Math.random().toString(16).slice(2, 6)} `,
+          name: name?.trim() || `机器人 - ${seat} `,
           sessionId: botSessionId,
           seat,
           isHost: false,
@@ -572,6 +617,21 @@ io.on("connection", (socket: Socket) => {
         };
         room.users.set(botSessionId, bot);
         ensureHost(room);
+
+        // Sync to snapshot
+        if (room.snapshot && room.snapshot.engine === "flower") {
+          const players = room.snapshot.players;
+          if (players[seat - 1]) {
+            players[seat - 1].name = bot.name;
+            players[seat - 1].sessionId = bot.sessionId;
+            players[seat - 1].isAlive = true;
+            players[seat - 1].isReady = true;
+            players[seat - 1].isBot = true;
+            room.snapshot.updatedAt = Date.now();
+            io.to(code).emit("state:full", { snapshot: room.snapshot, from: "server", at: Date.now() });
+          }
+        }
+
         broadcastPresence(room);
         cb({ ok: true });
       } catch (err) {
@@ -617,30 +677,105 @@ io.on("connection", (socket: Socket) => {
   /**
    * ===== Phase 1：动作总线（房主权威） =====
    */
-  // 非房主 -> 房主
+  // 非房主 -> 房主 (Legacy) / Client -> Server (New)
   socket.on(
     "intent",
     (
-      payload: { room: string; action: string; data?: unknown; from: string },
+      payload: { room: string; action: string; data?: any; from: string },
       cb: (resp: { ok: boolean; msg?: string }) => void
     ) => {
-      const { room, action, data, from } = payload || {};
-      const r = room ? rooms.get(room) : undefined;
+      const { room: roomCode, action, data, from } = payload || {};
+      const r = roomCode ? rooms.get(roomCode) : undefined;
       if (!r) return cb({ ok: false, msg: "房间不存在" });
 
-      // 特殊处理聊天消息，直接广播给所有房间成员
+      // 特殊处理聊天消息
       if (action === "flower:chat_message") {
-        io.to(room).emit("action", { action, payload: data, from, at: Date.now() });
+        if (r.snapshot && r.snapshot.engine === "flower") {
+          const msg = {
+            id: data.id || `msg_${Date.now()}_${Math.random()} `,
+            sessionId: socket.data.sessionId || "unknown",
+            senderSeat: data.senderSeat,
+            senderName: data.senderName,
+            content: data.content,
+            mentions: data.mentions || [],
+            timestamp: Date.now(),
+          };
+          if (!r.snapshot.chatMessages) r.snapshot.chatMessages = [];
+          r.snapshot.chatMessages.push(msg);
+          r.snapshot.updatedAt = Date.now();
+          io.to(roomCode).emit("state:full", { snapshot: r.snapshot, from: "server", at: Date.now() });
+          checkAndScheduleBotActions(r, io);
+        }
+        // io.to(roomCode).emit("action", { action, payload: data, from, at: Date.now() }); // Removed to avoid duplicate
         return cb({ ok: true });
       }
 
+      // Check if it's a flower game action
+      if (action.startsWith("flower:")) {
+        if (!r.snapshot || r.snapshot.engine !== "flower") {
+          return cb({ ok: false, msg: "游戏未初始化" });
+        }
+
+        let res: { ok: boolean; error?: string } = { ok: false, error: "未知指令" };
+        let shouldBroadcast = false;
+
+        switch (action) {
+          case "flower:assign_roles":
+            if (socket.data.sessionId !== r.hostSessionId) return cb({ ok: false, msg: "只有房主可以开始游戏" });
+            res = assignFlowerRoles(r.snapshot);
+            shouldBroadcast = true;
+            break;
+          case "flower:submit_night_action":
+            res = submitNightAction(r.snapshot, data);
+            shouldBroadcast = true;
+            break;
+          case "flower:resolve_night":
+            if (socket.data.sessionId !== r.hostSessionId) return cb({ ok: false, msg: "只有房主可以结算" });
+            res = resolveNight(r.snapshot);
+            shouldBroadcast = true;
+            break;
+          case "flower:submit_day_vote":
+            res = submitDayVote(r.snapshot, data);
+            shouldBroadcast = true;
+            break;
+          case "flower:resolve_day_vote":
+            if (socket.data.sessionId !== r.hostSessionId) return cb({ ok: false, msg: "只有房主可以结算" });
+            res = resolveDayVote(r.snapshot);
+            shouldBroadcast = true;
+            break;
+          case "flower:pass_turn":
+            res = passTurn(r.snapshot);
+            shouldBroadcast = true;
+            break;
+          case "flower:reset_game":
+            if (socket.data.sessionId !== r.hostSessionId) return cb({ ok: false, msg: "只有房主可以重置" });
+            res = resetFlowerGame(r.snapshot);
+            shouldBroadcast = true;
+            break;
+          default:
+            return cb({ ok: false, msg: "未知的游戏指令" });
+        }
+
+        if (res.ok) {
+          if (shouldBroadcast) {
+            io.to(roomCode).emit("state:full", { snapshot: r.snapshot, from: "server", at: Date.now() });
+            checkAndScheduleBotActions(r, io);
+          }
+          cb({ ok: true });
+        } else {
+          cb({ ok: false, msg: res.error });
+        }
+        return;
+      }
+
+      // Legacy forwarding for other games or unknown intents
       const hostSessionId = r.hostSessionId;
-      const roomSet = io.sockets.adapter.rooms.get(room);
+      const roomSet = io.sockets.adapter.rooms.get(roomCode);
       if (roomSet) {
         for (const sid of roomSet) {
           const s = io.sockets.sockets.get(sid);
           if (s?.data?.sessionId === hostSessionId) {
-            s.emit("intent", { action, data, from, room });
+            s.emit("intent", { action, data, from, room: roomCode });
           }
         }
       }
@@ -948,5 +1083,5 @@ io.on("connection", (socket: Socket) => {
 /** ===== 启动 ===== */
 const PORT = Number(process.env.PORT || 8787);
 server.listen(PORT, () => {
-  console.log(`Realtime server listening on ${PORT}`);
+  console.log(`Realtime server listening on ${PORT} `);
 });

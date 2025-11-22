@@ -8,19 +8,12 @@ import type {
   FlowerDayState,
   ChatMessage,
   ChatMention,
+  SubmitNightActionPayload,
+  SubmitDayVotePayload,
+  AssignResult,
+  SubmitResult,
+  ResolveResult,
 } from "./types";
-import {
-  assignFlowerRoles,
-  submitNightAction as engineSubmitNightAction,
-  resolveNight as engineResolveNight,
-  submitDayVote as engineSubmitDayVote,
-  resolveDayVote as engineResolveDayVote,
-  type AssignResult,
-  type SubmitResult,
-  type ResolveResult,
-  type SubmitNightActionPayload,
-  type SubmitDayVotePayload,
-} from "./engine";
 import { rt, getSessionId } from "../realtime/socket";
 
 const MAX_SEATS = 9;
@@ -34,18 +27,16 @@ export interface FlowerStore {
   setSnapshot: (snapshot: FlowerSnapshotInput | null) => void;
   ensureSnapshotFromPresence: (presence: PresenceState | null) => void;
   clearError: () => void;
-  hostAssignRoles: () => AssignResult;
-  hostSubmitNightAction: (payload: SubmitNightActionPayload) => SubmitResult;
-  hostResolveNight: () => ResolveResult;
+  assignRoles: () => Promise<AssignResult>;
+  resolveNight: () => Promise<ResolveResult>;
+  resolveDayVote: () => Promise<ResolveResult>;
   submitNightAction: (payload: SubmitNightActionPayload) => Promise<SubmitResult>;
-  hostSubmitDayVote: (payload: SubmitDayVotePayload) => SubmitResult;
-  hostResolveDayVote: () => ResolveResult;
   submitDayVote: (payload: SubmitDayVotePayload) => Promise<SubmitResult>;
   broadcastSnapshot: (targetSessionId?: string) => Promise<void>;
   addChatMessage: (content: string, mentions: ChatMention[]) => Promise<{ ok: boolean; error?: string }>;
-  addBotChatMessage: (seat: number, content: string, mentions: ChatMention[]) => Promise<{ ok: boolean; error?: string }>;
+
   passTurn: () => Promise<void>;
-  resetGame: () => void;
+  resetGame: () => Promise<void>;
 }
 
 export const useFlowerStore = create<FlowerStore>()(
@@ -92,68 +83,37 @@ export const useFlowerStore = create<FlowerStore>()(
 
         normalizeSnapshot(state.snapshot);
         syncSnapshotWithPresence(state.snapshot, presence);
-
-        // 只在创建新快照时更新时间戳，避免因在线状态同步而污染游戏状态时间戳
-        // if (isNewSnapshot) {
-        //   state.snapshot.updatedAt = Date.now();
-        // }
-
         saveSnapshotToCache(state.snapshot);
       }),
     clearError: () => set((state) => { state.lastError = null; }),
-    hostAssignRoles: () => {
-      let result: AssignResult = { ok: false, error: "尚未进入房间" };
-      set((state) => {
-        if (!state.snapshot) {
-          result = { ok: false, error: "没有可用快照" };
-          state.lastError = result.error ?? null;
-          return;
-        }
-        const res = assignFlowerRoles(state.snapshot);
-        result = res;
-        state.lastError = res.ok ? null : res.error ?? null;
-      });
-      return result;
+    assignRoles: async () => {
+      try {
+        const ack = await rt.sendIntent("flower:assign_roles", {});
+        return ack?.ok ? { ok: true } : { ok: false, error: ack?.msg || "分配失败" };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: msg };
+      }
     },
-    hostSubmitNightAction: (payload: SubmitNightActionPayload) => {
-      let result: SubmitResult = { ok: false, error: "没有可用快照" };
-      set((state) => {
-        if (!state.snapshot) {
-          result = { ok: false, error: "没有可用快照" };
-          state.lastError = result.error ?? null;
-          return;
-        }
-        const res = engineSubmitNightAction(state.snapshot, payload);
-        result = res;
-        state.lastError = res.ok ? null : res.error ?? null;
-      });
-      return result;
+    resolveNight: async () => {
+      try {
+        const ack = await rt.sendIntent("flower:resolve_night", {});
+        return ack?.ok ? { ok: true } : { ok: false, error: ack?.msg || "结算失败" };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: msg };
+      }
     },
-    hostResolveNight: () => {
-      let result: ResolveResult = { ok: false, error: "没有可用快照" };
-      set((state) => {
-        if (!state.snapshot) {
-          result = { ok: false, error: "没有可用快照" };
-          state.lastError = result.error ?? null;
-          return;
-        }
-        const res = engineResolveNight(state.snapshot);
-        result = res;
-        state.lastError = res.ok ? null : res.error ?? null;
-      });
-      return result;
+    resolveDayVote: async () => {
+      try {
+        const ack = await rt.sendIntent("flower:resolve_day_vote", {});
+        return ack?.ok ? { ok: true } : { ok: false, error: ack?.msg || "结算失败" };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: msg };
+      }
     },
     submitNightAction: async (payload: SubmitNightActionPayload) => {
-      const currentSnapshot = get().snapshot;
-      if (!currentSnapshot) return { ok: false, error: "没有可用快照" };
-      const isHost = currentSnapshot.hostSessionId === getSessionId();
-      if (isHost) {
-        const res = get().hostSubmitNightAction(payload);
-        if (res.ok) {
-          await get().broadcastSnapshot();
-        }
-        return res;
-      }
       try {
         const ack = await rt.sendIntent("flower:submit_night_action", payload);
         return ack?.ok ? { ok: true } : { ok: false, error: ack?.msg || "提交失败" };
@@ -162,45 +122,7 @@ export const useFlowerStore = create<FlowerStore>()(
         return { ok: false, error: msg };
       }
     },
-    hostSubmitDayVote: (payload: SubmitDayVotePayload) => {
-      let result: SubmitResult = { ok: false, error: "没有可用快照" };
-      set((state) => {
-        if (!state.snapshot) {
-          result = { ok: false, error: "没有可用快照" };
-          state.lastError = result.error ?? null;
-          return;
-        }
-        const res = engineSubmitDayVote(state.snapshot, payload);
-        result = res;
-        state.lastError = res.ok ? null : res.error ?? null;
-      });
-      return result;
-    },
-    hostResolveDayVote: () => {
-      let result: ResolveResult = { ok: false, error: "没有可用快照" };
-      set((state) => {
-        if (!state.snapshot) {
-          result = { ok: false, error: "没有可用快照" };
-          state.lastError = result.error ?? null;
-          return;
-        }
-        const res = engineResolveDayVote(state.snapshot);
-        result = res;
-        state.lastError = res.ok ? null : res.error ?? null;
-      });
-      return result;
-    },
     submitDayVote: async (payload: SubmitDayVotePayload) => {
-      const currentSnapshot = get().snapshot;
-      if (!currentSnapshot) return { ok: false, error: "没有可用快照" };
-      const isHost = currentSnapshot.hostSessionId === getSessionId();
-      if (isHost) {
-        const res = get().hostSubmitDayVote(payload);
-        if (res.ok) {
-          await get().broadcastSnapshot();
-        }
-        return res;
-      }
       try {
         const ack = await rt.sendIntent("flower:submit_day_vote", payload);
         return ack?.ok ? { ok: true } : { ok: false, error: ack?.msg || "提交失败" };
@@ -209,15 +131,10 @@ export const useFlowerStore = create<FlowerStore>()(
         return { ok: false, error: msg };
       }
     },
-    broadcastSnapshot: async (targetSessionId?: string) => {
-      const snapshot = get().snapshot;
-      const roomCode = snapshot?.roomCode ?? rt.getRoom();
-      if (!snapshot || !roomCode) return;
-      try {
-        await rt.sendState(snapshot as any, targetSessionId);
-      } catch (err) {
-        console.error("broadcast snapshot failed", err);
-      }
+    broadcastSnapshot: async () => {
+      // Server handles broadcasting now.
+      // This is kept for interface compatibility if needed, or can be removed.
+      return;
     },
     addChatMessage: async (content: string, mentions: ChatMention[]) => {
       const currentSnapshot = get().snapshot;
@@ -237,160 +154,37 @@ export const useFlowerStore = create<FlowerStore>()(
         timestamp: Date.now(),
       };
 
-      // Add to local snapshot immediately
-      set((state) => {
-        if (!state.snapshot) return;
-        if (!state.snapshot.chatMessages) state.snapshot.chatMessages = [];
-        state.snapshot.chatMessages.push(message);
-        state.snapshot.updatedAt = Date.now();
-        saveSnapshotToCache(state.snapshot);
-      });
-
-      // Send via intent (server will broadcast to all clients)
-      try {
-        await rt.sendIntent("flower:chat_message", message);
-
-        // 广播快照到服务器，确保聊天消息被服务器保存
-        await get().broadcastSnapshot();
-
-        return { ok: true };
-      } catch (err) {
-        // const msg = err instanceof Error ? err.message : String(err);
-        // Even if sending fails, the message is already displayed locally
-        return { ok: true }; // Still return ok since message is shown locally
-      }
-    },
-    addBotChatMessage: async (seat: number, content: string, mentions: ChatMention[]) => {
-      const currentSnapshot = get().snapshot;
-      if (!currentSnapshot) return { ok: false, error: "没有可用快照" };
-
-      const botPlayer = currentSnapshot.players.find(p => p.seat === seat);
-      if (!botPlayer) return { ok: false, error: "未找到机器人信息" };
-
-      // Use a special prefix for bot session IDs to avoid collision and identification issues
-      const botSessionId = `bot:${seat}`;
-
-      const message: ChatMessage = {
-        id: `${Date.now()}_${botSessionId}_${Math.random().toString(36).slice(2)}`,
-        sessionId: botSessionId,
-        senderSeat: botPlayer.seat,
-        senderName: botPlayer.name,
-        content,
-        mentions,
-        timestamp: Date.now(),
-      };
-
-      // Add to local snapshot immediately
-      set((state) => {
-        if (!state.snapshot) return;
-        if (!state.snapshot.chatMessages) state.snapshot.chatMessages = [];
-        state.snapshot.chatMessages.push(message);
-        state.snapshot.updatedAt = Date.now();
-        saveSnapshotToCache(state.snapshot);
-      });
-
-      // Send via intent (server will broadcast to all clients)
-      try {
-        await rt.sendIntent("flower:chat_message", message);
-        await get().broadcastSnapshot();
-        return { ok: true };
-      } catch (err) {
-        return { ok: true };
-      }
-    },
-    passTurn: async () => {
-      const currentSnapshot = get().snapshot;
-      if (!currentSnapshot) return;
-      const isHost = currentSnapshot.hostSessionId === getSessionId();
-
       // Optimistic update
       set((state) => {
         if (!state.snapshot) return;
-        const day = state.snapshot.day;
-        day.currentSpeakerIndex += 1;
-
-        const currentSpeakerSeat = day.speechOrder[day.currentSpeakerIndex - 1];
-        const currentSpeaker = state.snapshot.players.find(p => p.seat === currentSpeakerSeat);
-        const nextSpeakerSeat = day.speechOrder[day.currentSpeakerIndex];
-        const nextSpeaker = state.snapshot.players.find(p => p.seat === nextSpeakerSeat);
-
-        if (day.currentSpeakerIndex >= day.speechOrder.length) {
-          state.snapshot.phase = "day_vote";
-          state.snapshot.logs.push({ at: Date.now(), text: "发言环节结束，进入投票阶段" });
-        } else {
-          state.snapshot.logs.push({
-            at: Date.now(),
-            text: `玩家 ${currentSpeaker?.name || currentSpeakerSeat} 结束发言，下一位是 ${nextSpeaker?.name || nextSpeakerSeat}`
-          });
-        }
+        if (!state.snapshot.chatMessages) state.snapshot.chatMessages = [];
+        state.snapshot.chatMessages.push(message);
         state.snapshot.updatedAt = Date.now();
         saveSnapshotToCache(state.snapshot);
       });
 
-      // Broadcast
-      if (isHost) {
-        await get().broadcastSnapshot();
-      } else {
-        // If not host, we should ideally send an intent, but for now we rely on the optimistic update 
-        // and the fact that any state change broadcasted by anyone will sync. 
-        // However, strictly speaking, only host should authorize phase changes or state mutations that affect everyone.
-        // For this feature, let's assume any player can trigger their own turn end, 
-        // and we broadcast the result. Since we don't have a specific "pass_turn" intent in engine yet,
-        // we'll just broadcast the snapshot modification.
-        // A better approach would be to add a "pass_turn" intent, but for simplicity/speed we broadcast.
-        await get().broadcastSnapshot();
+      try {
+        await rt.sendIntent("flower:chat_message", message);
+        return { ok: true };
+      } catch (err) {
+        return { ok: true };
       }
     },
-    resetGame: () =>
-      set((state) => {
-        if (!state.snapshot) return;
 
-        const roomCode = state.snapshot.roomCode;
-        const hostSessionId = state.snapshot.hostSessionId;
-        const savedChatMessages = [...(state.snapshot.chatMessages || [])];
-        const savedPlayers = state.snapshot.players.map(p => ({
-          seat: p.seat,
-          sessionId: p.sessionId,
-          name: p.name,
-          isHost: p.isHost,
-          isBot: p.isBot,
-        }));
-
-        // 创建新的快照，保留聊天记录和玩家信息
-        const now = Date.now();
-        state.snapshot = {
-          engine: "flower",
-          roomCode,
-          hostSessionId,
-          phase: "lobby",
-          dayCount: 0,
-          players: Array.from({ length: MAX_SEATS }, (_, idx) => {
-            const seat = idx + 1;
-            const savedPlayer = savedPlayers.find(p => p.seat === seat);
-            if (savedPlayer?.sessionId) {
-              return {
-                ...createEmptyPlayer(seat),
-                sessionId: savedPlayer.sessionId,
-                name: savedPlayer.name,
-                isHost: savedPlayer.isHost,
-                isBot: savedPlayer.isBot,
-                isAlive: true,
-                isReady: false,
-              };
-            }
-            return createEmptyPlayer(seat);
-          }),
-          night: createEmptyNightState(),
-          day: createEmptyDayState(),
-          logs: [{ at: now, text: "游戏已重置，等待重新开始" }],
-          pendingAction: null,
-          gameResult: null,
-          updatedAt: now,
-          chatMessages: savedChatMessages,
-        };
-
-        saveSnapshotToCache(state.snapshot);
-      }),
+    passTurn: async () => {
+      try {
+        await rt.sendIntent("flower:pass_turn", {});
+      } catch (err) {
+        console.error("pass turn failed", err);
+      }
+    },
+    resetGame: async () => {
+      try {
+        await rt.sendIntent("flower:reset_game", {});
+      } catch (err) {
+        console.error("reset game failed", err);
+      }
+    },
   }))
 );
 

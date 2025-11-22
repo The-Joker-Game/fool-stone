@@ -48,16 +48,16 @@ function MainApp() {
         if ('wakeLock' in navigator) {
           wakeLock = await navigator.wakeLock.request('screen');
           console.log('Screen Wake Lock is active');
-          
+
           // 监听页面可见性变化，当页面变为可见时重新请求唤醒锁
           const handleVisibilityChange = () => {
             if (wakeLock !== null && document.visibilityState === 'visible') {
               requestWakeLock();
             }
           };
-          
+
           document.addEventListener('visibilitychange', handleVisibilityChange);
-          
+
           // 当唤醒锁释放时记录日志
           wakeLock.addEventListener('release', () => {
             console.log('Screen Wake Lock was released');
@@ -832,12 +832,12 @@ function MainApp() {
         const stone = g.hands[peekId] as Stone | undefined;
         const canCast = !phaseIsSelect && stone === currentStone && g.castIdx < CAST_ORDER.length;
 
-        const isWood  = canCast && stone === '木';
+        const isWood = canCast && stone === '木';
         const isWater = canCast && stone === '水';
-        const isFire  = canCast && stone === '火';
+        const isFire = canCast && stone === '火';
         const isEarth = canCast && stone === '土';
-        const isSage  = canCast && stone === '贤';
-        const isFool  = canCast && stone === '愚';
+        const isSage = canCast && stone === '贤';
+        const isFool = canCast && stone === '愚';
 
         const role = player.isFool ? '愚者' : '贤者';
 
@@ -848,7 +848,7 @@ function MainApp() {
           const f = entries.find(([, v]) => v === '愚')?.[0] ?? '-';
           return { sage: s, fool: f };
         };
-        const nowInfo  = locate(flaskMap ?? undefined);
+        const nowInfo = locate(flaskMap ?? undefined);
         const nextInfo = locate(nextFlaskMap ?? undefined);
 
         const myScore = g.scores[player.id];

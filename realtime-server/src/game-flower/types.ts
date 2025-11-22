@@ -1,5 +1,3 @@
-// realtime-server/src/game-flower/types.ts
-
 export type FlowerRole =
   | "花蝴蝶"
   | "狙击手"
@@ -12,21 +10,14 @@ export type FlowerRole =
   | "恶民";
 
 export type FlowerPhase =
-  | "lobby"          // 等待玩家入场
-  | "night_actions"  // 夜晚行动
-  | "night_result"   // 夜晚结算结果展示
-  | "day_discussion" // 白天讨论
-  | "day_vote"       // 白天投票
-  | "game_over";     // 游戏结束
+  | "lobby"
+  | "night_actions"
+  | "night_result"
+  | "day_discussion"
+  | "day_vote"
+  | "game_over";
 
-export type FlowerOutcome =
-  | "heal"
-  | "emptyNeedle"
-  | "blocked"
-  | "kill"
-  | "cop_bad"
-  | "cop_good"
-  | "cop_unknown";
+export type FlowerOutcome = "heal" | "emptyNeedle" | "blocked" | "kill" | "cop_bad" | "cop_good" | "cop_unknown";
 
 export interface FlowerNightAction {
   role: FlowerRole;
@@ -54,14 +45,9 @@ export interface FlowerNightResult {
   upgrades: Array<{ seat: number; fromRole: FlowerRole; toRole: "杀手" }>;
 }
 
-export interface FlowerNightState {
-  submittedActions: FlowerNightAction[];
-  lastActions?: FlowerNightAction[];
-  result?: FlowerNightResult | null;
-}
-
 export interface FlowerDayState {
   speechOrder: number[];
+  currentSpeakerIndex: number;
   voteOrder: number[];
   votes: FlowerVoteEntry[];
   tally: Record<number, number>;
@@ -71,6 +57,12 @@ export interface FlowerDayVoteResult {
   topSeats: number[];
   executedSeat: number | null;
   reason: "vote" | "tie" | null;
+}
+
+export interface FlowerNightState {
+  submittedActions: FlowerNightAction[];
+  lastActions?: FlowerNightAction[];
+  result?: FlowerNightResult | null;
 }
 
 export interface FlowerPlayerState {
@@ -104,6 +96,21 @@ export interface FlowerGameResult {
   reason: string;
 }
 
+export interface ChatMention {
+  seat: number;
+  name: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  sessionId: string;
+  senderSeat: number;
+  senderName: string;
+  content: string;
+  mentions: ChatMention[];
+  timestamp: number;
+}
+
 export interface FlowerSnapshot {
   engine: "flower";
   roomCode: string;
@@ -114,6 +121,7 @@ export interface FlowerSnapshot {
   night: FlowerNightState;
   day: FlowerDayState;
   logs: FlowerLogEntry[];
+  chatMessages: ChatMessage[];
   pendingAction?: { role: FlowerRole; seat: number } | null;
   gameResult?: FlowerGameResult | null;
   updatedAt: number;

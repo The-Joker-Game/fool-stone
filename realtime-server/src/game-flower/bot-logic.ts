@@ -1,5 +1,5 @@
-// src/flower/bot_logic.ts
-import type { FlowerSnapshot, FlowerRole, FlowerLogEntry } from "./types";
+// realtime-server/src/game-flower/bot-logic.ts
+import type { FlowerSnapshot, FlowerRole, FlowerLogEntry } from "./types.js";
 import {
     OPENING_TEMPLATES,
     FOLLOW_UP_OPENINGS,
@@ -7,7 +7,7 @@ import {
     SUSPICION_TEMPLATES,
     DEFENSE_TEMPLATES,
     PASS_TEMPLATES
-} from "./bot_speech_templates";
+} from "./bot-templates.js";
 
 function randomFrom<T>(list: T[]): T | null {
     if (list.length === 0) return null;
