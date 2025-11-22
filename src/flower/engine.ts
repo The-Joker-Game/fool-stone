@@ -67,7 +67,7 @@ export function assignFlowerRoles(snapshot: FlowerSnapshot): AssignResult {
   snapshot.dayCount = 1;
   snapshot.phase = "night_actions";
   snapshot.night = { submittedActions: [], result: null };
-  snapshot.day = { speechOrder: [], voteOrder: [], votes: [], tally: {}, pendingExecution: null };
+  snapshot.day = { speechOrder: [], currentSpeakerIndex: 0, voteOrder: [], votes: [], tally: {}, pendingExecution: null };
   snapshot.logs.push({ at: now, text: "🌙 花蝴蝶对局开始，身份已分发" });
   snapshot.updatedAt = now;
   return { ok: true };
@@ -545,7 +545,40 @@ function applyNightOutcome(snapshot: FlowerSnapshot, outcome: NightOutcome) {
   if (nightResult) {
     finalizeGame(snapshot, nightResult);
   } else {
-    snapshot.phase = "day_vote";
+    // Generate speech order
+    const aliveSeats = snapshot.players
+      .filter(p => p.isAlive)
+      .map(p => p.seat)
+      .sort((a, b) => a - b);
+
+    let firstSpeakerSeat: number;
+
+    if (outcome.deaths.length === 1) {
+      const deadSeat = outcome.deaths[0].seat;
+      // Find next alive player clockwise
+      const sortedSeats = snapshot.players.map(p => p.seat).sort((a, b) => a - b);
+      const deadIndex = sortedSeats.indexOf(deadSeat);
+      let nextIndex = (deadIndex + 1) % sortedSeats.length;
+      while (!aliveSeats.includes(sortedSeats[nextIndex])) {
+        nextIndex = (nextIndex + 1) % sortedSeats.length;
+      }
+      firstSpeakerSeat = sortedSeats[nextIndex];
+    } else {
+      // Random start
+      firstSpeakerSeat = aliveSeats[Math.floor(Math.random() * aliveSeats.length)];
+    }
+
+    // Create ordered list starting from firstSpeakerSeat
+    const speechOrder: number[] = [];
+    const startIndex = aliveSeats.indexOf(firstSpeakerSeat);
+    for (let i = 0; i < aliveSeats.length; i++) {
+      speechOrder.push(aliveSeats[(startIndex + i) % aliveSeats.length]);
+    }
+
+    // Filter out muted players
+    snapshot.day.speechOrder = speechOrder.filter(seat => !outcome.mutedSeats.includes(seat));
+    snapshot.day.currentSpeakerIndex = 0;
+    snapshot.phase = "day_discussion";
   }
   outcome.logs.forEach((text) => snapshot.logs.push({ at: now, text }));
   handleRoleUpgrades(snapshot, outcome);

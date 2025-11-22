@@ -7,12 +7,13 @@ import Placeholder from "@tiptap/extension-placeholder";
 import tippy, { type Instance as TippyInstance } from "tippy.js";
 import "tippy.js/dist/tippy.css";
 import Avvvatars from "avvvatars-react";
-import { Send, MessageSquareOff, ArrowDown } from "lucide-react";
+import { Send, MessageSquareOff, ArrowDown, Mic, MicOff, SkipForward } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import type { ChatMessage, ChatMention, FlowerPlayerState } from "./types";
+import type { ChatMessage, ChatMention, FlowerPlayerState, FlowerPhase } from "./types";
 import { getSessionId } from "../realtime/socket";
+import { motion, AnimatePresence } from "framer-motion";
 
 // --- 辅助函数 ---
 const cleanName = (name: string | undefined) => name?.replace(/\u200B/g, "") || "";
@@ -32,6 +33,9 @@ interface ChatPanelProps {
     mySessionId: string;
     connected?: boolean; // 新增 connected 属性
     isNight?: boolean;
+    phase?: FlowerPhase;
+    currentSpeakerSeat?: number | null;
+    onPassTurn?: () => void;
 }
 
 interface MentionListProps {
@@ -95,8 +99,88 @@ const MentionList = ({ items, command }: MentionListProps) => {
     );
 };
 
+const SpeakingOrderHeader = ({
+    phase,
+    currentSpeakerSeat,
+    players,
+    mySessionId,
+    onPassTurn
+}: {
+    phase?: FlowerPhase;
+    currentSpeakerSeat?: number | null;
+    players: FlowerPlayerState[];
+    mySessionId: string;
+    onPassTurn?: () => void;
+}) => {
+    if (phase !== "day_discussion" && phase !== "day_vote") return null;
+
+    const isVote = phase === "day_vote";
+    const currentSpeaker = players.find(p => p.seat === currentSpeakerSeat);
+    const isMyTurn = currentSpeaker?.sessionId === mySessionId;
+
+    return (
+        <div className="relative z-20 bg-orange-50/90 backdrop-blur-sm border-b border-orange-100 p-2 flex items-center justify-between min-h-[3.5rem] transition-colors duration-300">
+            <div className="flex items-center gap-3 overflow-hidden">
+                <div className="bg-orange-100 p-1.5 rounded-full text-orange-600 flex-shrink-0">
+                    {isVote ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4 animate-pulse" />}
+                </div>
+
+                <AnimatePresence mode="wait">
+                    {isVote ? (
+                        <motion.div
+                            key="vote-phase"
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -10 }}
+                            className="flex flex-col"
+                        >
+                            <span className="text-sm font-bold text-gray-700">发言结束</span>
+                            <span className="text-xs text-gray-500">请进行投票</span>
+                        </motion.div>
+                    ) : (
+                        <motion.div
+                            key={currentSpeakerSeat ?? "unknown"}
+                            initial={{ opacity: 0, x: 10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -10 }}
+                            className="flex items-center gap-2"
+                        >
+                            {currentSpeaker ? (
+                                <>
+                                    <Avvvatars value={cleanName(currentSpeaker.name)} size={28} style="shape" />
+                                    <div className="flex flex-col">
+                                        <span className="text-sm font-bold text-gray-800 flex items-center gap-1">
+                                            {cleanName(currentSpeaker.name)}
+                                            <span className="text-[10px] font-normal bg-orange-100 text-orange-700 px-1 rounded">#{currentSpeaker.seat}</span>
+                                        </span>
+                                        <span className="text-[10px] text-orange-600 font-medium">
+                                            {isMyTurn ? "轮到你了！" : "正在发言..."}
+                                        </span>
+                                    </div>
+                                </>
+                            ) : (
+                                <span className="text-sm text-gray-500">等待发言...</span>
+                            )}
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </div>
+
+            {!isVote && isMyTurn && (
+                <Button
+                    size="sm"
+                    onClick={onPassTurn}
+                    className="bg-orange-500 hover:bg-orange-600 text-white shadow-md animate-in fade-in zoom-in duration-300 flex items-center gap-1 px-3"
+                >
+                    <SkipForward className="w-3 h-3" />
+                </Button>
+            )}
+        </div>
+    );
+};
+
 // --- 主组件 ---
-export function ChatPanel({ messages, players, onSendMessage, mySessionId, connected = true, isNight = false }: ChatPanelProps) {
+export function ChatPanel({ messages, players, onSendMessage, mySessionId, connected = true, isNight = false, phase, currentSpeakerSeat, onPassTurn }: ChatPanelProps) {
     const scrollRef = useRef<HTMLDivElement>(null);
     const [isSending, setIsSending] = useState(false);
     const [editorContent, setEditorContent] = useState("");
@@ -405,6 +489,13 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
             "flex flex-col h-full border rounded-xl overflow-hidden shadow-sm relative transition-colors duration-500",
             isNight ? "bg-black/20 border-white/10" : "bg-white/20 border-gray-200"
         )}>
+            <SpeakingOrderHeader
+                phase={phase}
+                currentSpeakerSeat={currentSpeakerSeat}
+                players={players}
+                mySessionId={mySessionId}
+                onPassTurn={onPassTurn}
+            />
             <ScrollArea
                 ref={scrollRef}
                 className="flex-1 p-4"
@@ -500,7 +591,7 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
             {!isAtBottom && unreadCount > 0 && (
                 <button
                     onClick={scrollToBottom}
-                    className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-shite hover:bg-gray-200 text-black text-xs px-3 py-1.5 rounded-full shadow-md z-20 flex items-center gap-1.5 transition-all animate-in fade-in slide-in-from-bottom-2 cursor-pointer"
+                    className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-white hover:bg-gray-200 text-black text-xs px-3 py-1.5 rounded-full shadow-md z-20 flex items-center gap-1.5 transition-all animate-in fade-in slide-in-from-bottom-2 cursor-pointer"
                 >
                     <ArrowDown className="w-3 h-3" />
                     <span>{unreadCount} 条新消息</span>

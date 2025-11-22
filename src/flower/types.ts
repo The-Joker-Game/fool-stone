@@ -47,6 +47,7 @@ export interface FlowerNightResult {
 
 export interface FlowerDayState {
   speechOrder: number[];
+  currentSpeakerIndex: number;
   voteOrder: number[];
   votes: FlowerVoteEntry[];
   tally: Record<number, number>;

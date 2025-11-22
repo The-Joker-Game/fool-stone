@@ -68,6 +68,7 @@ import {
     GiWizardStaff
 } from "react-icons/gi";
 import { ScrollArea } from "@/components/ui/scroll-area.tsx";
+import { generateBotSpeech } from "./flower/bot_logic";
 
 
 /** ———————————————————————— 小工具 ———————————————————————— */
@@ -252,7 +253,9 @@ export default function FlowerRoom() {
     const hostResolveDayVote = useFlowerStore((state: FlowerStore) => state.hostResolveDayVote);
     const broadcastSnapshot = useFlowerStore((state: FlowerStore) => state.broadcastSnapshot);
     const addChatMessage = useFlowerStore((state: FlowerStore) => state.addChatMessage);
+    const addBotChatMessage = useFlowerStore((state: FlowerStore) => state.addBotChatMessage);
     const resetGame = useFlowerStore((state: FlowerStore) => state.resetGame);
+    const passTurn = useFlowerStore((state: FlowerStore) => state.passTurn);
 
     /** 列表派生 */
     const users = presence?.users ?? [];
@@ -321,7 +324,7 @@ export default function FlowerRoom() {
     }; const myAlive = !!myFlowerPlayer?.isAlive;
     const myMuted = !!myFlowerPlayer?.isMutedToday;
     const showDaySummary = flowerPhase === "night_actions" && latestDaySummary.hasSummary;
-    const showNightSummary = flowerPhase === "day_vote" && !!flowerSnapshot?.night?.result;
+    const showNightSummary = (flowerPhase === "day_discussion" || flowerPhase === "day_vote") && !!flowerSnapshot?.night?.result;
 
     const isNight = flowerPhase === "night_actions" || flowerPhase === "night_result";
     const themeClass = isNight
@@ -595,6 +598,37 @@ export default function FlowerRoom() {
             broadcastSnapshot();
         }
     }, [isHost, flowerPhase, flowerSnapshot?.updatedAt, flowerPlayers, hostSubmitNightAction, broadcastSnapshot]);
+
+    // —— Bot Speaking Logic ——
+    useEffect(() => {
+        if (!isHost || flowerPhase !== "day_discussion" || !flowerSnapshot) return;
+
+        const currentSpeakerSeat = flowerSnapshot.day.speechOrder[flowerSnapshot.day.currentSpeakerIndex];
+        const currentSpeaker = flowerPlayers.find(p => p.seat === currentSpeakerSeat);
+
+        if (currentSpeaker && currentSpeaker.isBot && currentSpeaker.isAlive) {
+            const delay = Math.floor(Math.random() * 3000) + 3000; // 3-6 seconds
+            const timer = setTimeout(async () => {
+                // Double check state hasn't changed
+                const freshSnapshot = useFlowerStore.getState().snapshot;
+                if (!freshSnapshot || freshSnapshot.phase !== "day_discussion") return;
+                const freshSpeakerIndex = freshSnapshot.day.currentSpeakerIndex;
+                const freshSpeakerSeat = freshSnapshot.day.speechOrder[freshSpeakerIndex];
+
+                if (freshSpeakerSeat === currentSpeakerSeat) {
+                    const speech = generateBotSpeech(freshSnapshot, currentSpeakerSeat);
+
+                    // 1. Send message
+                    await addBotChatMessage(currentSpeakerSeat, speech, []);
+
+                    // 2. Pass turn
+                    await passTurn();
+                }
+            }, delay);
+
+            return () => clearTimeout(timer);
+        }
+    }, [isHost, flowerPhase, flowerSnapshot?.day?.currentSpeakerIndex, flowerPlayers, flowerSnapshot, addBotChatMessage, passTurn]);
 
     /** ———— 发送端 ———— */
 
@@ -1372,117 +1406,277 @@ export default function FlowerRoom() {
                                                             players={flowerPlayers}
                                                             onSendMessage={addChatMessage}
                                                             mySessionId={getSessionId()}
+                                                            connected={connected}
                                                             isNight={isNight}
+                                                            phase={flowerPhase}
+                                                            currentSpeakerSeat={flowerSnapshot?.day?.speechOrder?.[flowerSnapshot?.day?.currentSpeakerIndex ?? 0] ?? null}
+                                                            onPassTurn={passTurn}
                                                         />
                                                     </div>
                                                 )}
 
                                                 {tab === "actions" && (
-                                                    <div className="space-y-4 px-4">
-                                                        {myRole && (
-                                                            <div className="space-y-2">
-                                                                {!myAlive && (
-                                                                    <div className="text-xs text-red-600">你已死亡，无法执行玩家行动。</div>
-                                                                )}
+                                                    <div className="space-y-4 px-4 h-full overflow-y-auto pb-20">
+                                                        {/* 1. 身份卡片 */}
+                                                        <Card className={`${themeClass} overflow-hidden relative`}>
+                                                            {/* 背景装饰 */}
+                                                            <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
+                                                                {myRole && RoleIcon && <RoleIcon myRole={myRole} />}
+                                                            </div>
 
+                                                            <CardHeader className="pb-2">
+                                                                <CardTitle className="flex items-center gap-2 text-lg">
+                                                                    <span>我的身份：{myRole}</span>
+                                                                </CardTitle>
+                                                            </CardHeader>
+                                                            <CardContent className="space-y-4">
+                                                                <div className="flex items-center gap-4 text-sm">
+                                                                    <div className={`flex items-center gap-1.5 ${myAlive ? "text-green-500" : "text-red-500"}`}>
+                                                                        {myAlive ? <Heart className="w-4 h-4" /> : <HeartCrack className="w-4 h-4" />}
+                                                                        <span>{myAlive ? "存活" : "已死亡"}</span>
+                                                                    </div>
+                                                                    {myMuted && (
+                                                                        <div className="flex items-center gap-1.5 text-yellow-500">
+                                                                            <MessageSquare className="w-4 h-4" />
+                                                                            <span>被禁言</span>
+                                                                        </div>
+                                                                    )}
+                                                                    {myRole === "医生" && (
+                                                                        <div className="flex items-center gap-1.5 text-blue-400">
+                                                                            <GiDoctorFace className="w-4 h-4" />
+                                                                            <span>空针: {myFlowerPlayer?.needleCount || 0}/2</span>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+
+                                                                {/* 行动区域 */}
                                                                 {flowerPhase === "night_actions" ? (
-                                                                    <div className="space-y-2">
-                                                                        {myAlive && (
-                                                                            <>
-                                                                                <Button
-                                                                                    variant="outline"
-                                                                                    className={`w-full justify-start ${isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}`}
-                                                                                    onClick={() => setNightActionDrawerOpen(true)}
-                                                                                >
-                                                                                    {nightActionSelections[myRole] ? `已选择：座位 ${nightActionSelections[myRole]}` : "选择行动目标"}
-                                                                                </Button>
-                                                                            </>
-                                                                        )}
+                                                                    <div className="space-y-3 pt-2 border-t border-white/10">
+                                                                        <div className="flex items-center justify-between">
+                                                                            <span className="text-sm font-medium opacity-80">夜晚行动</span>
+                                                                            {myAlive && (
+                                                                                <span className="text-xs opacity-60">
+                                                                                    {nightActionSelections[myRole!] ? "已选定目标" : "等待行动"}
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
 
-                                                                        {isHost && (
+                                                                        {myAlive ? (
                                                                             <Button
-                                                                                variant="outline"
-                                                                                className={`w-full ${isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}`}
-                                                                                onClick={handleResolveNight}
-                                                                                disabled={flowerPhase !== "night_actions"}
+                                                                                variant={nightActionSelections[myRole!] ? "secondary" : "default"}
+                                                                                className={`w-full h-12 text-base font-medium shadow-lg transition-all ${isNight
+                                                                                    ? "bg-blue-600 hover:bg-blue-500 text-white border-none"
+                                                                                    : ""
+                                                                                    }`}
+                                                                                onClick={() => setNightActionDrawerOpen(true)}
                                                                             >
-                                                                                结算夜晚
+                                                                                {nightActionSelections[myRole!] ? (
+                                                                                    <>
+                                                                                        <span className="mr-2">目标：座位 {nightActionSelections[myRole!]}</span>
+                                                                                    </>
+                                                                                ) : (
+                                                                                    <>
+                                                                                        选择目标
+                                                                                    </>
+                                                                                )}
                                                                             </Button>
+                                                                        ) : (
+                                                                            <div className="p-3 rounded bg-black/20 text-center text-sm text-white/50">
+                                                                                你已死亡，无法执行行动
+                                                                            </div>
                                                                         )}
                                                                     </div>
                                                                 ) : flowerPhase === "day_vote" ? (
-                                                                    <Card className={themeClass}>
-                                                                        <CardHeader>
-                                                                            <CardTitle>白天投票</CardTitle>
-                                                                        </CardHeader>
-                                                                        <CardContent className="space-y-3">
-                                                                            {myAlive && !myMuted ? (
-                                                                                <>
-                                                                                    <Button
-                                                                                        variant="outline"
-                                                                                        className="w-full justify-start"
-                                                                                        onClick={() => setDayVoteDrawerOpen(true)}
-                                                                                    >
-                                                                                        {dayVoteSelection ? `已选择：座位 ${dayVoteSelection}` : "选择投票目标"}
-                                                                                    </Button>
-                                                                                </>
-                                                                            ) : (
-                                                                                <div className="text-sm text-destructive">
-                                                                                    {!myAlive ? "你已死亡，无法投票。" : "你被禁言，无法投票。"}
-                                                                                </div>
+                                                                    <div className="space-y-3 pt-2 border-t border-white/10">
+                                                                        <div className="flex items-center justify-between">
+                                                                            <span className="text-sm font-medium opacity-80">白天投票</span>
+                                                                            {myAlive && !myMuted && (
+                                                                                <span className="text-xs opacity-60">
+                                                                                    {dayVoteSelection ? "已选定票型" : "等待投票"}
+                                                                                </span>
                                                                             )}
+                                                                        </div>
 
-                                                                            {isHost && (
-                                                                                <Button
-                                                                                    variant="outline"
-                                                                                    onClick={handleResolveDayVote}
-                                                                                    disabled={flowerPhase !== "day_vote"}
-                                                                                    className="w-full"
-                                                                                >
-                                                                                    结算投票
-                                                                                </Button>
-                                                                            )}
-                                                                        </CardContent>
-                                                                    </Card>
+                                                                        {myAlive && !myMuted ? (
+                                                                            <Button
+                                                                                variant={dayVoteSelection ? "secondary" : "default"}
+                                                                                className="w-full h-12 text-base font-medium shadow-lg"
+                                                                                onClick={() => setDayVoteDrawerOpen(true)}
+                                                                            >
+                                                                                {dayVoteSelection ? (
+                                                                                    <>
+                                                                                        <span className="mr-2">投票给：座位 {dayVoteSelection}</span>
+                                                                                    </>
+                                                                                ) : (
+                                                                                    <>
+                                                                                        投票
+                                                                                    </>
+                                                                                )}
+                                                                            </Button>
+                                                                        ) : (
+                                                                            <div className="p-3 rounded bg-black/20 text-center text-sm text-destructive/80">
+                                                                                {!myAlive ? "你已死亡，无法投票" : "你被禁言，无法投票"}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
                                                                 ) : (
-                                                                    <div className="text-xs text-gray-500">当前阶段无需提交行动。</div>
-                                                                )}
-                                                            </div>
-                                                        )}
-
-                                                        {/* 结算结果显示 */}
-                                                        {showDaySummary && (
-                                                            <div className={`p-3 border rounded space-y-2 ${isNight ? "border-white/20" : ""}`}>
-                                                                <div className={`font-medium ${isNight ? "text-white" : ""}`}>白天结算</div>
-                                                                <div className={`text-sm ${mutedTextClass}`}>
-                                                                    处决：{latestDaySummary.executionText || "无人被处决"}
-                                                                </div>
-                                                                {latestDaySummary.votesText && (
-                                                                    <div className={`text-sm ${mutedTextClass}`}>
-                                                                        票型：{latestDaySummary.votesText}
+                                                                    <div className="pt-4 pb-2 text-center text-sm opacity-50">
+                                                                        当前阶段无需操作
                                                                     </div>
                                                                 )}
-                                                            </div>
+                                                            </CardContent>
+                                                        </Card>
+
+                                                        {/* 2. 警察验人记录 (仅警察可见) */}
+                                                        {myRole === "警察" && (
+                                                            <Card className={themeClass}>
+                                                                <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
+                                                                    {myRole && RoleIcon && <RoleIcon myRole="警察" />}
+                                                                </div>
+                                                                <CardHeader className="pb-2">
+                                                                    <CardTitle className="text-base flex items-center gap-2">
+                                                                        验人记录本
+                                                                    </CardTitle>
+                                                                </CardHeader>
+                                                                <CardContent className="space-y-2">
+                                                                    {(() => {
+                                                                        // Parse logs for police history
+                                                                        const history: { target: string, result: string, type: 'bad' | 'good' | 'unknown' }[] = [];
+                                                                        const logs = flowerSnapshot?.logs || [];
+                                                                        // Regex to match police logs
+                                                                        const badRegex = /警察验出座位 (\d+) 为坏特殊/;
+                                                                        const goodRegex = /警察验出座位 (\d+) 非坏特殊/;
+                                                                        const unknownRegex = /警察无法验出座位 (\d+)/;
+
+                                                                        logs.forEach(log => {
+                                                                            let match = log.text.match(badRegex);
+                                                                            if (match) {
+                                                                                history.push({ target: match[1], result: "坏人特殊身份", type: 'bad' });
+                                                                                return;
+                                                                            }
+                                                                            match = log.text.match(goodRegex);
+                                                                            if (match) {
+                                                                                history.push({ target: match[1], result: "非坏人特殊身份", type: 'good' });
+                                                                                return;
+                                                                            }
+                                                                            match = log.text.match(unknownRegex);
+                                                                            if (match) {
+                                                                                history.push({ target: match[1], result: "未知 (被阻挡/死亡)", type: 'unknown' });
+                                                                                return;
+                                                                            }
+                                                                        });
+
+                                                                        if (history.length === 0) {
+                                                                            return <div className="text-sm opacity-50 text-center py-2">暂无验人记录</div>;
+                                                                        }
+
+                                                                        return (
+                                                                            <div className="space-y-2">
+                                                                                {history.map((record, idx) => (
+                                                                                    <div key={idx} className={`flex items-center justify-between p-2 rounded border ${isNight ? "bg-white/5 border-white/10" : "bg-black/5 border-black/5"
+                                                                                        }`}>
+                                                                                        <div className="flex items-center gap-2">
+                                                                                            <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-xs font-bold">
+                                                                                                {record.target}
+                                                                                            </div>
+                                                                                            <span className="text-sm">座位 {record.target}</span>
+                                                                                        </div>
+                                                                                        <Badge variant={record.type === 'bad' ? "destructive" : record.type === 'good' ? "default" : "outline"}
+                                                                                            className={record.type === 'good' ? "bg-green-600 hover:bg-green-700" : ""}>
+                                                                                            {record.result}
+                                                                                        </Badge>
+                                                                                    </div>
+                                                                                ))}
+                                                                            </div>
+                                                                        );
+                                                                    })()}
+                                                                </CardContent>
+                                                            </Card>
+                                                        )}
+
+                                                        {/* 3. 房主控制台 */}
+                                                        {isHost && (flowerPhase === "night_actions" || flowerPhase === "day_vote") && (
+                                                            <Card className={`${themeClass} border-yellow-500/30`}>
+                                                                <CardHeader className="pb-2">
+                                                                    <CardTitle className="text-base flex items-center gap-2 text-yellow-500">
+                                                                        <Crown className="w-4 h-4" />
+                                                                        房主控制台
+                                                                    </CardTitle>
+                                                                </CardHeader>
+                                                                <CardContent>
+                                                                    {flowerPhase === "night_actions" && (
+                                                                        <Button
+                                                                            variant="outline"
+                                                                            className={`w-full ${isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}`}
+                                                                            onClick={handleResolveNight}
+                                                                        >
+                                                                            <Moon className="w-4 h-4 mr-2" />
+                                                                            结算夜晚 (进入白天)
+                                                                        </Button>
+                                                                    )}
+                                                                    {flowerPhase === "day_vote" && (
+                                                                        <Button
+                                                                            variant="outline"
+                                                                            onClick={handleResolveDayVote}
+                                                                            className="w-full"
+                                                                        >
+                                                                            <Sun className="w-4 h-4 mr-2" />
+                                                                            结算投票 (公布结果)
+                                                                        </Button>
+                                                                    )}
+                                                                </CardContent>
+                                                            </Card>
+                                                        )}
+
+                                                        {/* 4. 结算结果显示 (保留原有逻辑，美化样式) */}
+                                                        {showDaySummary && (
+                                                            <Card className={themeClass}>
+                                                                <CardHeader className="pb-2">
+                                                                    <CardTitle className="text-base">白天结算报告</CardTitle>
+                                                                </CardHeader>
+                                                                <CardContent className="space-y-2 text-sm">
+                                                                    <div className="flex justify-between border-b border-white/10 pb-1">
+                                                                        <span className="opacity-70">处决结果</span>
+                                                                        <span className="font-medium">{latestDaySummary.executionText || "无人被处决"}</span>
+                                                                    </div>
+                                                                    {latestDaySummary.votesText && (
+                                                                        <div>
+                                                                            <div className="opacity-70 mb-1">票型详情</div>
+                                                                            <div className="p-2 rounded bg-black/10 text-xs leading-relaxed">
+                                                                                {latestDaySummary.votesText}
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+                                                                </CardContent>
+                                                            </Card>
                                                         )}
 
                                                         {showNightSummary && flowerSnapshot?.night?.result && (
-                                                            <div className={`p-3 border rounded space-y-2 ${isNight ? "border-white/20" : ""}`}>
-                                                                <div className={`font-medium ${isNight ? "text-white" : ""}`}>夜晚结算</div>
-                                                                <div className={`text-sm ${mutedTextClass}`}>
-                                                                    死亡：
-                                                                    {flowerSnapshot.night.result.deaths.length === 0
-                                                                        ? " 无"
-                                                                        : flowerSnapshot.night.result.deaths
-                                                                            .map(d => `座位 ${d.seat}`)
-                                                                            .join("、")}
-                                                                </div>
-                                                                <div className={`text-sm ${mutedTextClass}`}>
-                                                                    禁言：
-                                                                    {flowerSnapshot.night.result.mutedSeats.length === 0
-                                                                        ? " 无"
-                                                                        : flowerSnapshot.night.result.mutedSeats.map(seat => `座位 ${seat}`).join("、")}
-                                                                </div>
-                                                            </div>
+                                                            <Card className={themeClass}>
+                                                                <CardHeader className="pb-2">
+                                                                    <CardTitle className="text-base">夜晚结算报告</CardTitle>
+                                                                </CardHeader>
+                                                                <CardContent className="space-y-2 text-sm">
+                                                                    <div className="flex justify-between border-b border-white/10 pb-1">
+                                                                        <span className="opacity-70">死亡名单</span>
+                                                                        <span className="font-medium text-red-400">
+                                                                            {flowerSnapshot.night.result.deaths.length === 0
+                                                                                ? "平安夜"
+                                                                                : flowerSnapshot.night.result.deaths
+                                                                                    .map(d => `${d.seat}号`)
+                                                                                    .join("、")}
+                                                                        </span>
+                                                                    </div>
+                                                                    <div className="flex justify-between">
+                                                                        <span className="opacity-70">被禁言</span>
+                                                                        <span className="font-medium">
+                                                                            {flowerSnapshot.night.result.mutedSeats.length === 0
+                                                                                ? "无"
+                                                                                : flowerSnapshot.night.result.mutedSeats.map(seat => `${seat}号`).join("、")}
+                                                                        </span>
+                                                                    </div>
+                                                                </CardContent>
+                                                            </Card>
                                                         )}
                                                     </div>
                                                 )}

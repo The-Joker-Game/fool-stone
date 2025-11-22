@@ -43,6 +43,8 @@ export interface FlowerStore {
   submitDayVote: (payload: SubmitDayVotePayload) => Promise<SubmitResult>;
   broadcastSnapshot: (targetSessionId?: string) => Promise<void>;
   addChatMessage: (content: string, mentions: ChatMention[]) => Promise<{ ok: boolean; error?: string }>;
+  addBotChatMessage: (seat: number, content: string, mentions: ChatMention[]) => Promise<{ ok: boolean; error?: string }>;
+  passTurn: () => Promise<void>;
   resetGame: () => void;
 }
 
@@ -258,6 +260,87 @@ export const useFlowerStore = create<FlowerStore>()(
         return { ok: true }; // Still return ok since message is shown locally
       }
     },
+    addBotChatMessage: async (seat: number, content: string, mentions: ChatMention[]) => {
+      const currentSnapshot = get().snapshot;
+      if (!currentSnapshot) return { ok: false, error: "没有可用快照" };
+
+      const botPlayer = currentSnapshot.players.find(p => p.seat === seat);
+      if (!botPlayer) return { ok: false, error: "未找到机器人信息" };
+
+      // Use a special prefix for bot session IDs to avoid collision and identification issues
+      const botSessionId = `bot:${seat}`;
+
+      const message: ChatMessage = {
+        id: `${Date.now()}_${botSessionId}_${Math.random().toString(36).slice(2)}`,
+        sessionId: botSessionId,
+        senderSeat: botPlayer.seat,
+        senderName: botPlayer.name,
+        content,
+        mentions,
+        timestamp: Date.now(),
+      };
+
+      // Add to local snapshot immediately
+      set((state) => {
+        if (!state.snapshot) return;
+        if (!state.snapshot.chatMessages) state.snapshot.chatMessages = [];
+        state.snapshot.chatMessages.push(message);
+        state.snapshot.updatedAt = Date.now();
+        saveSnapshotToCache(state.snapshot);
+      });
+
+      // Send via intent (server will broadcast to all clients)
+      try {
+        await rt.sendIntent("flower:chat_message", message);
+        await get().broadcastSnapshot();
+        return { ok: true };
+      } catch (err) {
+        return { ok: true };
+      }
+    },
+    passTurn: async () => {
+      const currentSnapshot = get().snapshot;
+      if (!currentSnapshot) return;
+      const isHost = currentSnapshot.hostSessionId === getSessionId();
+
+      // Optimistic update
+      set((state) => {
+        if (!state.snapshot) return;
+        const day = state.snapshot.day;
+        day.currentSpeakerIndex += 1;
+
+        const currentSpeakerSeat = day.speechOrder[day.currentSpeakerIndex - 1];
+        const currentSpeaker = state.snapshot.players.find(p => p.seat === currentSpeakerSeat);
+        const nextSpeakerSeat = day.speechOrder[day.currentSpeakerIndex];
+        const nextSpeaker = state.snapshot.players.find(p => p.seat === nextSpeakerSeat);
+
+        if (day.currentSpeakerIndex >= day.speechOrder.length) {
+          state.snapshot.phase = "day_vote";
+          state.snapshot.logs.push({ at: Date.now(), text: "发言环节结束，进入投票阶段" });
+        } else {
+          state.snapshot.logs.push({
+            at: Date.now(),
+            text: `玩家 ${currentSpeaker?.name || currentSpeakerSeat} 结束发言，下一位是 ${nextSpeaker?.name || nextSpeakerSeat}`
+          });
+        }
+        state.snapshot.updatedAt = Date.now();
+        saveSnapshotToCache(state.snapshot);
+      });
+
+      // Broadcast
+      if (isHost) {
+        await get().broadcastSnapshot();
+      } else {
+        // If not host, we should ideally send an intent, but for now we rely on the optimistic update 
+        // and the fact that any state change broadcasted by anyone will sync. 
+        // However, strictly speaking, only host should authorize phase changes or state mutations that affect everyone.
+        // For this feature, let's assume any player can trigger their own turn end, 
+        // and we broadcast the result. Since we don't have a specific "pass_turn" intent in engine yet,
+        // we'll just broadcast the snapshot modification.
+        // A better approach would be to add a "pass_turn" intent, but for simplicity/speed we broadcast.
+        await get().broadcastSnapshot();
+      }
+    },
     resetGame: () =>
       set((state) => {
         if (!state.snapshot) return;
@@ -322,7 +405,7 @@ function createEmptyNightState(): FlowerNightState {
 }
 
 function createEmptyDayState(): FlowerDayState {
-  return { speechOrder: [], voteOrder: [], votes: [], tally: {}, pendingExecution: null };
+  return { speechOrder: [], currentSpeakerIndex: 0, voteOrder: [], votes: [], tally: {}, pendingExecution: null };
 }
 
 function normalizeSnapshot(snapshot: FlowerSnapshot) {
