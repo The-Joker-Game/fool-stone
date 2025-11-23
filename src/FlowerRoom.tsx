@@ -226,7 +226,6 @@ export default function FlowerRoom() {
     const [dayVoteDrawerOpen, setDayVoteDrawerOpen] = useState(false);
     const [nightActionDrawerOpen, setNightActionDrawerOpen] = useState(false);
 
-    const [notificationCountdown, setNotificationCountdown] = useState<number>(0);
     const [notificationType, setNotificationType] = useState<'vote' | 'night' | null>(null);
 
     const [activeTab, setActiveTab] = useState<TabId>("players");
@@ -300,27 +299,53 @@ export default function FlowerRoom() {
         return ["players", "chat", "actions"];
     }, [roomCode, flowerPhase]);
 
+    const [phaseDeadline, setPhaseDeadline] = useState<number | null>(null);
+    const [timeLeft, setTimeLeft] = useState(0);
+
     // —— Notification Logic ——
+    // 1. Set deadline when phase changes
     useEffect(() => {
-        let timer: NodeJS.Timeout;
-        if (flowerPhase === 'day_vote') {
-            setNotificationType('vote');
-            setNotificationCountdown(30);
-            timer = setInterval(() => {
-                setNotificationCountdown(prev => Math.max(0, prev - 1));
-            }, 1000);
-        } else if (flowerPhase === 'night_actions') {
-            setNotificationType('night');
-            setNotificationCountdown(30);
-            timer = setInterval(() => {
-                setNotificationCountdown(prev => Math.max(0, prev - 1));
-            }, 1000);
+        if (flowerPhase === 'day_vote' || flowerPhase === 'night_actions') {
+            if (!roomCode || !flowerSnapshot) return;
+
+            const key = `flower-timer-${roomCode}-${flowerSnapshot.dayCount}-${flowerPhase}`;
+            const saved = sessionStorage.getItem(key);
+
+            let deadline: number;
+            if (saved) {
+                deadline = parseInt(saved, 10);
+            } else {
+                deadline = Date.now() + 30000;
+                sessionStorage.setItem(key, deadline.toString());
+            }
+
+            setPhaseDeadline(deadline);
+            setNotificationType(flowerPhase === 'day_vote' ? 'vote' : 'night');
         } else {
+            setPhaseDeadline(null);
             setNotificationType(null);
-            setNotificationCountdown(0);
         }
+    }, [flowerPhase, roomCode, flowerSnapshot?.dayCount]);
+
+    // 2. Update time left based on deadline
+    useEffect(() => {
+        if (!phaseDeadline) {
+            setTimeLeft(0);
+            return;
+        }
+
+        const updateTimer = () => {
+            const now = Date.now();
+            const remaining = Math.max(0, Math.ceil((phaseDeadline - now) / 1000));
+            setTimeLeft(remaining);
+        };
+
+        // Update immediately
+        updateTimer();
+
+        const timer = setInterval(updateTimer, 1000);
         return () => clearInterval(timer);
-    }, [flowerPhase]);
+    }, [phaseDeadline]);
 
     const isMyTurn = useMemo(() => {
         if (flowerPhase === 'day_discussion') {
@@ -964,11 +989,11 @@ export default function FlowerRoom() {
                                     </motion.div>
                                 ) : notificationType === 'vote' ? (
                                     <div className="font-medium text-red-500">
-                                        {notificationCountdown > 0 ? `投票倒计时: ${notificationCountdown}s` : "倒计时结束"}
+                                        {timeLeft > 0 ? `投票倒计时: ${timeLeft}s` : "倒计时结束"}
                                     </div>
                                 ) : notificationType === 'night' ? (
                                     <div className="font-medium text-red-500">
-                                        {notificationCountdown > 0 ? `黑夜倒计时: ${notificationCountdown}s` : "倒计时结束"}
+                                        {timeLeft > 0 ? `黑夜倒计时: ${timeLeft}s` : "倒计时结束"}
                                     </div>
                                 ) : (
                                     <div className={`text-sm ${isNight ? "text-white/30" : "text-black/50"}`}>

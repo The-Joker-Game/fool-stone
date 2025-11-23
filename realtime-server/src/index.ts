@@ -338,7 +338,10 @@ io.on("connection", (socket: Socket) => {
           if (players[seat - 1]) {
             players[seat - 1].name = me.name;
             players[seat - 1].sessionId = me.sessionId;
-            players[seat - 1].isAlive = true;
+            // 修复：只有在大厅阶段才重置存活状态，避免游戏进行中重连导致“复活”
+            if (room.snapshot.phase === "lobby") {
+              players[seat - 1].isAlive = true;
+            }
             room.snapshot.updatedAt = Date.now();
           }
         }
