@@ -1,13 +1,6 @@
 // src/components/JoinRoomDialog.tsx
-import { useState } from "react";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
+import { useState, useCallback } from "react";
+import { AppDialog } from "./AppDialog";
 import { Button } from "@/components/ui/button";
 import {
     InputOTP,
@@ -15,131 +8,113 @@ import {
     InputOTPSlot,
 } from "@/components/ui/input-otp";
 
-interface JoinRoomDialogProps {
-    open: boolean;
-    onOpenChange: (open: boolean) => void;
-    defaultValue?: string;
-    onConfirm: (roomCode: string) => void;
-    onCancel?: () => void;
-    isNight?: boolean;
-}
 
-export function JoinRoomDialog({
-    open,
-    onOpenChange,
-    defaultValue = "",
+
+function JoinRoomContent({
+    defaultValue,
     onConfirm,
     onCancel,
-    isNight = false,
-}: JoinRoomDialogProps) {
+    isNight
+}: {
+    defaultValue: string,
+    onConfirm: (val: string) => void,
+    onCancel: () => void,
+    isNight: boolean
+}) {
     const [value, setValue] = useState(defaultValue);
-
-    const handleConfirm = () => {
-        if (value.length === 4) {
-            onConfirm(value);
-            onOpenChange(false);
-        }
-    };
-
-    const handleCancel = () => {
-        onCancel?.();
-        onOpenChange(false);
-    };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === "Enter" && value.length === 4) {
-            handleConfirm();
+            onConfirm(value);
         }
     };
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className={`sm:max-w-md ${isNight ? "backdrop-blur-sm bg-gray-900/80 text-white border-white/20" : "backdrop-blur-sm bg-white/80 text-slate-900 border-white/40"}`}>
-                <DialogHeader>
-                    <DialogTitle>加入房间</DialogTitle>
-                    <DialogDescription>
-                        请输入四位房间号
-                    </DialogDescription>
-                </DialogHeader>
-                <div className="flex flex-col items-center gap-4 py-4">
-                    <InputOTP
-                        maxLength={4}
-                        value={value}
-                        onChange={setValue}
-                        onKeyDown={handleKeyDown}
-                        autoFocus
-                    >
-                        <InputOTPGroup>
-                            <InputOTPSlot index={0} />
-                            <InputOTPSlot index={1} />
-                            <InputOTPSlot index={2} />
-                            <InputOTPSlot index={3} />
-                        </InputOTPGroup>
-                    </InputOTP>
-                </div>
-                <DialogFooter className="sm:justify-between flex-col gap-2">
-                    <Button
-                        type="button"
-                        variant="outline"
-                        className={isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}
-                        onClick={handleCancel}
-                    >
-                        取消
-                    </Button>
-                    <Button
-                        type="button"
-                        className={isNight ? "bg-white text-black hover:bg-white/90" : ""}
-                        onClick={handleConfirm}
-                        disabled={value.length !== 4}
-                    >
-                        加入房间
-                    </Button>
-                </DialogFooter>
-            </DialogContent>
-        </Dialog>
+        <div className="flex flex-col items-center gap-4 py-4">
+            <InputOTP
+                maxLength={4}
+                value={value}
+                onChange={setValue}
+                onKeyDown={handleKeyDown}
+                autoFocus
+            >
+                <InputOTPGroup>
+                    <InputOTPSlot index={0} />
+                    <InputOTPSlot index={1} />
+                    <InputOTPSlot index={2} />
+                    <InputOTPSlot index={3} />
+                </InputOTPGroup>
+            </InputOTP>
+            <div className="flex flex-col gap-2 w-full">
+                <Button
+                    type="button"
+                    className={isNight ? "bg-white text-black hover:bg-white/90 w-full" : "w-full"}
+                    onClick={() => onConfirm(value)}
+                    disabled={value.length !== 4}
+                >
+                    加入房间
+                </Button>
+                <Button
+                    type="button"
+                    variant="outline"
+                    className={(isNight ? "bg-transparent border-white/20 text-white hover:bg-white/10 hover:text-white" : "bg-white hover:bg-slate-100 text-slate-900 border-slate-200") + " w-full"}
+                    onClick={onCancel}
+                >
+                    取消
+                </Button>
+            </div>
+        </div>
     );
 }
 
-// Hook for using join room dialog
 export function useJoinRoomDialog(isNight: boolean = false) {
     const [isOpen, setIsOpen] = useState(false);
     const [defaultValue, setDefaultValue] = useState("");
     const [resolvePromise, setResolvePromise] = useState<((value: string | null) => void) | null>(null);
 
-    const showDialog = (initialValue: string = ""): Promise<string | null> => {
+    const showDialog = useCallback((initialValue: string = ""): Promise<string | null> => {
         setDefaultValue(initialValue);
         setIsOpen(true);
         return new Promise<string | null>((resolve) => {
             setResolvePromise(() => resolve);
         });
-    };
+    }, []);
 
-    const handleConfirm = (roomCode: string) => {
+    const handleConfirm = useCallback((roomCode: string) => {
         if (resolvePromise) {
             resolvePromise(roomCode);
             setResolvePromise(null);
         }
         setIsOpen(false);
-    };
+    }, [resolvePromise]);
 
-    const handleCancel = () => {
+    const handleCancel = useCallback(() => {
         if (resolvePromise) {
             resolvePromise(null);
             setResolvePromise(null);
         }
         setIsOpen(false);
-    };
+    }, [resolvePromise]);
 
-    const JoinRoomDialogComponent = () => (
-        <JoinRoomDialog
+    const JoinRoomDialogElement = (
+        <AppDialog
             open={isOpen}
-            onOpenChange={setIsOpen}
-            defaultValue={defaultValue}
-            onConfirm={handleConfirm}
-            onCancel={handleCancel}
+            onOpenChange={(open) => {
+                if (!open) handleCancel();
+                setIsOpen(open);
+            }}
+            title="加入房间"
+            description="请输入四位房间号"
             isNight={isNight}
-        />
+        >
+            <JoinRoomContent
+                defaultValue={defaultValue}
+                onConfirm={handleConfirm}
+                onCancel={handleCancel}
+                isNight={isNight}
+            />
+        </AppDialog>
     );
 
-    return { showJoinRoomDialog: showDialog, JoinRoomDialogComponent };
+    return { showJoinRoomDialog: showDialog, JoinRoomDialogElement };
 }

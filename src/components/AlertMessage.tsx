@@ -1,14 +1,7 @@
 // src/components/AlertMessage.tsx
 import { useState, useCallback } from "react";
-import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { AppDialog } from "./AppDialog";
+import { Button } from "@/components/ui/button";
 
 interface AlertOptions {
     title?: string;
@@ -36,29 +29,29 @@ export function useAlert() {
         });
     }, []);
 
-    const handleClose = () => {
+    const handleClose = useCallback(() => {
         setIsOpen(false);
         if (resolvePromise) {
             resolvePromise();
             setResolvePromise(null);
         }
-    };
+    }, [resolvePromise]);
 
-    const AlertDialogComponent = () => (
-        <AlertDialog open={isOpen} onOpenChange={setIsOpen}>
-            <AlertDialogContent>
-                <AlertDialogHeader>
-                    <AlertDialogTitle>{config.title || "提示"}</AlertDialogTitle>
-                    <AlertDialogDescription>{config.description}</AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                    <AlertDialogAction onClick={handleClose}>
+    const AlertDialogElement = (
+        <AppDialog
+            open={isOpen}
+            onOpenChange={setIsOpen}
+            title={config.title || "提示"}
+            description={config.description}
+            footer={
+                <div className="flex flex-col w-full">
+                    <Button onClick={handleClose} className="w-full">
                         {config.confirmText || "确定"}
-                    </AlertDialogAction>
-                </AlertDialogFooter>
-            </AlertDialogContent>
-        </AlertDialog>
+                    </Button>
+                </div>
+            }
+        />
     );
 
-    return { alert, AlertDialogComponent };
+    return { alert, AlertDialogElement };
 }

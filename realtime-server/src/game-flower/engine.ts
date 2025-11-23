@@ -7,6 +7,7 @@ import type {
   FlowerNightState,
   FlowerDayState,
 } from "./types.js";
+import { updateBotGuesses } from "./bot-state.js";
 
 export const FLOWER_ROLES: FlowerRole[] = [
   "花蝴蝶",
@@ -90,6 +91,7 @@ export function initFlowerRoom(roomCode: string, players: InitPlayer[]): FlowerS
     players: playerStates,
     night: emptyNightState(),
     day: emptyDayState(),
+    history: [],
     logs: [{ at: now, text: "花蝴蝶房间创建，等待开始" }],
     chatMessages: [],
     pendingAction: null,
@@ -149,8 +151,13 @@ export function assignFlowerRoles(snapshot: FlowerSnapshot): AssignResult {
   snapshot.phase = "night_actions";
   snapshot.night = { submittedActions: [], result: null };
   snapshot.day = { speechOrder: [], currentSpeakerIndex: 0, voteOrder: [], votes: [], tally: {}, pendingExecution: null };
+  snapshot.history = [];
   snapshot.logs.push({ at: now, text: "🌙 花蝴蝶对局开始，身份已分发" });
   snapshot.updatedAt = now;
+
+  // Initialize bot guesses for Day 1
+  updateBotGuesses(snapshot.roomCode, snapshot.dayCount, snapshot.players);
+
   return { ok: true };
 }
 
@@ -207,7 +214,14 @@ export function resolveNight(snapshot: FlowerSnapshot): ResolveResult {
 
 export function submitDayVote(snapshot: FlowerSnapshot, payload: SubmitDayVotePayload): VoteResult {
   if (!snapshot) return { ok: false, error: "没有可用的快照" };
-  if (snapshot.phase !== "day_vote" && snapshot.phase !== "day_discussion") return { ok: false, error: "当前阶段无法投票" };
+  if (snapshot.phase !== "day_vote" && snapshot.phase !== "day_discussion" && snapshot.phase !== "day_last_words") return { ok: false, error: "当前阶段无法投票" };
+
+  // Special check for day_last_words: only allow voting if it's the "morning" last words (next phase is discussion)
+  if (snapshot.phase === "day_last_words") {
+    if (snapshot.day.lastWords?.nextPhase !== "day_discussion") {
+      return { ok: false, error: "当前遗言阶段无法投票" };
+    }
+  }
   const voter = snapshot.players.find((p) => p.seat === payload.voterSeat);
   const target = snapshot.players.find((p) => p.seat === payload.targetSeat);
   if (!voter || !target) return { ok: false, error: "座位不存在" };
@@ -280,18 +294,61 @@ export function resolveDayVote(snapshot: FlowerSnapshot): ResolveResult {
   snapshot.day.pendingExecution = executedSeat
     ? { seat: executedSeat, isBadSpecial: !!snapshot.players.find((p) => p.seat === executedSeat)?.flags?.isBadSpecial }
     : null;
+
+  // Update history with day results
+  // We look for the history record for the current dayCount
+  // Note: dayCount starts at 1.
+  // If we just finished night 1, we created a history record with dayCount 1.
+  // Now we are finishing day 1, so we update that same record.
+  const historyRecord = snapshot.history.find(h => h.dayCount === snapshot.dayCount);
+  if (historyRecord) {
+    historyRecord.day = {
+      votes: [...snapshot.day.votes],
+      execution: snapshot.day.pendingExecution
+    };
+  } else {
+    // Should not happen if logic is correct, but fallback just in case
+    // Maybe it's day 1 and we somehow missed night history? Unlikely in normal flow.
+    // Or maybe we just recovered from a crash?
+  }
+
   const dayResult = evaluateGameResult(snapshot);
   if (dayResult) {
     finalizeGame(snapshot, dayResult);
   } else {
+    // Increment day count when advancing to next night
+    snapshot.dayCount += 1;
     snapshot.day.votes = [];
     snapshot.day.tally = {};
     snapshot.players.forEach((p) => {
       p.hasVotedToday = false;
+      p.isMutedToday = false;  // Reset mute status when entering new night
     });
-    snapshot.phase = "night_actions";
-    snapshot.night.submittedActions = [];
-    snapshot.night.lastActions = [];
+
+    // Update bot guesses for the new day
+    updateBotGuesses(snapshot.roomCode, snapshot.dayCount, snapshot.players);
+
+    // Check for Last Words eligibility for the executed player
+    let hasLastWords = false;
+    if (executedSeat) {
+      const executedPlayer = snapshot.players.find(p => p.seat === executedSeat);
+      if (executedPlayer && !executedPlayer.flags?.isBadSpecial && !executedPlayer.isMutedToday) {
+        hasLastWords = true;
+        snapshot.phase = "day_last_words";
+        snapshot.day.lastWords = {
+          queue: [executedSeat],
+          nextPhase: "night_actions"
+        };
+        snapshot.day.currentSpeakerIndex = 0; // Reuse for queue index
+        snapshot.logs.push({ at: Date.now(), text: `座位 ${executedSeat} 发表遗言` });
+      }
+    }
+
+    if (!hasLastWords) {
+      snapshot.phase = "night_actions";
+      snapshot.night.submittedActions = [];
+      snapshot.night.lastActions = [];
+    }
   }
   snapshot.updatedAt = Date.now();
   return { ok: true };
@@ -612,6 +669,16 @@ function applyNightOutcome(snapshot: FlowerSnapshot, outcome: NightOutcome) {
     policeReports: outcome.policeReports,
     upgrades: outcome.upgrades,
   };
+
+  // Record history for this night
+  snapshot.history.push({
+    dayCount: snapshot.dayCount,
+    night: {
+      actions: snapshot.night.lastActions || [],
+      result: snapshot.night.result
+    }
+  });
+
   snapshot.night.submittedActions = [];
   snapshot.day.tally = Object.fromEntries(outcome.darkVotes.entries());
   snapshot.day.votes = [];
@@ -648,7 +715,25 @@ function applyNightOutcome(snapshot: FlowerSnapshot, outcome: NightOutcome) {
 
     snapshot.day.speechOrder = speechOrder.filter(seat => !outcome.mutedSeats.includes(seat));
     snapshot.day.currentSpeakerIndex = 0;
-    snapshot.phase = "day_discussion";
+
+    // Check for Night Death Last Words
+    const deadSeats = outcome.deaths.map(d => d.seat);
+    const lastWordsQueue = deadSeats.filter(seat => !outcome.mutedSeats.includes(seat));
+
+    if (lastWordsQueue.length > 0) {
+      snapshot.phase = "day_last_words";
+      snapshot.day.lastWords = {
+        queue: lastWordsQueue,
+        nextPhase: "day_discussion"
+      };
+      // We use currentSpeakerIndex to track position in the queue (which is just an array of seats)
+      // But wait, speechOrder is for discussion. lastWords.queue is for last words.
+      // We can reuse currentSpeakerIndex to index into lastWords.queue? Yes.
+      snapshot.day.currentSpeakerIndex = 0;
+      snapshot.logs.push({ at: now, text: "💀 昨晚死亡玩家发表遗言" });
+    } else {
+      snapshot.phase = "day_discussion";
+    }
   }
   outcome.logs.forEach((text) => snapshot.logs.push({ at: now, text }));
   handleRoleUpgrades(snapshot, outcome);
@@ -684,7 +769,49 @@ function promoteBadSpecial(snapshot: FlowerSnapshot): { seat: number; fromRole: 
 }
 
 export function passTurn(snapshot: FlowerSnapshot): { ok: boolean; error?: string } {
-  if (!snapshot || snapshot.phase !== "day_discussion") return { ok: false, error: "当前阶段无法过麦" };
+  if (!snapshot) return { ok: false, error: "没有可用的快照" };
+
+  if (snapshot.phase === "day_last_words") {
+    const lastWords = snapshot.day.lastWords;
+    if (!lastWords || !lastWords.queue || lastWords.queue.length === 0) {
+      // Should not happen, but recover
+      snapshot.phase = lastWords?.nextPhase || "day_discussion";
+      return { ok: true };
+    }
+
+    const nextIndex = snapshot.day.currentSpeakerIndex + 1;
+    if (nextIndex >= lastWords.queue.length) {
+      // All last words spoken
+      snapshot.phase = lastWords.nextPhase;
+      snapshot.day.currentSpeakerIndex = 0;
+      snapshot.day.lastWords = null; // Clear it
+
+      if (snapshot.phase === "night_actions") {
+        // If we transitioned to night, we need to reset night stuff if not already done?
+        // Actually resolveDayVote already did reset if it went straight to night.
+        // But if we went to last words, we didn't reset night actions yet?
+        // Let's check resolveDayVote.
+        // In resolveDayVote, we set snapshot.night.submittedActions = [] ONLY if !hasLastWords.
+        // So we need to do it here if we are transitioning to night.
+        snapshot.night.submittedActions = [];
+        snapshot.night.lastActions = [];
+        // Reset player states when entering new night
+        snapshot.players.forEach((p) => {
+          p.hasVotedToday = false;
+          p.isMutedToday = false;
+        });
+        snapshot.logs.push({ at: Date.now(), text: "🌙 进入夜晚" });
+      } else {
+        snapshot.logs.push({ at: Date.now(), text: "☀️ 遗言结束，进入白天讨论" });
+      }
+    } else {
+      snapshot.day.currentSpeakerIndex = nextIndex;
+    }
+    snapshot.updatedAt = Date.now();
+    return { ok: true };
+  }
+
+  if (snapshot.phase !== "day_discussion") return { ok: false, error: "当前阶段无法过麦" };
   const day = snapshot.day;
   if (!day.speechOrder || day.speechOrder.length === 0) return { ok: false, error: "没有发言顺序" };
 
@@ -709,6 +836,7 @@ export function resetFlowerGame(snapshot: FlowerSnapshot): { ok: boolean; error?
   snapshot.dayCount = 0;
   snapshot.night = emptyNightState();
   snapshot.day = emptyDayState();
+  snapshot.history = [];
   snapshot.pendingAction = null;
   snapshot.gameResult = null;
 

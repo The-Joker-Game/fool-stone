@@ -15,6 +15,7 @@ export type FlowerPhase =
   | "night_result"
   | "day_discussion"
   | "day_vote"
+  | "day_last_words"
   | "game_over";
 
 export type FlowerOutcome = "heal" | "emptyNeedle" | "blocked" | "kill" | "cop_bad" | "cop_good" | "cop_unknown";
@@ -52,6 +53,10 @@ export interface FlowerDayState {
   votes: FlowerVoteEntry[];
   tally: Record<number, number>;
   pendingExecution?: { seat: number; isBadSpecial: boolean } | null;
+  lastWords?: {
+    queue: number[];
+    nextPhase: FlowerPhase;
+  } | null;
 }
 export interface FlowerDayVoteResult {
   topSeats: number[];
@@ -111,6 +116,18 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+export interface FlowerHistoryRecord {
+  dayCount: number;
+  night: {
+    actions: FlowerNightAction[];
+    result: FlowerNightResult;
+  };
+  day?: {
+    votes: FlowerVoteEntry[];
+    execution: { seat: number; isBadSpecial: boolean } | null;
+  };
+}
+
 export interface FlowerSnapshot {
   engine: "flower";
   roomCode: string;
@@ -120,6 +137,7 @@ export interface FlowerSnapshot {
   players: FlowerPlayerState[];
   night: FlowerNightState;
   day: FlowerDayState;
+  history: FlowerHistoryRecord[];
   logs: FlowerLogEntry[];
   chatMessages: ChatMessage[];
   pendingAction?: { role: FlowerRole; seat: number } | null;

@@ -211,6 +211,7 @@ function normalizeSnapshot(snapshot: FlowerSnapshot) {
   if (!snapshot.day.tally) snapshot.day.tally = {};
   // 确保 chatMessages 字段存在
   if (!Array.isArray(snapshot.chatMessages)) snapshot.chatMessages = [];
+  if (!Array.isArray(snapshot.history)) snapshot.history = [];
 }
 
 function createEmptyPlayer(seat: number): FlowerPlayerState {
@@ -251,6 +252,7 @@ function createEmptySnapshot(roomCode: string, hostSessionId: string | null): Fl
     updatedAt: now,
     // 初始化聊天消息数组
     chatMessages: [],
+    history: [],
   };
 }
 
@@ -340,6 +342,9 @@ function mergeIncomingSnapshot(target: FlowerSnapshot, incoming: FlowerSnapshotI
 
     // 合并消息并按时间排序
     target.chatMessages = [...existingMessages, ...messagesToAdd].sort((a, b) => a.timestamp - b.timestamp);
+  }
+  if (Array.isArray(incoming.history)) {
+    target.history = incoming.history as FlowerSnapshot["history"];
   }
   if ("pendingAction" in incoming) {
     target.pendingAction = (incoming.pendingAction as FlowerSnapshot["pendingAction"]) ?? null;

@@ -11,8 +11,10 @@ import {
 import {
     getBotNightActionTarget,
     getBotVoteTarget,
-    generateBotSpeech
+    generateBotSpeech,
+    generateBotLastWords
 } from "./bot-logic.js";
+import { initBotMemory, getBotMemory } from "./bot-state.js";
 import type { FlowerSnapshot } from "./types.js";
 
 // Keep track of scheduled timeouts to avoid duplicates or memory leaks if room closes
@@ -39,6 +41,13 @@ export function checkAndScheduleBotActions(room: { code: string; snapshot: any }
     if (!room.snapshot || room.snapshot.engine !== "flower") return;
     const snapshot = room.snapshot as FlowerSnapshot;
     const roomCode = room.code;
+
+    // 0. Initialize Bot Memory if needed
+    snapshot.players.forEach(p => {
+        if (p.isBot && p.role && !getBotMemory(roomCode, p.seat)) {
+            initBotMemory(roomCode, p.seat, p.role, snapshot.players);
+        }
+    });
 
     // 1. Night Actions
     if (snapshot.phase === "night_actions") {
@@ -139,6 +148,68 @@ export function checkAndScheduleBotActions(room: { code: string; snapshot: any }
 
             }, delay);
             addTimeout(roomCode, t);
+        }
+    }
+
+    // 2.5 Day Last Words
+    if (snapshot.phase === "day_last_words") {
+        const lastWords = snapshot.day.lastWords;
+        if (lastWords && lastWords.queue.length > 0) {
+            const currentSpeakerSeat = lastWords.queue[snapshot.day.currentSpeakerIndex];
+            const currentSpeaker = snapshot.players.find(p => p.seat === currentSpeakerSeat);
+
+            if (currentSpeaker && currentSpeaker.isBot) { // Removed isAlive check as they are dead
+                // Schedule speech
+                const delay = Math.random() * 3000 + 2000; // 2-5s
+                const t = setTimeout(() => {
+                    if (!room.snapshot || room.snapshot.engine !== "flower") return;
+                    const currentSnap = room.snapshot as FlowerSnapshot;
+                    if (currentSnap.phase !== "day_last_words") return;
+
+                    // Verify it's still this bot's turn
+                    const freshLastWords = currentSnap.day.lastWords;
+                    if (!freshLastWords || freshLastWords.queue[currentSnap.day.currentSpeakerIndex] !== currentSpeakerSeat) return;
+
+                    // Generate speech
+                    const speech = generateBotLastWords(currentSnap, currentSpeakerSeat);
+
+                    // Add chat message
+                    const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+                    currentSnap.chatMessages.push({
+                        id: msgId,
+                        sessionId: "bot",
+                        senderSeat: currentSpeakerSeat,
+                        senderName: currentSpeaker.name,
+                        content: speech,
+                        mentions: [],
+                        timestamp: Date.now()
+                    });
+
+                    // Broadcast speech immediately
+                    io.to(roomCode).emit("state:full", { snapshot: currentSnap, from: "server", at: Date.now() });
+
+                    // Schedule pass turn after a short reading delay
+                    const passDelay = 2000;
+                    const t2 = setTimeout(() => {
+                        if (!room.snapshot || room.snapshot.engine !== "flower") return;
+                        const snapAfterSpeech = room.snapshot as FlowerSnapshot;
+                        if (snapAfterSpeech.phase !== "day_last_words") return;
+                        // Verify turn again
+                        if (snapAfterSpeech.day.lastWords?.queue[snapAfterSpeech.day.currentSpeakerIndex] !== currentSpeakerSeat) return;
+
+                        const res = passTurn(snapAfterSpeech);
+                        if (res.ok) {
+                            console.log(`[Bot] Seat ${currentSpeakerSeat} passed last words`);
+                            io.to(roomCode).emit("state:full", { snapshot: snapAfterSpeech, from: "server", at: Date.now() });
+                            // Recursive check for next bot
+                            checkAndScheduleBotActions(room, io);
+                        }
+                    }, passDelay);
+                    addTimeout(roomCode, t2);
+
+                }, delay);
+                addTimeout(roomCode, t);
+            }
         }
     }
 

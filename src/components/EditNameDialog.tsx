@@ -1,141 +1,115 @@
-import { useState, useEffect } from "react";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
+// src/components/EditNameDialog.tsx
+import { useState, useEffect, useCallback } from "react";
+import { AppDialog } from "./AppDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-interface EditNameDialogProps {
-    open: boolean;
-    onOpenChange: (open: boolean) => void;
-    defaultValue?: string;
-    onConfirm: (name: string) => void;
-    onCancel?: () => void;
-    isNight?: boolean;
-}
 
-export function EditNameDialog({
-    open,
-    onOpenChange,
-    defaultValue = "",
+
+function EditNameContent({
+    defaultValue,
     onConfirm,
     onCancel,
-    isNight = false,
-}: EditNameDialogProps) {
+    isNight
+}: {
+    defaultValue: string,
+    onConfirm: (val: string) => void,
+    onCancel: () => void,
+    isNight: boolean
+}) {
     const [value, setValue] = useState(defaultValue);
 
-    // Reset value when dialog opens with new default
+    // Reset value when defaultValue changes
     useEffect(() => {
-        if (open) {
-            setValue(defaultValue);
-        }
-    }, [open, defaultValue]);
-
-    const handleConfirm = () => {
-        if (value.trim()) {
-            onConfirm(value.trim());
-            onOpenChange(false);
-        }
-    };
-
-    const handleCancel = () => {
-        onCancel?.();
-        onOpenChange(false);
-    };
+        setValue(defaultValue);
+    }, [defaultValue]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === "Enter" && value.trim()) {
-            handleConfirm();
+            onConfirm(value.trim());
         }
     };
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className={`sm:max-w-md ${isNight ? "backdrop-blur-sm bg-gray-900/80 text-white border-white/20" : "backdrop-blur-sm bg-white/80 text-slate-900 border-white/40"}`}>
-                <DialogHeader>
-                    <DialogTitle>修改昵称</DialogTitle>
-                    <DialogDescription className={isNight ? "text-white/70" : ""}>
-                        请输入新的昵称
-                    </DialogDescription>
-                </DialogHeader>
-                <div className="py-4">
-                    <Input
-                        value={value}
-                        onChange={(e) => setValue(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        placeholder="请输入昵称"
-                        className={`text-lg h-12 ${isNight ? "bg-black/20 border-white/20 text-white placeholder:text-white/40" : ""}`}
-                        autoFocus
-                    />
-                </div>
-                <DialogFooter className="sm:justify-between flex-col gap-2">
-                    <Button
-                        type="button"
-                        variant="outline"
-                        className={isNight ? "bg-transparent text-white border-white/50 hover:bg-white/20 hover:text-white" : ""}
-                        onClick={handleCancel}
-                    >
-                        取消
-                    </Button>
-                    <Button
-                        type="button"
-                        className={isNight ? "bg-white text-black hover:bg-white/90" : ""}
-                        onClick={handleConfirm}
-                        disabled={!value.trim()}
-                    >
-                        确定
-                    </Button>
-                </DialogFooter>
-            </DialogContent>
-        </Dialog>
+        <div className="py-4">
+            <Input
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="请输入昵称"
+                className={`text-lg h-12 ${isNight ? "bg-black/20 border-white/20 text-white placeholder:text-white/40" : ""}`}
+                autoFocus
+            />
+            <div className="w-full flex flex-col gap-2 mt-4">
+                <Button
+                    type="button"
+                    className={isNight ? "bg-white text-black hover:bg-white/90 w-full" : "w-full"}
+                    onClick={() => onConfirm(value.trim())}
+                    disabled={!value.trim()}
+                >
+                    确定
+                </Button>
+                <Button
+                    type="button"
+                    variant="outline"
+                    className={(isNight ? "bg-transparent border-white/20 text-white hover:bg-white/10 hover:text-white" : "bg-white hover:bg-slate-100 text-slate-900 border-slate-200") + " w-full"}
+                    onClick={onCancel}
+                >
+                    取消
+                </Button>
+            </div>
+        </div>
     );
 }
 
-// Hook for using edit name dialog
 export function useEditNameDialog(isNight: boolean = false) {
     const [isOpen, setIsOpen] = useState(false);
     const [defaultValue, setDefaultValue] = useState("");
     const [resolvePromise, setResolvePromise] = useState<((value: string | null) => void) | null>(null);
 
-    const showDialog = (initialValue: string = ""): Promise<string | null> => {
+    const showDialog = useCallback((initialValue: string = ""): Promise<string | null> => {
         setDefaultValue(initialValue);
         setIsOpen(true);
         return new Promise<string | null>((resolve) => {
             setResolvePromise(() => resolve);
         });
-    };
+    }, []);
 
-    const handleConfirm = (name: string) => {
+    const handleConfirm = useCallback((name: string) => {
         if (resolvePromise) {
             resolvePromise(name);
             setResolvePromise(null);
         }
         setIsOpen(false);
-    };
+    }, [resolvePromise]);
 
-    const handleCancel = () => {
+    const handleCancel = useCallback(() => {
         if (resolvePromise) {
             resolvePromise(null);
             setResolvePromise(null);
         }
         setIsOpen(false);
-    };
+    }, [resolvePromise]);
 
-    const EditNameDialogComponent = () => (
-        <EditNameDialog
+    const EditNameDialogElement = (
+        <AppDialog
             open={isOpen}
-            onOpenChange={setIsOpen}
-            defaultValue={defaultValue}
-            onConfirm={handleConfirm}
-            onCancel={handleCancel}
+            onOpenChange={(open) => {
+                if (!open) handleCancel();
+                setIsOpen(open);
+            }}
+            title="修改昵称"
+            description="请输入新的昵称"
             isNight={isNight}
-        />
+        >
+            <EditNameContent
+                defaultValue={defaultValue}
+                onConfirm={handleConfirm}
+                onCancel={handleCancel}
+                isNight={isNight}
+            />
+        </AppDialog>
     );
 
-    return { showEditNameDialog: showDialog, EditNameDialogComponent };
+    return { showEditNameDialog: showDialog, EditNameDialogElement };
 }

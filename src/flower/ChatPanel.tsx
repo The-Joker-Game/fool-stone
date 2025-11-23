@@ -112,9 +112,10 @@ const SpeakingOrderHeader = ({
     mySessionId: string;
     onPassTurn?: () => void;
 }) => {
-    if (phase !== "day_discussion" && phase !== "day_vote") return null;
+    if (phase !== "day_discussion" && phase !== "day_vote" && phase !== "day_last_words") return null;
 
     const isVote = phase === "day_vote";
+    const isLastWords = phase === "day_last_words";
     const currentSpeaker = players.find(p => p.seat === currentSpeakerSeat);
     const isMyTurn = currentSpeaker?.sessionId === mySessionId;
 
@@ -154,7 +155,7 @@ const SpeakingOrderHeader = ({
                                             <span className="text-[10px] font-normal bg-orange-100 text-orange-700 px-1 rounded">#{currentSpeaker.seat}</span>
                                         </span>
                                         <span className="text-[10px] text-orange-600 font-medium">
-                                            {isMyTurn ? "轮到你了！" : "正在发言..."}
+                                            {isMyTurn ? "轮到你了！" : isLastWords ? "发表遗言..." : "正在发言..."}
                                         </span>
                                     </div>
                                 </>
@@ -527,6 +528,10 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
                         const isUnread = msg.timestamp > lastReadTimestamp;
                         const showUnreadDivider = isUnread && (idx === 0 || messages[idx - 1].timestamp <= lastReadTimestamp);
 
+                        // Dynamic name lookup
+                        const senderPlayer = players.find(p => p.sessionId === msg.sessionId);
+                        const displayName = senderPlayer ? cleanName(senderPlayer.name) : cleanName(msg.senderName);
+
                         return (
                             <div key={msg.id} className="space-y-2">
                                 {showUnreadDivider && (
@@ -550,7 +555,7 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
                                 <div className={cn("flex gap-3", isMe ? "flex-row-reverse" : "flex-row")}>
                                     {/* 头像 */}
                                     <div className="flex-shrink-0 flex flex-col justify-end">
-                                        <Avvvatars value={cleanName(msg.senderName)} size={36} style="shape" />
+                                        <Avvvatars value={displayName} size={36} style="shape" />
                                     </div>
 
                                     {/* 气泡主体 */}
@@ -560,7 +565,7 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
                                             "flex items-center gap-1 mb-1",
                                             isMe ? "mr-1 flex-row-reverse" : "ml-1 flex-row"
                                         )}>
-                                            <span className={cn("text-xs font-medium", isNight ? "text-white/70" : "text-gray-500")}>{cleanName(msg.senderName)}</span>
+                                            <span className={cn("text-xs font-medium", isNight ? "text-white/70" : "text-gray-500")}>{displayName}</span>
                                             <span className={cn("text-[10px] px-1 rounded", isNight ? "text-white/50 bg-white/10" : "text-gray-400 bg-gray-100")}>#{msg.senderSeat}</span>
                                         </div>
 
