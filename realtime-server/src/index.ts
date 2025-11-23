@@ -102,7 +102,8 @@ function scheduleDisconnectCleanup(room: Room) {
 function getActiveUserCount(room: Room) {
   let count = 0;
   for (const user of room.users.values()) {
-    if (!user.isDisconnected) count++;
+    // 只统计真人玩家（排除机器人）
+    if (!user.isDisconnected && !user.isBot) count++;
   }
   return count;
 }

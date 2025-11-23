@@ -44,6 +44,7 @@ export interface FlowerNightResult {
   butterflyLink?: { butterflySeat: number; targetSeat?: number | null };
   policeReports: Array<{ targetSeat: number; result: "bad_special" | "not_bad_special" | "unknown" }>;
   upgrades: Array<{ seat: number; fromRole: FlowerRole; toRole: "杀手" }>;
+  logs: string[];
 }
 
 export interface FlowerDayState {

@@ -446,11 +446,13 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
 
   const alive = (seat: number | null | undefined) => !!seat && ctx.aliveSeats.has(seat);
 
+  // 1. Handle pending needle deaths from previous nights
   ctx.players.forEach((player) => {
     if (player.pendingNeedleDeath && player.isAlive) {
       deaths.push({ seat: player.seat, reason: "needles" });
       ctx.aliveSeats.delete(player.seat);
       player.pendingNeedleDeath = false;
+      logs.push(`座位 ${player.seat} 因累计两次空针，毒发身亡`);
     }
   });
 
@@ -460,143 +462,216 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
     return player;
   };
 
+  // 2. Determine Flower Butterfly status
   const butterflyPlayer = getActiveRolePlayer("花蝴蝶");
   const butterflyAction = butterflyPlayer ? ctx.actionsByRole.get("花蝴蝶") : undefined;
   let butterflyTarget = butterflyAction?.targetSeat && butterflyAction.targetSeat !== butterflyPlayer?.seat ? butterflyAction.targetSeat : null;
   if (butterflyTarget && !alive(butterflyTarget)) butterflyTarget = null;
   let butterflyActive = !!butterflyTarget;
 
+  // 3. Determine Magician status and interactions
   const magePlayer = getActiveRolePlayer("魔法师");
   const mageAction = magePlayer ? ctx.actionsByRole.get("魔法师") : undefined;
   const invalidActors = new Set<number>();
 
+  // Magician vs Flower Butterfly priority
   if (butterflyActive && mageAction && mageAction.targetSeat === butterflyPlayer?.seat && butterflyTarget === magePlayer?.seat) {
+    // If they target each other, Magician wins (FB is sealed)
     butterflyActive = false;
-    logs.push("魔法师与花蝴蝶相互指向，花蝴蝶本回合抱人失败");
+    logs.push("魔法师与花蝴蝶相互指向，花蝴蝶被封印，抱人失败");
   }
 
   if (mageAction && mageAction.targetSeat && alive(mageAction.targetSeat) && magePlayer && alive(magePlayer.seat)) {
     if (butterflyActive && mageAction.targetSeat === butterflyTarget) {
-      logs.push("魔法师的施法被花蝴蝶抱走所抵消");
+      // Magician targets someone hugged by FB -> Blocked
+      logs.push(`魔法师试图封印座位 ${mageAction.targetSeat}，但被花蝴蝶挡下`);
     } else {
+      // Magician targets someone else (or FB directly)
       invalidActors.add(mageAction.targetSeat);
-      logs.push(`魔法师使座位 ${mageAction.targetSeat} 的技能失效`);
-    }
-    if (butterflyActive && mageAction.targetSeat === butterflyPlayer?.seat) {
-      butterflyActive = false;
-      logs.push("魔法师对花蝴蝶施法，花蝴蝶本回合抱人失效");
+      if (mageAction.targetSeat === butterflyPlayer?.seat) {
+        butterflyActive = false;
+        logs.push("魔法师封印了花蝴蝶，导致其抱人失效");
+      } else {
+        logs.push(`魔法师封印了座位 ${mageAction.targetSeat}，使其技能失效`);
+      }
     }
   }
 
+  // 4. Register effects (Killer, Sniper, Doctor, Elder, etc.)
   const killAttempts = new Map<number, Array<"killer" | "sniper">>();
   const docTargets = new Set<number>();
   const emptyNeedleTargets = new Set<number>();
 
-  function registerEffect(targetSeat: number | null | undefined, effect: (seat: number) => void) {
+  // Helper to handle effect registration with FB transfer logic
+  function registerEffect(targetSeat: number | null | undefined, sourceRole: string, effect: (seat: number) => void) {
     if (!targetSeat || !alive(targetSeat)) return;
+
+    // If target is hugged by FB -> Transfer to FB (unless it's a check/seal which might be blocked? Rules say "FB suffers effects")
+    // For Magician/Elder/Killer/Sniper/Doctor, the effect is transferred.
+    // BUT Magician was already handled above for "Block" vs "Seal".
+    // Here we handle "Damage" and "Status".
+
     if (butterflyActive && targetSeat === butterflyTarget) {
-      return; // 抱走的目标免疫指向
+      // Target is hugged. Effect transfers to FB?
+      // Rule: "被抱者免疫所有指向技能；花蝴蝶遭受的效果复制给被抱者" -> Wait.
+      // "花蝴蝶：抱起 1 人，被抱者免疫所有指向技能；花蝴蝶遭受的效果复制给被抱者"
+      // This means:
+      // 1. Skill -> Hugged Person: Immune. (FB blocks it? Or just immune?)
+      //    Usually "Immune" means it hits FB instead? "花蝴蝶抱人挡刀" implies FB takes the hit.
+      //    Let's assume: Skill -> Hugged Person => Redirect to FB.
+
+      if (butterflyPlayer) {
+        logs.push(`${sourceRole} 的技能指向座位 ${targetSeat}，但被花蝴蝶挡下（转移至花蝴蝶）`);
+        effect(butterflyPlayer.seat);
+      }
+      return;
     }
+
+    // Normal case
     effect(targetSeat);
+
+    // If target IS FB, and FB is hugging someone -> Effect copies to Hugged Person?
+    // Rule: "花蝴蝶遭受的效果复制给被抱者"
+    // So if Killer -> FB, then FB dies AND Hugged Person dies?
+    // Or does it mean "Transfer"? "花蝴蝶遭受的效果复制给被抱者" means COPY.
+    // But usually in "Flower Butterfly" (Guard), if Guard protects A, and Killer -> A, Guard dies?
+    // "花蝴蝶 9 人局规则": "花蝴蝶：抱起 1 人，被抱者免疫所有指向技能；花蝴蝶遭受的效果复制给被抱者"
+    // This implies:
+    // 1. Target = Hugged Person -> Immune (Effect Nullified on Target). Does it go to FB? "花蝴蝶抱人挡刀" implies yes.
+    // 2. Target = FB -> FB takes effect. AND Hugged Person takes effect (Copy).
+
     if (butterflyActive && targetSeat === butterflyPlayer?.seat && butterflyTarget) {
+      logs.push(`${sourceRole} 的技能指向花蝴蝶，效果同时也作用于被抱者（座位 ${butterflyTarget}）`);
       effect(butterflyTarget);
     }
   }
 
+  // Killer
   const killerPlayer = getActiveRolePlayer("杀手");
   const killerAction = killerPlayer && !invalidActors.has(killerPlayer.seat) ? ctx.actionsByRole.get("杀手") : undefined;
   if (killerAction && killerAction.targetSeat) {
-    registerEffect(killerAction.targetSeat, (seat) => {
+    registerEffect(killerAction.targetSeat, "杀手", (seat) => {
       const arr = killAttempts.get(seat) ?? [];
       arr.push("killer");
       killAttempts.set(seat, arr);
     });
   }
 
+  // Sniper
   const sniperPlayer = getActiveRolePlayer("狙击手");
   const sniperAction = sniperPlayer && !invalidActors.has(sniperPlayer.seat) ? ctx.actionsByRole.get("狙击手") : undefined;
   if (sniperAction && sniperAction.targetSeat) {
-    registerEffect(sniperAction.targetSeat, (seat) => {
+    registerEffect(sniperAction.targetSeat, "狙击手", (seat) => {
       const arr = killAttempts.get(seat) ?? [];
       arr.push("sniper");
       killAttempts.set(seat, arr);
     });
   }
 
+  // Doctor
   const doctorPlayer = getActiveRolePlayer("医生");
   const doctorAction = doctorPlayer && !invalidActors.has(doctorPlayer.seat) ? ctx.actionsByRole.get("医生") : undefined;
   let doctorTargets: number[] = [];
   if (doctorAction && doctorAction.targetSeat) {
-    const targets: number[] = [];
-    if (!(butterflyActive && doctorAction.targetSeat === butterflyTarget)) {
-      if (alive(doctorAction.targetSeat)) targets.push(doctorAction.targetSeat);
-      if (butterflyActive && doctorAction.targetSeat === butterflyPlayer?.seat && butterflyTarget && alive(butterflyTarget)) {
-        targets.push(butterflyTarget);
-      }
-    }
-    doctorTargets = targets;
-    targets.forEach((seat) => docTargets.add(seat));
+    // Doctor logic is slightly different for narrative, but registerEffect handles the redirection
+    registerEffect(doctorAction.targetSeat, "医生", (seat) => {
+      doctorTargets.push(seat);
+      docTargets.add(seat);
+    });
   }
 
+  // Elder
+  const elderPlayer = getActiveRolePlayer("森林老人");
+  const elderAction = elderPlayer && !invalidActors.has(elderPlayer.seat) ? ctx.actionsByRole.get("森林老人") : undefined;
+  if (elderAction && elderAction.targetSeat) {
+    registerEffect(elderAction.targetSeat, "森林老人", (seat) => {
+      if (!mutedSeats.includes(seat)) mutedSeats.push(seat);
+    });
+  }
+
+  // Police
   const policePlayer = getActiveRolePlayer("警察");
   const policeAction = policePlayer && !invalidActors.has(policePlayer.seat) ? ctx.actionsByRole.get("警察") : undefined;
   if (policeAction && policeAction.targetSeat) {
     if (butterflyActive && policeAction.targetSeat === butterflyTarget) {
       policeReports.push({ targetSeat: policeAction.targetSeat, result: "unknown" });
-      logs.push("警察验人被花蝴蝶抱走目标阻断");
+      logs.push(`警察试图查验座位 ${policeAction.targetSeat}，但视线被花蝴蝶遮挡（免疫）`);
+      logs.push(`警察无法验出座位 ${policeAction.targetSeat}`);
     } else if (!alive(policeAction.targetSeat)) {
       policeReports.push({ targetSeat: policeAction.targetSeat, result: "unknown" });
+      logs.push(`警察无法验出座位 ${policeAction.targetSeat}`);
     } else {
       const targetPlayer = ctx.playersBySeat.get(policeAction.targetSeat);
       if (!targetPlayer || !targetPlayer.role) {
         policeReports.push({ targetSeat: policeAction.targetSeat, result: "unknown" });
+        logs.push(`警察无法验出座位 ${policeAction.targetSeat}`);
       } else if (BAD_SPECIAL_ROLES.has(targetPlayer.role)) {
         policeReports.push({ targetSeat: policeAction.targetSeat, result: "bad_special" });
+        logs.push(`警察验出座位 ${policeAction.targetSeat} 为坏特殊`);
       } else {
         policeReports.push({ targetSeat: policeAction.targetSeat, result: "not_bad_special" });
+        logs.push(`警察验出座位 ${policeAction.targetSeat} 非坏特殊`);
       }
     }
   }
 
-  const elderPlayer = getActiveRolePlayer("森林老人");
-  const elderAction = elderPlayer && !invalidActors.has(elderPlayer.seat) ? ctx.actionsByRole.get("森林老人") : undefined;
-  if (elderAction && elderAction.targetSeat) {
-    registerEffect(elderAction.targetSeat, (seat) => {
-      if (!mutedSeats.includes(seat)) mutedSeats.push(seat);
-    });
-  }
+  // Good/Evil Citizen (Dark Votes) - usually not blocked by FB? 
+  // "若被施法则当晚无法投暗票" - handled by invalidActors check.
+  // "善恶民死亡当夜暗票仍有效" - handled by getActiveRolePlayer check (we need to allow dead if they died TONIGHT? No, "死亡当夜" means if they die tonight their vote counts. 
+  // But getActiveRolePlayer checks `alive(player.seat)`. 
+  // We need to allow them to vote even if they are about to die. 
+  // Actually `alive` checks `ctx.aliveSeats` which is current state. So they are alive now.
 
   const goodCitizenPlayer = getActiveRolePlayer("善民");
   const goodCitizenAction = goodCitizenPlayer && !invalidActors.has(goodCitizenPlayer.seat) ? ctx.actionsByRole.get("善民") : undefined;
   if (goodCitizenAction && goodCitizenAction.targetSeat) {
-    registerEffect(goodCitizenAction.targetSeat, (seat) => {
-      darkVotes.set(seat, (darkVotes.get(seat) ?? 0) + 1);
-    });
+    darkVotes.set(goodCitizenAction.targetSeat, (darkVotes.get(goodCitizenAction.targetSeat) ?? 0) + 1);
+  } else if (goodCitizenPlayer && invalidActors.has(goodCitizenPlayer.seat)) {
+    logs.push("善民被封印，无法投出暗票");
   }
 
   const evilCitizenPlayer = getActiveRolePlayer("恶民");
   const evilCitizenAction = evilCitizenPlayer && !invalidActors.has(evilCitizenPlayer.seat) ? ctx.actionsByRole.get("恶民") : undefined;
   if (evilCitizenAction && evilCitizenAction.targetSeat) {
-    registerEffect(evilCitizenAction.targetSeat, (seat) => {
-      darkVotes.set(seat, (darkVotes.get(seat) ?? 0) + 1);
-    });
+    darkVotes.set(evilCitizenAction.targetSeat, (darkVotes.get(evilCitizenAction.targetSeat) ?? 0) + 1);
+  } else if (evilCitizenPlayer && invalidActors.has(evilCitizenPlayer.seat)) {
+    logs.push("恶民被封印，无法投出暗票");
   }
 
-  doctorTargets.forEach((seat) => {
-    const attempts = killAttempts.get(seat);
-    if (!attempts || attempts.length === 0) {
-      emptyNeedleTargets.add(seat);
-    } else {
-      const killTypes = new Set(attempts);
-      if (killTypes.size >= 2) {
-        logs.push(`医生试图救治座位 ${seat}，但同时遭遇多次击杀，无法救回`);
+  // 5. Resolve Doctor vs Kills (and generate consolidated logs)
+  // We iterate over all players who were targeted by Doctor OR Killer/Sniper
+  const allInvolvedSeats = new Set([...killAttempts.keys(), ...docTargets]);
+
+  allInvolvedSeats.forEach(seat => {
+    const attempts = killAttempts.get(seat) || [];
+    const isHealed = docTargets.has(seat);
+
+    if (attempts.length > 0) {
+      // Was attacked
+      const attackers = attempts.map(a => a === "killer" ? "杀手" : "狙击手").join("与");
+
+      if (isHealed) {
+        if (attempts.length >= 2) {
+          logs.push(`医生试图救治座位 ${seat}，但因伤势过重（遭${attackers}同时攻击），救治失败`);
+          // Still dies
+        } else {
+          killAttempts.delete(seat); // Saved!
+          logs.push(`${attackers}试图击杀座位 ${seat}，但被医生成功救治`);
+        }
       } else {
-        killAttempts.delete(seat);
-        logs.push(`医生成功救下座位 ${seat}`);
+        // No doctor
+        logs.push(`${attackers}击杀了座位 ${seat}`);
+      }
+    } else {
+      // Not attacked, but healed? -> Empty needle
+      if (isHealed) {
+        emptyNeedleTargets.add(seat);
+        logs.push(`医生对座位 ${seat} 施针，因无伤势造成空针`);
       }
     }
   });
 
+  // 6. Finalize Deaths
   killAttempts.forEach((reasons, seat) => {
     if (!reasons || reasons.length === 0) return;
     const reason = reasons.includes("sniper") ? "sniper" : "killer";
@@ -611,8 +686,11 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
       player.needleCount = 0;
       player.pendingNeedleDeath = false;
       deaths.push({ seat, reason: "needles" });
-    } else {
-      player.pendingNeedleDeath = false;
+      // Log for this is generated next night or handled here?
+      // "累积 2 针次日死亡" -> Usually means they die at the END of this night? 
+      // Or next night? "次日死亡" usually means "Die immediately at daybreak".
+      // So we add to deaths list.
+      logs.push(`座位 ${seat} 累积两次空针，不幸身亡`);
     }
   });
 
@@ -620,27 +698,30 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
     ? { butterflySeat: butterflyPlayer.seat, targetSeat: butterflyTarget, active: butterflyActive }
     : null;
 
-  deaths.forEach((d) => {
-    if (d.reason === "needles") {
-      logs.push(`座位 ${d.seat} 累计两次空针，悄然离场`);
-    } else if (d.reason === "sniper") {
-      logs.push(`狙击手击杀了座位 ${d.seat}`);
-    } else {
-      logs.push(`杀手击杀了座位 ${d.seat}`);
+  // Muted logs
+  mutedSeats.forEach((seat) => {
+    // Already logged in registerEffect? 
+    // "森林老人禁言了座位 X"
+    // But we might want to deduplicate if multiple effects?
+    // Elder only acts once.
+    // But if transferred?
+    // registerEffect logs "X -> Y (Transferred)".
+    // We should add a simple log if it wasn't covered.
+    // Actually, let's rely on registerEffect for the transfer log, and here for the result log?
+    // Or just one log?
+    // The registerEffect logs the ACTION.
+    // Let's add a result log if it's not redundant.
+    // "森林老人让 [A] 陷入了沉默"
+    // If we already logged "Elder -> A", maybe that's enough?
+    // Let's check registerEffect for Elder again.
+    // It logs nothing currently in my new code (except transfer).
+    // So I should add a log here.
+    if (!logs.some(l => l.includes(`森林老人`) && l.includes(`座位 ${seat}`))) {
+      logs.push(`森林老人禁言了座位 ${seat}`);
     }
   });
 
-  mutedSeats.forEach((seat) => {
-    logs.push(`森林老人禁言了座位 ${seat}`);
-  });
-
-  policeReports.forEach((report) => {
-    if (report.result === "bad_special") logs.push(`警察验出座位 ${report.targetSeat} 为坏特殊`);
-    else if (report.result === "not_bad_special") logs.push(`警察验出座位 ${report.targetSeat} 非坏特殊`);
-    else logs.push(`警察无法验出座位 ${report.targetSeat}`);
-  });
-
-  return { deaths, mutedSeats, butterflyLink, policeReports, upgrades, darkVotes, logs };
+  return { deaths, mutedSeats, butterflyLink, policeReports, upgrades: [], darkVotes, logs };
 }
 
 function applyNightOutcome(snapshot: FlowerSnapshot, outcome: NightOutcome) {
@@ -673,6 +754,7 @@ function applyNightOutcome(snapshot: FlowerSnapshot, outcome: NightOutcome) {
     butterflyLink: outcome.butterflyLink ? { butterflySeat: outcome.butterflyLink.butterflySeat, targetSeat: outcome.butterflyLink.targetSeat } : undefined,
     policeReports: outcome.policeReports,
     upgrades: outcome.upgrades,
+    logs: outcome.logs,
   };
 
   // Record history for this night
@@ -680,7 +762,7 @@ function applyNightOutcome(snapshot: FlowerSnapshot, outcome: NightOutcome) {
     dayCount: snapshot.dayCount,
     night: {
       actions: snapshot.night.lastActions || [],
-      result: snapshot.night.result
+      result: snapshot.night.result!
     }
   });
 

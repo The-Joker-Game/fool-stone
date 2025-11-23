@@ -1422,12 +1422,7 @@ export default function FlowerRoom() {
                                                                                     {history.map((record, idx) => (
                                                                                         <div key={idx} className={`flex items-center justify-between p-2 rounded border ${isNight ? "bg-white/5 border-white/10" : "bg-black/5 border-black/5"
                                                                                             }`}>
-                                                                                            <div className="flex items-center gap-2">
-                                                                                                <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-xs font-bold">
-                                                                                                    {record.target}
-                                                                                                </div>
-                                                                                                <span className="text-sm">座位 {record.target}</span>
-                                                                                            </div>
+                                                                                            <span className="text-sm">座位 {record.target}</span>
                                                                                             <Badge variant={record.type === 'bad' ? "destructive" : "default"}
                                                                                                 className={`
                                                                                                     ${record.type === 'good' && "bg-green-600 hover:bg-green-700"}

@@ -82,6 +82,23 @@ export function GameReview({ history, players }: GameReviewProps) {
                                     <div className="text-sm opacity-50 mb-4 text-center py-4">无行动记录</div>
                                 )}
 
+                                {/* Event Summary Logs */}
+                                {record.night.result.logs && record.night.result.logs.length > 0 && (
+                                    <div className="mb-4 p-3 bg-indigo-50/50 rounded-md border border-indigo-100">
+                                        <div className="text-xs font-medium text-indigo-800 mb-2 flex items-center gap-1">
+                                            <span className="w-1 h-1 rounded-full bg-indigo-500"></span>
+                                            事件概要
+                                        </div>
+                                        <ul className="space-y-1">
+                                            {record.night.result.logs.map((log, idx) => (
+                                                <li key={idx} className="text-xs text-indigo-900/80 leading-relaxed pl-2 border-l-2 border-indigo-200">
+                                                    {log}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+
                                 {/* Night Results */}
                                 <div className="space-y-2 text-sm">
                                     <div className="flex items-center gap-2">
@@ -145,6 +162,23 @@ export function GameReview({ history, players }: GameReviewProps) {
                                         </div>
                                     ) : (
                                         <div className="text-sm opacity-50 mb-4 text-center py-4">无投票记录</div>
+                                    )}
+
+                                    {/* Dark Votes Display */}
+                                    {record.night.actions.some(a => ["善民", "恶民"].includes(a.role) && a.targetSeat) && (
+                                        <div className="mb-4 px-3 py-2 bg-slate-100/50 rounded border border-slate-200 text-xs text-slate-600">
+                                            <div className="font-medium mb-1 opacity-80">暗票公示：</div>
+                                            <div className="flex flex-wrap gap-x-4 gap-y-1">
+                                                {record.night.actions
+                                                    .filter(a => ["善民", "恶民"].includes(a.role) && a.targetSeat)
+                                                    .map((a, idx) => (
+                                                        <span key={idx}>
+                                                            {a.role} ({a.actorSeat}号) <span className="text-slate-400">→</span> {a.targetSeat}号
+                                                        </span>
+                                                    ))
+                                                }
+                                            </div>
+                                        </div>
                                     )}
 
                                     {/* Execution Result */}
