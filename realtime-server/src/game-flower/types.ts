@@ -75,6 +75,7 @@ export interface FlowerPlayerState {
   sessionId: string | null;
   name: string;
   role: FlowerRole | null;
+  originalRole: FlowerRole | null;
   isAlive: boolean;
   isReady: boolean;
   isHost: boolean;
@@ -125,6 +126,7 @@ export interface FlowerHistoryRecord {
   day?: {
     votes: FlowerVoteEntry[];
     execution: { seat: number; isBadSpecial: boolean } | null;
+    upgrades?: Array<{ seat: number; fromRole: FlowerRole; toRole: "杀手" }>;
   };
 }
 

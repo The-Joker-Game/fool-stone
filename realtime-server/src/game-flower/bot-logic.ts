@@ -109,6 +109,12 @@ function parseChatForPoliceClaims(
     });
 }
 
+// --- Helper: Get Random Element ---
+function getRandomElement<T>(list: T[]): T | undefined {
+    if (!list || list.length === 0) return undefined;
+    return list[Math.floor(Math.random() * list.length)];
+}
+
 // --- Bot Night Action Logic ---
 export function getBotNightActionTarget(
     snapshot: FlowerSnapshot,
@@ -132,8 +138,11 @@ export function getBotNightActionTarget(
     if (aliveSeats.length === 0) return null;
 
     // Helper to get enemies (High suspicion) and allies (Low suspicion)
+    // Shuffle first to avoid seat bias in stable sort
+    const shuffledSeats = [...otherAliveSeats].sort(() => Math.random() - 0.5);
+
     // Sort by suspicion
-    const sortedBySuspicion = [...otherAliveSeats].sort((a, b) => {
+    const sortedBySuspicion = shuffledSeats.sort((a, b) => {
         return (mem.suspicion.get(b) || 50) - (mem.suspicion.get(a) || 50);
     });
 
@@ -147,9 +156,10 @@ export function getBotNightActionTarget(
             const unknownCandidates = sortedBySuspicion.filter(s => !mem.knownRoles.has(s));
             if (unknownCandidates.length > 0) {
                 // Pick the most suspicious unknown
+                // Since we shuffled, unknownCandidates[0] is random among the most suspicious
                 return unknownCandidates[0];
             }
-            return unknownCandidates[0] || otherAliveSeats[0];
+            return unknownCandidates[0] || getRandomElement(otherAliveSeats) || null;
         }
 
         case "医生": {
@@ -200,35 +210,35 @@ export function getBotNightActionTarget(
             // For Sniper (Good), enemies are Bad guys.
             // For Killer (Bad), enemies are Good guys.
             // The suspicion list is already sorted by "Enemy-ness" based on init logic.
-            const target = enemies[0] || otherAliveSeats[0];
-            return target;
+            const target = getRandomElement(enemies) || getRandomElement(otherAliveSeats);
+            return target || null;
         }
 
         case "魔法师": {
             // Block strong enemies.
-            const target = enemies[0] || otherAliveSeats[0];
-            return target;
+            const target = getRandomElement(enemies) || getRandomElement(otherAliveSeats);
+            return target || null;
         }
 
         case "森林老人": {
             // Silence talkative enemies or just enemies.
-            const target = enemies[0] || otherAliveSeats[0];
-            return target;
+            const target = getRandomElement(enemies) || getRandomElement(otherAliveSeats);
+            return target || null;
         }
 
         case "花蝴蝶": {
             // Hug ally to protect, or enemy to block?
             // Usually hug ally to protect.
-            const target = allies[0] || otherAliveSeats[0];
-            return target;
+            const target = allies[0] || getRandomElement(otherAliveSeats);
+            return target || null;
         }
 
         case "善民":
         case "恶民":
             // Dark vote (handled as night action in some versions, or separate)
             // If this function is called for them, return a target.
-            const target = enemies[0] || otherAliveSeats[0];
-            return target;
+            const target = getRandomElement(enemies) || getRandomElement(otherAliveSeats);
+            return target || null;
 
         default:
             return null;

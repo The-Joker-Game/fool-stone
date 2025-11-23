@@ -220,6 +220,7 @@ function createEmptyPlayer(seat: number): FlowerPlayerState {
     sessionId: null,
     name: `座位${seat}`,
     role: null,
+    originalRole: null,
     isAlive: false,
     isReady: false,
     isHost: false,

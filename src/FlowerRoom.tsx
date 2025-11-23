@@ -312,8 +312,17 @@ export default function FlowerRoom() {
             const saved = sessionStorage.getItem(key);
 
             let deadline: number;
+            // Check if saved deadline is in the future, otherwise create a new one
             if (saved) {
-                deadline = parseInt(saved, 10);
+                const savedDeadline = parseInt(saved, 10);
+                // Only use saved deadline if it's still in the future
+                if (savedDeadline > Date.now()) {
+                    deadline = savedDeadline;
+                } else {
+                    // Saved deadline has expired, create a new one
+                    deadline = Date.now() + 30000;
+                    sessionStorage.setItem(key, deadline.toString());
+                }
             } else {
                 deadline = Date.now() + 30000;
                 sessionStorage.setItem(key, deadline.toString());
@@ -346,6 +355,22 @@ export default function FlowerRoom() {
         const timer = setInterval(updateTimer, 1000);
         return () => clearInterval(timer);
     }, [phaseDeadline]);
+
+    // 3. Clean up old timer data when game is reset
+    useEffect(() => {
+        // When game phase goes back to lobby, clean up all timer data for this room
+        if (flowerPhase === 'lobby' && roomCode) {
+            // Clear all timer keys for this room
+            const keysToRemove: string[] = [];
+            for (let i = 0; i < sessionStorage.length; i++) {
+                const key = sessionStorage.key(i);
+                if (key && key.startsWith(`flower-timer-${roomCode}-`)) {
+                    keysToRemove.push(key);
+                }
+            }
+            keysToRemove.forEach(key => sessionStorage.removeItem(key));
+        }
+    }, [flowerPhase, roomCode]);
 
     const isMyTurn = useMemo(() => {
         if (flowerPhase === 'day_discussion') {
@@ -887,7 +912,7 @@ export default function FlowerRoom() {
                                 ) : (
                                     <WifiOff className="h-4 w-4 text-destructive" />
                                 )}
-                                <CardTitle className="text-lg md:text-xl">花蝴蝶 九人局</CardTitle>
+                                <CardTitle className="text-lg md:text-xl">挪子的花蝴蝶</CardTitle>
                                 {myRole && (
                                     <Badge variant="outline" className={`flex items-center gap-1.5 ml-auto backdrop-sm ${isNight ? "text-white border-black/50 bg-white/50" : "border-black/50 bg-white/50"
                                         }`}>
@@ -1587,7 +1612,7 @@ export default function FlowerRoom() {
                                                     {/* 7. 历史记录 */}
                                                     {flowerSnapshot?.history && flowerSnapshot.history.length > 0 && (
                                                         <div className="pt-4 border-t border-white/10 mt-4">
-                                                            <div className={`${isNight && "text-white"} text-sm font-medium opacity-80 mb-3 px-1`}>游戏历史</div>
+                                                            <div className={`${isNight && "text-white"} text-sm font-medium opacity-80 mb-3 px-1`}>操作记录</div>
                                                             {[...flowerSnapshot.history].reverse().map((record) => (
                                                                 <HistoryCard
                                                                     key={record.dayCount}
@@ -1652,7 +1677,20 @@ export default function FlowerRoom() {
                                                                         <TableRow key={`final-${p.seat}`} className={isNight ? "hover:bg-white/5 border-white/20" : "border-black/10"}>
                                                                             <TableCell className="font-medium">{p.seat}</TableCell>
                                                                             <TableCell>{p.name || `玩家${p.seat}`}</TableCell>
-                                                                            <TableCell>{p.role ? <span>{p.role}</span> : "未知"}</TableCell>
+                                                                            <TableCell>
+                                                                                {p.originalRole ? (
+                                                                                    p.originalRole !== p.role ? (
+                                                                                        <div className="flex flex-col">
+                                                                                            <span className="line-through opacity-50 text-xs">{p.originalRole}</span>
+                                                                                            <span className="font-bold text-yellow-500">{p.role}</span>
+                                                                                        </div>
+                                                                                    ) : (
+                                                                                        <span>{p.originalRole}</span>
+                                                                                    )
+                                                                                ) : (
+                                                                                    p.role ? <span>{p.role}</span> : "未知"
+                                                                                )}
+                                                                            </TableCell>
                                                                             <TableCell className={camp === "好人" ? "text-green-700" : "text-red-700"}>
                                                                                 <div className={'flex items-center'}>
                                                                                     {camp === "好人" ? <ThumbsUp /> : <ThumbsDown />}

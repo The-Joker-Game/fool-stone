@@ -43,6 +43,7 @@ function createEmptyPlayer(seat: number): FlowerPlayerState {
     sessionId: null,
     name: `座位${seat}`,
     role: null,
+    originalRole: null,
     isAlive: false,
     isReady: false,
     isHost: false,
@@ -127,6 +128,7 @@ export function assignFlowerRoles(snapshot: FlowerSnapshot): AssignResult {
     player.nightAction = null;
     if (!player.sessionId) {
       player.role = null;
+      player.originalRole = null;
       player.flags = {};
       player.needleCount = 0;
       player.pendingNeedleDeath = false;
@@ -138,6 +140,7 @@ export function assignFlowerRoles(snapshot: FlowerSnapshot): AssignResult {
     if (!player) return;
     const role = FLOWER_ROLES[idx];
     player.role = role;
+    player.originalRole = role;
     player.flags = { isBadSpecial: BAD_SPECIAL_ROLES.has(role) };
     player.needleCount = 0;
     player.pendingNeedleDeath = false;
@@ -289,7 +292,8 @@ export function resolveDayVote(snapshot: FlowerSnapshot): ResolveResult {
     snapshot.logs.push({ at: Date.now(), text: `白天票型：${voteSummary}` });
   }
 
-  promoteBadSpecial(snapshot);
+  const promoted = promoteBadSpecial(snapshot);
+  const upgrades = promoted ? [{ seat: promoted.seat, fromRole: promoted.fromRole, toRole: "杀手" as const }] : [];
 
   snapshot.day.pendingExecution = executedSeat
     ? { seat: executedSeat, isBadSpecial: !!snapshot.players.find((p) => p.seat === executedSeat)?.flags?.isBadSpecial }
@@ -304,7 +308,8 @@ export function resolveDayVote(snapshot: FlowerSnapshot): ResolveResult {
   if (historyRecord) {
     historyRecord.day = {
       votes: [...snapshot.day.votes],
-      execution: snapshot.day.pendingExecution
+      execution: snapshot.day.pendingExecution,
+      upgrades: upgrades
     };
   } else {
     // Should not happen if logic is correct, but fallback just in case
