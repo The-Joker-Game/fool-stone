@@ -1562,7 +1562,7 @@ export default function FlowerRoom() {
                                                     {/* 7. 历史记录 */}
                                                     {flowerSnapshot?.history && flowerSnapshot.history.length > 0 && (
                                                         <div className="pt-4 border-t border-white/10 mt-4">
-                                                            <div className="text-sm font-medium opacity-80 mb-3 px-1">游戏历史</div>
+                                                            <div className={`${isNight && "text-white"} text-sm font-medium opacity-80 mb-3 px-1`}>游戏历史</div>
                                                             {[...flowerSnapshot.history].reverse().map((record) => (
                                                                 <HistoryCard
                                                                     key={record.dayCount}
