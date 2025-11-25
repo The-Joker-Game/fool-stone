@@ -1,7 +1,7 @@
 // src/FlowerRoom.tsx
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { rt, getSessionId, type PresenceState } from "./realtime/socket";
-import type { FlowerPlayerState, FlowerRole, FlowerPhase, ChatMessage, SubmitNightActionPayload, SubmitDayVotePayload } from "./flower/types";
+import type { FlowerPlayerState, FlowerRole, ChatMessage, SubmitNightActionPayload, SubmitDayVotePayload } from "./flower/types";
 import { useFlowerStore } from "./flower/store";
 import type { FlowerStore } from "./flower/store";
 import type { WakeLockSentinel } from "./types";
@@ -38,21 +38,19 @@ import { TargetSelectionDrawer } from "@/components/TargetSelectionDrawer";
 import { useAddBotDialog } from "@/components/AddBotDialog";
 import { useEditNameDialog } from "@/components/EditNameDialog";
 import { VantaBackground } from "@/components/VantaBackground";
+import { GameStatusCard } from "@/components/GameStatusCard";
 import Avvvatars from "avvvatars-react";
 import {
     Users,
     LogOut,
     Crown,
     Bot,
-    Wifi,
-    WifiOff,
     UserPlus,
     MessageSquare,
     Moon,
     Sun,
     Gamepad2,
     User,
-    Pencil,
     Swords,
     House,
     CircleAlert, ThumbsUp, ThumbsDown, Heart, HeartCrack, Eye, Medal
@@ -113,15 +111,6 @@ const ROLE_ICONS: Record<string, React.ElementType> = {
     "魔法师": GiWizardStaff,
     "森林老人": GiEntMouth,
     "恶民": GiRobber,
-};
-const PHASE_TEXT_MAP: Record<FlowerPhase, string> = {
-    lobby: "准备阶段",
-    night_actions: "夜晚行动",
-    night_result: "夜晚结算",
-    day_discussion: "白天讨论",
-    day_vote: "白天投票",
-    day_last_words: "发表遗言",
-    game_over: "游戏结束",
 };
 
 
@@ -256,7 +245,6 @@ export default function FlowerRoom() {
     const flowerPlayers: FlowerPlayerState[] = flowerSnapshot?.players ?? [];
 
     const flowerPhase = flowerSnapshot?.phase ?? "lobby";
-    const flowerPhaseText = PHASE_TEXT_MAP[flowerPhase] ?? flowerPhase;
     const flowerDayCount = flowerSnapshot?.dayCount ?? 0;
     const gameResult = flowerSnapshot?.gameResult ?? null;
     const everyoneReady = useMemo(() => {
@@ -283,7 +271,8 @@ export default function FlowerRoom() {
     const RoleIcon = ({ myRole }: { myRole: keyof typeof ROLE_ICONS }) => {
         const Icon = ROLE_ICONS[myRole];
         return <Icon className="w-4 h-4" />;
-    }; const myAlive = !!myFlowerPlayer?.isAlive;
+    };
+    const myAlive = !!myFlowerPlayer?.isAlive;
     const myMuted = !!myFlowerPlayer?.isMutedToday;
 
 
@@ -309,7 +298,7 @@ export default function FlowerRoom() {
             if (!roomCode || !flowerSnapshot) return;
 
             const key = `flower-timer-${roomCode}-${flowerSnapshot.dayCount}-${flowerPhase}`;
-            const saved = sessionStorage.getItem(key);
+            const saved = localStorage.getItem(key);
 
             let deadline: number;
             // Check if saved deadline is in the future, otherwise create a new one
@@ -321,11 +310,11 @@ export default function FlowerRoom() {
                 } else {
                     // Saved deadline has expired, create a new one
                     deadline = Date.now() + 30000;
-                    sessionStorage.setItem(key, deadline.toString());
+                    localStorage.setItem(key, deadline.toString());
                 }
             } else {
                 deadline = Date.now() + 30000;
-                sessionStorage.setItem(key, deadline.toString());
+                localStorage.setItem(key, deadline.toString());
             }
 
             setPhaseDeadline(deadline);
@@ -362,13 +351,13 @@ export default function FlowerRoom() {
         if (flowerPhase === 'lobby' && roomCode) {
             // Clear all timer keys for this room
             const keysToRemove: string[] = [];
-            for (let i = 0; i < sessionStorage.length; i++) {
-                const key = sessionStorage.key(i);
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
                 if (key && key.startsWith(`flower-timer-${roomCode}-`)) {
                     keysToRemove.push(key);
                 }
             }
-            keysToRemove.forEach(key => sessionStorage.removeItem(key));
+            keysToRemove.forEach(key => localStorage.removeItem(key));
         }
     }, [flowerPhase, roomCode]);
 
@@ -904,133 +893,40 @@ export default function FlowerRoom() {
 
                 {/* Fixed Top Card - 不滚动 */}
                 <div className="sticky flex-none z-10 p-2 md:p-4">
-                    <Card className={`w-full shadow-lg ${themeClass}`}>
-                        <CardHeader className="pb-2 pt-4 px-4">
-                            <div className="flex items-center gap-2">
-                                {connected ? (
-                                    <Wifi className="h-4 w-4 text-green-600" />
-                                ) : (
-                                    <WifiOff className="h-4 w-4 text-destructive" />
-                                )}
-                                <CardTitle className="text-lg md:text-xl">挪子的花蝴蝶</CardTitle>
-                                {myRole && (
-                                    <Badge variant="outline" className={`flex items-center gap-1.5 ml-auto backdrop-sm ${isNight ? "text-white border-black/50 bg-white/50" : "border-black/50 bg-white/50"
-                                        }`}>
-                                        {RoleIcon && <RoleIcon myRole={myRole} />}
-                                        <span>{myRole}</span>
-                                    </Badge>
-                                )}
-                            </div>
-                        </CardHeader>
-                        <CardContent className="px-4 pb-4 pt-0">
-                            <div className="grid grid-cols-2 gap-4">
-                                {/* Left Column: Player & Room */}
-                                <div className="flex flex-col justify-center space-y-2 border-r border-white/10 pr-4">
-                                    <div>
-                                        <div className={`text-xs ${mutedTextClass}`}>玩家昵称</div>
-                                        <div className="flex items-center gap-2">
-                                            <div className="font-medium truncate text-lg">{name.replace(/\u200B/g, "")}</div>
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="h-6 w-6"
-                                                onClick={async () => {
-                                                    const newName = await showEditNameDialog(name.replace(/\u200B/g, ""));
-                                                    if (newName) {
-                                                        let finalName = newName;
-                                                        // 只有在房间内时，才立即进行机器人伪装处理
-                                                        if (newName === "机器人" && roomCode) {
-                                                            const usedNames = new Set(flowerPlayers.map(p => p.name?.replace(/\u200B/g, "")).filter(Boolean) as string[]);
-                                                            const aiName = getAvailableAiName(usedNames);
-                                                            finalName = aiName + "\u200B";
-                                                        }
-                                                        setName(finalName);
-                                                        localStorage.setItem("name", finalName);
-                                                        if (roomCode) {
-                                                            try {
-                                                                await rt.updateName(roomCode, finalName);
-                                                            } catch (e) {
-                                                                console.error("Failed to update name on server", e);
-                                                            }
-                                                        }
-                                                    }
-                                                }}
-                                            >
-                                                <Pencil className="h-3 w-3" />
-                                            </Button>
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <div className={`text-xs ${mutedTextClass}`}>房间号</div>
-                                        <div className="font-mono font-bold text-xl truncate">
-                                            {roomCode || "未加入"}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Right Column: Phase & Day or Result */}
-                                <div className="flex flex-col justify-center space-y-2 pl-4">
-                                    {flowerPhase === "game_over" && gameResult ? (
-                                        <>
-                                            <div>
-                                                <div className={`text-xs ${mutedTextClass}`}>对局结果</div>
-                                                <div className={`font-bold text-lg ${gameResult.winner === "good" ? "text-green-600" : gameResult.winner === "bad" ? "text-red-600" : "text-gray-400"}`}>
-                                                    {gameResult.winner === "good" ? "好人胜利" : gameResult.winner === "bad" ? "坏人胜利" : "平局"}
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <div className={`text-xs ${mutedTextClass}`}>原因</div>
-                                                <div className="text-sm font-medium leading-tight line-clamp-2" title={gameResult.reason}>{gameResult.reason}</div>
-                                            </div>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <div>
-                                                <div className={`text-xs ${mutedTextClass}`}>当前阶段</div>
-                                                <div className="font-medium flex items-center gap-2 text-lg">
-                                                    {flowerPhaseText}
-                                                    {flowerPhase === "night_actions" && <Moon className="h-4 w-4 text-indigo-200" />}
-                                                    {flowerPhase === "day_vote" && <Sun className="h-4 w-4 text-orange-500" />}
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <div className={`text-xs ${mutedTextClass}`}>天数</div>
-                                                <div className="font-bold text-xl">第 {flowerDayCount} 天</div>
-                                            </div>
-                                        </>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Notification Row */}
-                            <div className="mt-4 pt-3 border-t border-white/10 flex justify-center items-center min-h-[24px]">
-                                {isMyTurn ? (
-                                    <motion.div
-                                        animate={{ opacity: [1, 0.2, 1] }}
-                                        transition={{ duration: 0.2, repeat: 4 }}
-                                        className="font-bold text-lg text-red-500"
-                                    >
-                                        轮到你发言了
-                                    </motion.div>
-                                ) : notificationType === 'vote' ? (
-                                    <div className="font-medium text-red-500">
-                                        {timeLeft > 0 ? `投票倒计时: ${timeLeft}s` : "倒计时结束"}
-                                    </div>
-                                ) : notificationType === 'night' ? (
-                                    <div className="font-medium text-red-500">
-                                        {timeLeft > 0 ? `黑夜倒计时: ${timeLeft}s` : "倒计时结束"}
-                                    </div>
-                                ) : (
-                                    <div className={`text-sm ${isNight ? "text-white/30" : "text-black/50"}`}>
-                                        {flowerPhase === "game_over"
-                                            ? (isHost ? "可以重新开始游戏啦" : "等待房主重新开始...")
-                                            : "暂无消息"
-                                        }
-                                    </div>
-                                )}
-                            </div>
-                        </CardContent>
-                    </Card>
+                    <GameStatusCard
+                        connected={connected}
+                        roomCode={roomCode}
+                        myRole={myRole}
+                        isNight={isNight}
+                        name={name}
+                        flowerPhase={flowerPhase}
+                        flowerDayCount={flowerDayCount}
+                        gameResult={gameResult}
+                        notificationType={notificationType || 'other'}
+                        timeLeft={timeLeft}
+                        isMyTurn={isMyTurn}
+                        onEditName={async () => {
+                            const newName = await showEditNameDialog(name.replace(/\u200B/g, ""));
+                            if (newName) {
+                                let finalName = newName;
+                                // 只有在房间内时，才立即进行机器人伪装处理
+                                if (newName === "机器人" && roomCode) {
+                                    const usedNames = new Set(flowerPlayers.map(p => p.name?.replace(/\u200B/g, "")).filter(Boolean) as string[]);
+                                    const aiName = getAvailableAiName(usedNames);
+                                    finalName = aiName + "\u200B";
+                                }
+                                setName(finalName);
+                                localStorage.setItem("name", finalName);
+                                if (roomCode) {
+                                    try {
+                                        await rt.updateName(roomCode, finalName);
+                                    } catch (e) {
+                                        console.error("Failed to update name on server", e);
+                                    }
+                                }
+                            }
+                        }}
+                    />
                 </div>
 
                 {/* Main Content Area with Dynamic Island Nav */}
