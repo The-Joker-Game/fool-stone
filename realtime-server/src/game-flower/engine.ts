@@ -643,7 +643,11 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
   const goodCitizenPlayer = getActiveRolePlayer("善民");
   const goodCitizenAction = goodCitizenPlayer && !invalidActors.has(goodCitizenPlayer.seat) ? ctx.actionsByRole.get("善民") : undefined;
   if (goodCitizenAction && goodCitizenAction.targetSeat) {
-    darkVotes.set(goodCitizenAction.targetSeat, (darkVotes.get(goodCitizenAction.targetSeat) ?? 0) + 1);
+    if (butterflyActive && goodCitizenAction.targetSeat === butterflyTarget) {
+      logs.push(`${formatPlayer(goodCitizenPlayer!.seat)}的暗票指向${formatTarget(goodCitizenAction.targetSeat, goodCitizenPlayer!.seat)}，被${formatPlayer(butterflyPlayer!.seat)}免疫`);
+    } else {
+      darkVotes.set(goodCitizenAction.targetSeat, (darkVotes.get(goodCitizenAction.targetSeat) ?? 0) + 1);
+    }
   } else if (goodCitizenPlayer && invalidActors.has(goodCitizenPlayer.seat)) {
     logs.push(`${formatPlayer(goodCitizenPlayer.seat)}被封印，无法投出暗票`);
   }
@@ -651,7 +655,11 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
   const evilCitizenPlayer = getActiveRolePlayer("恶民");
   const evilCitizenAction = evilCitizenPlayer && !invalidActors.has(evilCitizenPlayer.seat) ? ctx.actionsByRole.get("恶民") : undefined;
   if (evilCitizenAction && evilCitizenAction.targetSeat) {
-    darkVotes.set(evilCitizenAction.targetSeat, (darkVotes.get(evilCitizenAction.targetSeat) ?? 0) + 1);
+    if (butterflyActive && evilCitizenAction.targetSeat === butterflyTarget) {
+      logs.push(`${formatPlayer(evilCitizenPlayer!.seat)}的暗票指向${formatTarget(evilCitizenAction.targetSeat, evilCitizenPlayer!.seat)}，被${formatPlayer(butterflyPlayer!.seat)}免疫`);
+    } else {
+      darkVotes.set(evilCitizenAction.targetSeat, (darkVotes.get(evilCitizenAction.targetSeat) ?? 0) + 1);
+    }
   } else if (evilCitizenPlayer && invalidActors.has(evilCitizenPlayer.seat)) {
     logs.push(`${formatPlayer(evilCitizenPlayer.seat)}被封印，无法投出暗票`);
   }
