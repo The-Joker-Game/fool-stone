@@ -31,14 +31,14 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
-import { useConfirm } from "@/components/ConfirmDialog";
-import { useAlert } from "@/components/AlertMessage";
-import { useJoinRoomDialog } from "@/components/JoinRoomDialog";
-import { TargetSelectionDrawer } from "@/components/TargetSelectionDrawer";
-import { useAddBotDialog } from "@/components/AddBotDialog";
-import { useEditNameDialog } from "@/components/EditNameDialog";
-import { VantaBackground } from "@/components/VantaBackground";
-import { GameStatusCard } from "@/components/GameStatusCard";
+import { useConfirm } from "@/flower/components/ConfirmDialog";
+import { useAlert } from "@/flower/components/AlertMessage";
+import { useJoinRoomDialog } from "@/flower/components/JoinRoomDialog";
+import { TargetSelectionDrawer } from "@/flower/components/TargetSelectionDrawer";
+import { useAddBotDialog } from "@/flower/components/AddBotDialog";
+import { useEditNameDialog } from "@/flower/components/EditNameDialog";
+import { VantaBackground } from "@/flower/components/VantaBackground";
+import { GameStatusCard } from "@/flower/components/GameStatusCard";
 import Avvvatars from "avvvatars-react";
 import {
     Users,
@@ -145,12 +145,14 @@ function MobileNavBar({
     tabs,
     activeTab,
     onTabChange,
-    isNight
+    isNight,
+    badges
 }: {
     tabs: TabId[];
     activeTab: TabId;
     onTabChange: (t: TabId) => void;
     isNight: boolean;
+    badges?: Partial<Record<TabId, number | boolean>>;
 }) {
     return (
         <div className="flex justify-center mb-4 z-20 sticky top-0 pt-2">
@@ -161,6 +163,8 @@ function MobileNavBar({
                 {tabs.map((tab) => {
                     const isActive = activeTab === tab;
                     const Icon = TAB_ICONS[tab];
+                    const badge = badges?.[tab];
+
                     return (
                         <button
                             key={tab}
@@ -181,7 +185,15 @@ function MobileNavBar({
                                 ? (isNight ? "text-black" : "text-white")
                                 : (isNight ? "text-white/60" : "text-black/60")
                                 }`}>
-                                <Icon className="w-4 h-4" />
+                                <div className="relative">
+                                    <Icon className="w-4 h-4" />
+                                    {badge && (
+                                        <span className={`absolute -top-1.5 -right-1.5 min-w-[8px] h-2 rounded-full ${typeof badge === 'number' ? 'px-1 h-3.5 min-w-[14px] flex items-center justify-center text-[9px]' : ''
+                                            } bg-red-500 text-white border border-white/20`}>
+                                            {typeof badge === 'number' && badge > 0 ? (badge > 99 ? '99+' : badge) : ''}
+                                        </span>
+                                    )}
+                                </div>
                                 <AnimatePresence mode="popLayout">
                                     {isActive && (
                                         <motion.span
@@ -208,7 +220,16 @@ export default function FlowerRoom() {
     const [roomCode, setRoomCode] = useState<string | null>(null);
     const [isHost, setIsHost] = useState(false);
     const [presence, setPresence] = useState<PresenceState | null>(null);
-    const [name, setName] = useState<string>(randName());
+    const [name, setName] = useState<string>(() => {
+        // 组件初始化时直接从 localStorage 读取昵称
+        if (typeof window !== "undefined") {
+            const saved = localStorage.getItem("name");
+            if (saved && saved.trim().length > 0) {
+                return saved.trim();
+            }
+        }
+        return randName();
+    });
     const autoJoinAttempted = useRef(false);
     const [nightActionSelections, setNightActionSelections] = useState<NightSelectionMap>({});
     const [dayVoteSelection, setDayVoteSelection] = useState<number | "">("");
@@ -549,13 +570,11 @@ export default function FlowerRoom() {
     useEffect(() => {
         if (roomCode || autoJoinAttempted.current || !connected) return;
         const savedCode = (localStorage.getItem("lastRoomCode") || "").trim();
-        const savedName = (localStorage.getItem("name") || "").trim() || name;
         if (!savedCode) return;
         autoJoinAttempted.current = true;
-        setName(savedName);
         (async () => {
             try {
-                const resp = await rt.joinFlowerRoom(savedCode, savedName);
+                const resp = await rt.joinFlowerRoom(savedCode, name);
                 pushLog(`auto room:join ack: ${JSON.stringify(resp)}`);
                 if (resp?.ok) {
                     setRoomCode(savedCode);
@@ -885,6 +904,84 @@ export default function FlowerRoom() {
     // Game Over logic integrated into main return
 
 
+    // —— Notification Logic (Red Dots) ——
+    const [lastReadChatTime, setLastReadChatTime] = useState(() => {
+        if (typeof window !== "undefined") {
+            const saved = localStorage.getItem("flower_last_read_chat");
+            return saved ? Number(saved) : Date.now();
+        }
+        return Date.now();
+    });
+
+    // Update last read time when entering chat tab
+    useEffect(() => {
+        if (activeTab === "chat") {
+            const now = Date.now();
+            setLastReadChatTime(now);
+            localStorage.setItem("flower_last_read_chat", String(now));
+        }
+    }, [activeTab, flowerSnapshot?.chatMessages]); // Also update when new messages arrive if we are already on the tab
+
+    const unreadMentionsCount = useMemo(() => {
+        if (!flowerSnapshot?.chatMessages || !mySeat) return 0;
+        return flowerSnapshot.chatMessages.filter(msg => {
+            if (msg.timestamp <= lastReadChatTime) return false;
+            // Check if mentioned
+            return msg.mentions?.some(m => m.seat === mySeat);
+        }).length;
+    }, [flowerSnapshot?.chatMessages, lastReadChatTime, mySeat]);
+
+    const isMyTurnToSpeak = useMemo(() => {
+        if (flowerPhase === 'day_discussion') {
+            if (!flowerSnapshot?.day?.speechOrder) return false;
+            const currentSpeakerSeat = flowerSnapshot.day.speechOrder[flowerSnapshot.day.currentSpeakerIndex];
+            return currentSpeakerSeat === mySeat;
+        }
+        if (flowerPhase === 'day_last_words') {
+            if (!flowerSnapshot?.day?.lastWords?.queue) return false;
+            const currentSpeakerSeat = flowerSnapshot.day.lastWords.queue[flowerSnapshot.day.currentSpeakerIndex];
+            return currentSpeakerSeat === mySeat;
+        }
+        return false;
+    }, [flowerPhase, flowerSnapshot?.day, mySeat]);
+
+    const hasPendingAction = useMemo(() => {
+        if (!myAlive || myMuted) return false;
+
+        if (flowerPhase === 'day_vote') {
+            return !myFlowerPlayer?.hasVotedToday;
+        }
+        if (flowerPhase === 'night_actions') {
+            // Check if night action is submitted
+            // Note: nightAction in player state is the *submitted* action
+            return !myFlowerPlayer?.nightAction;
+        }
+        return false;
+    }, [flowerPhase, myAlive, myMuted, myFlowerPlayer]);
+
+    const badges = useMemo(() => {
+        const b: Partial<Record<TabId, number | boolean>> = {};
+
+        // Chat Tab Badges
+        if (activeTab !== 'chat') {
+            if (unreadMentionsCount > 0) {
+                b.chat = unreadMentionsCount;
+            } else if (isMyTurnToSpeak) {
+                b.chat = true; // Just a dot
+            }
+        }
+
+        // Actions Tab Badges
+        if (activeTab !== 'actions') {
+            if (hasPendingAction) {
+                b.actions = true;
+            }
+        }
+
+        return b;
+    }, [activeTab, unreadMentionsCount, isMyTurnToSpeak, hasPendingAction]);
+
+
     return (
         <div className="h-[100dvh] flex flex-col overflow-hidden">
             <VantaBackground isNight={isNight} />
@@ -941,6 +1038,7 @@ export default function FlowerRoom() {
                             activeTab={activeTab}
                             onTabChange={setActiveTab}
                             isNight={isNight}
+                            badges={badges}
                         />
                     )}
 
@@ -1283,29 +1381,30 @@ export default function FlowerRoom() {
                                                                     </CardHeader>
                                                                     <CardContent className="space-y-2">
                                                                         {(() => {
-                                                                            // Parse logs for police history
+                                                                            // Use structured history for police reports
                                                                             const history: { target: string, result: string, type: 'bad' | 'good' | 'unknown' }[] = [];
-                                                                            const logs = flowerSnapshot?.logs || [];
-                                                                            // Regex to match police logs
-                                                                            const badRegex = /警察验出座位 (\d+) 为坏特殊/;
-                                                                            const goodRegex = /警察验出座位 (\d+) 非坏特殊/;
-                                                                            const unknownRegex = /警察无法验出座位 (\d+)/;
 
-                                                                            logs.forEach(log => {
-                                                                                let match = log.text.match(badRegex);
-                                                                                if (match) {
-                                                                                    history.push({ target: match[1], result: "坏人特殊身份", type: 'bad' });
-                                                                                    return;
-                                                                                }
-                                                                                match = log.text.match(goodRegex);
-                                                                                if (match) {
-                                                                                    history.push({ target: match[1], result: "非坏人特殊身份", type: 'good' });
-                                                                                    return;
-                                                                                }
-                                                                                match = log.text.match(unknownRegex);
-                                                                                if (match) {
-                                                                                    history.push({ target: match[1], result: "未知", type: 'unknown' });
-                                                                                    return;
+                                                                            // Iterate through all history records to find police reports
+                                                                            flowerSnapshot?.history.forEach(record => {
+                                                                                if (record.night?.result?.policeReports) {
+                                                                                    record.night.result.policeReports.forEach(report => {
+                                                                                        let resultText = "未知";
+                                                                                        let type: 'bad' | 'good' | 'unknown' = 'unknown';
+
+                                                                                        if (report.result === 'bad_special') {
+                                                                                            resultText = "坏人特殊身份";
+                                                                                            type = 'bad';
+                                                                                        } else if (report.result === 'not_bad_special') {
+                                                                                            resultText = "非坏人特殊身份";
+                                                                                            type = 'good';
+                                                                                        }
+
+                                                                                        history.push({
+                                                                                            target: String(report.targetSeat),
+                                                                                            result: resultText,
+                                                                                            type
+                                                                                        });
+                                                                                    });
                                                                                 }
                                                                             });
 
@@ -1318,7 +1417,7 @@ export default function FlowerRoom() {
                                                                                     {history.map((record, idx) => (
                                                                                         <div key={idx} className={`flex items-center justify-between p-2 rounded border ${isNight ? "bg-white/5 border-white/10" : "bg-black/5 border-black/5"
                                                                                             }`}>
-                                                                                            <span className="text-sm">座位 {record.target}</span>
+                                                                                            <span className="pl-3 text-sm">座位 {record.target}</span>
                                                                                             <Badge variant={record.type === 'bad' ? "destructive" : "default"}
                                                                                                 className={`
                                                                                                     ${record.type === 'good' && "bg-green-600 hover:bg-green-700"}
@@ -1335,46 +1434,39 @@ export default function FlowerRoom() {
                                                                 </Card>
                                                             )}
 
-                                                            {/* 3. 空针计数器 (仅医生可见) - Shows all players' needle counts */}
+                                                            {/* 3. 扎针计数器 (仅医生可见) - Shows all players' needle counts */}
                                                             {myRole === "医生" && (
                                                                 <Card className={themeClass}>
                                                                     <CardHeader className="pb-2">
                                                                         <CardTitle className="text-base flex items-center gap-2">
-                                                                            空针计数
+                                                                            扎针计数
                                                                         </CardTitle>
                                                                     </CardHeader>
                                                                     <CardContent className="space-y-2">
                                                                         {(() => {
-                                                                            // Filter players who have needle counts > 0
-                                                                            const needlePlayers = flowerSnapshot?.players.filter(p => (p.needleCount || 0) > 0) || [];
+                                                                            // Filter players who have totalNeedleCount > 0
+                                                                            const needlePlayers = flowerSnapshot?.players.filter(p => (p.totalNeedleCount || 0) > 0) || [];
 
                                                                             if (needlePlayers.length === 0) {
-                                                                                return <div className="text-sm opacity-50 text-center py-2">暂无空针记录</div>;
+                                                                                return <div className="text-sm opacity-50 text-center py-2">暂无扎针记录</div>;
                                                                             }
 
                                                                             return (
                                                                                 <div className="space-y-2">
                                                                                     {needlePlayers.map((player) => {
-                                                                                        const needleCount = player.needleCount || 0;
-                                                                                        const isDangerous = needleCount >= 2;
-                                                                                        const isWarning = needleCount === 1;
+                                                                                        const totalCount = player.totalNeedleCount || 0;
 
                                                                                         return (
                                                                                             <div key={player.seat} className={`flex items-center justify-between p-2 rounded border ${isNight ? "bg-white/5 border-white/10" : "bg-black/5 border-black/5"
                                                                                                 }`}>
                                                                                                 <div className="flex items-center gap-2">
-                                                                                                    <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-xs font-bold">
-                                                                                                        {player.seat}
-                                                                                                    </div>
-                                                                                                    <span className="text-sm">座位 {player.seat}</span>
+                                                                                                    <span className="text-sm pl-3">座位 {player.seat}</span>
                                                                                                 </div>
                                                                                                 <Badge
-                                                                                                    variant={isDangerous ? "destructive" : "default"}
-                                                                                                    className={`
-                                                                                                            ${isWarning && "bg-yellow-600 hover:bg-yellow-700"}
-                                                                                                        `}
+                                                                                                    variant="default"
+                                                                                                    className="bg-blue-600 hover:bg-blue-700"
                                                                                                 >
-                                                                                                    {needleCount}/2 空针
+                                                                                                    {totalCount} 针
                                                                                                 </Badge>
                                                                                             </div>
                                                                                         );

@@ -231,6 +231,7 @@ function createEmptyPlayer(seat: number): FlowerPlayerState {
     darkVoteTargetSeat: null,
     nightAction: null,
     needleCount: 0,
+    totalNeedleCount: 0,
     pendingNeedleDeath: false,
     flags: {},
   };
@@ -281,6 +282,7 @@ function syncSnapshotWithPresence(snapshot: FlowerSnapshot, presence: PresenceSt
         player.darkVoteTargetSeat = null;
         player.nightAction = null;
         player.needleCount = 0;
+        player.totalNeedleCount = 0;
         player.pendingNeedleDeath = false;
         player.role = null;
       }

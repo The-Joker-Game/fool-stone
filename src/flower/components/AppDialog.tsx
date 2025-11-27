@@ -5,8 +5,8 @@ import {
     DialogFooter,
     DialogHeader,
     DialogTitle,
-} from "@/components/ui/dialog";
-import { cn } from "@/lib/utils";
+} from "@/components/ui/dialog.tsx";
+import { cn } from "@/lib/utils.ts";
 import React from "react";
 
 interface AppDialogProps {

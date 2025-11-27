@@ -54,6 +54,7 @@ function createEmptyPlayer(seat: number): FlowerPlayerState {
     darkVoteTargetSeat: null,
     nightAction: null,
     needleCount: 0,
+    totalNeedleCount: 0,
     pendingNeedleDeath: false,
     flags: {},
   };
@@ -131,6 +132,7 @@ export function assignFlowerRoles(snapshot: FlowerSnapshot): AssignResult {
       player.originalRole = null;
       player.flags = {};
       player.needleCount = 0;
+      player.totalNeedleCount = 0;
       player.pendingNeedleDeath = false;
     }
   });
@@ -143,6 +145,7 @@ export function assignFlowerRoles(snapshot: FlowerSnapshot): AssignResult {
     player.originalRole = role;
     player.flags = { isBadSpecial: BAD_SPECIAL_ROLES.has(role) };
     player.needleCount = 0;
+    player.totalNeedleCount = 0;
     player.pendingNeedleDeath = false;
     snapshot.logs.push({
       at: now,
@@ -232,7 +235,7 @@ export function submitDayVote(snapshot: FlowerSnapshot, payload: SubmitDayVotePa
   if (voter.isMutedToday) return { ok: false, error: "被禁言玩家无法投票" };
   if (!target.isAlive) return { ok: false, error: "目标玩家已死亡" };
 
-  snapshot.day.votes = snapshot.day.votes.filter((v) => v.voterSeat === payload.voterSeat ? false : true);
+  snapshot.day.votes = snapshot.day.votes.filter((v) => v.voterSeat !== payload.voterSeat);
   snapshot.day.votes.push({
     voterSeat: payload.voterSeat,
     targetSeat: payload.targetSeat,
@@ -446,13 +449,25 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
 
   const alive = (seat: number | null | undefined) => !!seat && ctx.aliveSeats.has(seat);
 
+  // Helper to format player as "座位x+职位" (e.g., "座位1花蝴蝶")
+  const formatPlayer = (seat: number) => {
+    const player = ctx.playersBySeat.get(seat);
+    return `座位${seat}${player?.role || ""}`;
+  };
+
+  // Helper to format target, using "自己" if target is the actor
+  const formatTarget = (targetSeat: number, actorSeat: number) => {
+    if (targetSeat === actorSeat) return "自己";
+    return formatPlayer(targetSeat);
+  };
+
   // 1. Handle pending needle deaths from previous nights
   ctx.players.forEach((player) => {
     if (player.pendingNeedleDeath && player.isAlive) {
       deaths.push({ seat: player.seat, reason: "needles" });
       ctx.aliveSeats.delete(player.seat);
       player.pendingNeedleDeath = false;
-      logs.push(`座位 ${player.seat} 因累计两次空针，毒发身亡`);
+      logs.push(`${formatPlayer(player.seat)}因累计两次空针，毒发身亡`);
     }
   });
 
@@ -478,32 +493,32 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
   if (butterflyActive && mageAction && mageAction.targetSeat === butterflyPlayer?.seat && butterflyTarget === magePlayer?.seat) {
     // If they target each other, Magician wins (FB is sealed)
     butterflyActive = false;
-    logs.push("魔法师与花蝴蝶相互指向，花蝴蝶被封印，抱人失败");
+    logs.push(`${formatPlayer(magePlayer!.seat)}与${formatPlayer(butterflyPlayer!.seat)}相互指向，${formatPlayer(butterflyPlayer!.seat)}被封印，抱人失败`);
   }
 
   if (mageAction && mageAction.targetSeat && alive(mageAction.targetSeat) && magePlayer && alive(magePlayer.seat)) {
     if (butterflyActive && mageAction.targetSeat === butterflyTarget) {
       // Magician targets someone hugged by FB -> Blocked
-      logs.push(`魔法师试图封印座位 ${mageAction.targetSeat}，但被花蝴蝶挡下`);
+      logs.push(`${formatPlayer(magePlayer.seat)}试图封印${formatTarget(mageAction.targetSeat, magePlayer.seat)}，但被${formatPlayer(butterflyPlayer!.seat)}挡下`);
     } else {
       // Magician targets someone else (or FB directly)
       invalidActors.add(mageAction.targetSeat);
       if (mageAction.targetSeat === butterflyPlayer?.seat) {
         butterflyActive = false;
-        logs.push("魔法师封印了花蝴蝶，导致其抱人失效");
+        logs.push(`${formatPlayer(magePlayer.seat)}封印了${formatTarget(butterflyPlayer!.seat, magePlayer.seat)}，导致其抱人失效`);
       } else {
-        logs.push(`魔法师封印了座位 ${mageAction.targetSeat}，使其技能失效`);
+        logs.push(`${formatPlayer(magePlayer.seat)}封印了${formatTarget(mageAction.targetSeat, magePlayer.seat)}，使其技能失效`);
       }
     }
   }
 
   // 4. Register effects (Killer, Sniper, Doctor, Elder, etc.)
-  const killAttempts = new Map<number, Array<"killer" | "sniper">>();
+  const killAttempts = new Map<number, Array<{ sourceSeat: number; role: "killer" | "sniper" }>>();
   const docTargets = new Set<number>();
   const emptyNeedleTargets = new Set<number>();
 
   // Helper to handle effect registration with FB transfer logic
-  function registerEffect(targetSeat: number | null | undefined, sourceRole: string, effect: (seat: number) => void) {
+  function registerEffect(targetSeat: number | null | undefined, sourceSeat: number, sourceRole: string, effect: (seat: number) => void) {
     if (!targetSeat || !alive(targetSeat)) return;
 
     // If target is hugged by FB -> Transfer to FB (unless it's a check/seal which might be blocked? Rules say "FB suffers effects")
@@ -512,18 +527,12 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
     // Here we handle "Damage" and "Status".
 
     if (butterflyActive && targetSeat === butterflyTarget) {
-      // Target is hugged. Effect transfers to FB?
-      // Rule: "被抱者免疫所有指向技能；花蝴蝶遭受的效果复制给被抱者" -> Wait.
-      // "花蝴蝶：抱起 1 人，被抱者免疫所有指向技能；花蝴蝶遭受的效果复制给被抱者"
-      // This means:
-      // 1. Skill -> Hugged Person: Immune. (FB blocks it? Or just immune?)
-      //    Usually "Immune" means it hits FB instead? "花蝴蝶抱人挡刀" implies FB takes the hit.
-      //    Let's assume: Skill -> Hugged Person => Redirect to FB.
+      // Target is hugged. Effect is nullified (Immune).
+      // Rule: "被抱者免疫所有指向技能；花蝴蝶遭受的效果复制给被抱者"
+      // New Rule Clarification: "如果指向被抱者，那么花蝴蝶也不会受到影响"
+      // So we just log it and return. No transfer.
 
-      if (butterflyPlayer) {
-        logs.push(`${sourceRole} 的技能指向座位 ${targetSeat}，但被花蝴蝶挡下（转移至花蝴蝶）`);
-        effect(butterflyPlayer.seat);
-      }
+      logs.push(`${formatPlayer(sourceSeat)}的技能指向${formatTarget(targetSeat, sourceSeat)}，被${formatPlayer(butterflyPlayer!.seat)}免疫`);
       return;
     }
 
@@ -541,7 +550,7 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
     // 2. Target = FB -> FB takes effect. AND Hugged Person takes effect (Copy).
 
     if (butterflyActive && targetSeat === butterflyPlayer?.seat && butterflyTarget) {
-      logs.push(`${sourceRole} 的技能指向花蝴蝶，效果同时也作用于被抱者（座位 ${butterflyTarget}）`);
+      logs.push(`${formatPlayer(sourceSeat)}的技能指向${formatTarget(butterflyPlayer!.seat, sourceSeat)}，效果同时也作用于被抱者（${formatPlayer(butterflyTarget)}）`);
       effect(butterflyTarget);
     }
   }
@@ -549,10 +558,10 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
   // Killer
   const killerPlayer = getActiveRolePlayer("杀手");
   const killerAction = killerPlayer && !invalidActors.has(killerPlayer.seat) ? ctx.actionsByRole.get("杀手") : undefined;
-  if (killerAction && killerAction.targetSeat) {
-    registerEffect(killerAction.targetSeat, "杀手", (seat) => {
+  if (killerAction && killerAction.targetSeat && killerPlayer) {
+    registerEffect(killerAction.targetSeat, killerPlayer.seat, "杀手", (seat) => {
       const arr = killAttempts.get(seat) ?? [];
-      arr.push("killer");
+      arr.push({ sourceSeat: killerPlayer.seat, role: "killer" });
       killAttempts.set(seat, arr);
     });
   }
@@ -560,22 +569,31 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
   // Sniper
   const sniperPlayer = getActiveRolePlayer("狙击手");
   const sniperAction = sniperPlayer && !invalidActors.has(sniperPlayer.seat) ? ctx.actionsByRole.get("狙击手") : undefined;
-  if (sniperAction && sniperAction.targetSeat) {
-    registerEffect(sniperAction.targetSeat, "狙击手", (seat) => {
+  if (sniperAction && sniperAction.targetSeat && sniperPlayer) {
+    registerEffect(sniperAction.targetSeat, sniperPlayer.seat, "狙击手", (seat) => {
       const arr = killAttempts.get(seat) ?? [];
-      arr.push("sniper");
+      arr.push({ sourceSeat: sniperPlayer.seat, role: "sniper" });
       killAttempts.set(seat, arr);
     });
   }
 
   // Doctor
   const doctorPlayer = getActiveRolePlayer("医生");
-  const doctorAction = doctorPlayer && !invalidActors.has(doctorPlayer.seat) ? ctx.actionsByRole.get("医生") : undefined;
-  let doctorTargets: number[] = [];
-  if (doctorAction && doctorAction.targetSeat) {
+  // Check if doctor submitted an action, regardless of whether they are sealed
+  const doctorActionRaw = doctorPlayer ? ctx.actionsByRole.get("医生") : undefined;
+  const doctorAction = doctorPlayer && !invalidActors.has(doctorPlayer.seat) ? doctorActionRaw : undefined;
+
+  // Increment totalNeedleCount for the ORIGINAL target, even if doctor is sealed or target is protected by FB
+  if (doctorActionRaw && doctorActionRaw.targetSeat) {
+    const originalTarget = ctx.playersBySeat.get(doctorActionRaw.targetSeat);
+    if (originalTarget && alive(doctorActionRaw.targetSeat)) {
+      originalTarget.totalNeedleCount = (originalTarget.totalNeedleCount || 0) + 1;
+    }
+  }
+
+  if (doctorAction && doctorAction.targetSeat && doctorPlayer) {
     // Doctor logic is slightly different for narrative, but registerEffect handles the redirection
-    registerEffect(doctorAction.targetSeat, "医生", (seat) => {
-      doctorTargets.push(seat);
+    registerEffect(doctorAction.targetSeat, doctorPlayer.seat, "医生", (seat) => {
       docTargets.add(seat);
     });
   }
@@ -583,8 +601,8 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
   // Elder
   const elderPlayer = getActiveRolePlayer("森林老人");
   const elderAction = elderPlayer && !invalidActors.has(elderPlayer.seat) ? ctx.actionsByRole.get("森林老人") : undefined;
-  if (elderAction && elderAction.targetSeat) {
-    registerEffect(elderAction.targetSeat, "森林老人", (seat) => {
+  if (elderAction && elderAction.targetSeat && elderPlayer) {
+    registerEffect(elderAction.targetSeat, elderPlayer.seat, "森林老人", (seat) => {
       if (!mutedSeats.includes(seat)) mutedSeats.push(seat);
     });
   }
@@ -592,25 +610,25 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
   // Police
   const policePlayer = getActiveRolePlayer("警察");
   const policeAction = policePlayer && !invalidActors.has(policePlayer.seat) ? ctx.actionsByRole.get("警察") : undefined;
-  if (policeAction && policeAction.targetSeat) {
+  if (policeAction && policeAction.targetSeat && policePlayer) {
     if (butterflyActive && policeAction.targetSeat === butterflyTarget) {
       policeReports.push({ targetSeat: policeAction.targetSeat, result: "unknown" });
-      logs.push(`警察试图查验座位 ${policeAction.targetSeat}，但视线被花蝴蝶遮挡（免疫）`);
-      logs.push(`警察无法验出座位 ${policeAction.targetSeat}`);
+      logs.push(`${formatPlayer(policePlayer.seat)}试图查验${formatTarget(policeAction.targetSeat, policePlayer.seat)}，但视线被${formatPlayer(butterflyPlayer!.seat)}遮挡（免疫）`);
+      logs.push(`${formatPlayer(policePlayer.seat)}无法验出${formatTarget(policeAction.targetSeat, policePlayer.seat)}`);
     } else if (!alive(policeAction.targetSeat)) {
       policeReports.push({ targetSeat: policeAction.targetSeat, result: "unknown" });
-      logs.push(`警察无法验出座位 ${policeAction.targetSeat}`);
+      logs.push(`${formatPlayer(policePlayer.seat)}无法验出${formatTarget(policeAction.targetSeat, policePlayer.seat)}`);
     } else {
       const targetPlayer = ctx.playersBySeat.get(policeAction.targetSeat);
       if (!targetPlayer || !targetPlayer.role) {
         policeReports.push({ targetSeat: policeAction.targetSeat, result: "unknown" });
-        logs.push(`警察无法验出座位 ${policeAction.targetSeat}`);
+        logs.push(`${formatPlayer(policePlayer.seat)}无法验出${formatTarget(policeAction.targetSeat, policePlayer.seat)}`);
       } else if (BAD_SPECIAL_ROLES.has(targetPlayer.role)) {
         policeReports.push({ targetSeat: policeAction.targetSeat, result: "bad_special" });
-        logs.push(`警察验出座位 ${policeAction.targetSeat} 为坏特殊`);
+        logs.push(`${formatPlayer(policePlayer.seat)}验出${formatTarget(policeAction.targetSeat, policePlayer.seat)}为坏特殊`);
       } else {
         policeReports.push({ targetSeat: policeAction.targetSeat, result: "not_bad_special" });
-        logs.push(`警察验出座位 ${policeAction.targetSeat} 非坏特殊`);
+        logs.push(`${formatPlayer(policePlayer.seat)}验出${formatTarget(policeAction.targetSeat, policePlayer.seat)}非坏特殊`);
       }
     }
   }
@@ -627,7 +645,7 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
   if (goodCitizenAction && goodCitizenAction.targetSeat) {
     darkVotes.set(goodCitizenAction.targetSeat, (darkVotes.get(goodCitizenAction.targetSeat) ?? 0) + 1);
   } else if (goodCitizenPlayer && invalidActors.has(goodCitizenPlayer.seat)) {
-    logs.push("善民被封印，无法投出暗票");
+    logs.push(`${formatPlayer(goodCitizenPlayer.seat)}被封印，无法投出暗票`);
   }
 
   const evilCitizenPlayer = getActiveRolePlayer("恶民");
@@ -635,7 +653,7 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
   if (evilCitizenAction && evilCitizenAction.targetSeat) {
     darkVotes.set(evilCitizenAction.targetSeat, (darkVotes.get(evilCitizenAction.targetSeat) ?? 0) + 1);
   } else if (evilCitizenPlayer && invalidActors.has(evilCitizenPlayer.seat)) {
-    logs.push("恶民被封印，无法投出暗票");
+    logs.push(`${formatPlayer(evilCitizenPlayer.seat)}被封印，无法投出暗票`);
   }
 
   // 5. Resolve Doctor vs Kills (and generate consolidated logs)
@@ -648,25 +666,25 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
 
     if (attempts.length > 0) {
       // Was attacked
-      const attackers = attempts.map(a => a === "killer" ? "杀手" : "狙击手").join("与");
+      const attackers = attempts.map(a => formatPlayer(a.sourceSeat)).join("与");
 
       if (isHealed) {
         if (attempts.length >= 2) {
-          logs.push(`医生试图救治座位 ${seat}，但因伤势过重（遭${attackers}同时攻击），救治失败`);
+          logs.push(`${formatPlayer(doctorPlayer!.seat)}试图救治${formatTarget(seat, doctorPlayer!.seat)}，但因伤势过重（遭${attackers}同时攻击），救治失败`);
           // Still dies
         } else {
           killAttempts.delete(seat); // Saved!
-          logs.push(`${attackers}试图击杀座位 ${seat}，但被医生成功救治`);
+          logs.push(`${attackers}试图击杀${formatPlayer(seat)}，但被${formatPlayer(doctorPlayer!.seat)}成功救治`);
         }
       } else {
         // No doctor
-        logs.push(`${attackers}击杀了座位 ${seat}`);
+        logs.push(`${attackers}击杀了${formatPlayer(seat)}`);
       }
     } else {
       // Not attacked, but healed? -> Empty needle
       if (isHealed) {
         emptyNeedleTargets.add(seat);
-        logs.push(`医生对座位 ${seat} 施针，因无伤势造成空针`);
+        logs.push(`${formatPlayer(doctorPlayer!.seat)}对${formatTarget(seat, doctorPlayer!.seat)}施针，因无伤势造成空针`);
       }
     }
   });
@@ -674,7 +692,7 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
   // 6. Finalize Deaths
   killAttempts.forEach((reasons, seat) => {
     if (!reasons || reasons.length === 0) return;
-    const reason = reasons.includes("sniper") ? "sniper" : "killer";
+    const reason = reasons.some(r => r.role === "sniper") ? "sniper" : "killer";
     deaths.push({ seat, reason });
   });
 
@@ -690,7 +708,7 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
       // "累积 2 针次日死亡" -> Usually means they die at the END of this night? 
       // Or next night? "次日死亡" usually means "Die immediately at daybreak".
       // So we add to deaths list.
-      logs.push(`座位 ${seat} 累积两次空针，不幸身亡`);
+      logs.push(`${formatPlayer(seat)}累积两次空针，不幸身亡`);
     }
   });
 
@@ -716,8 +734,14 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
     // Let's check registerEffect for Elder again.
     // It logs nothing currently in my new code (except transfer).
     // So I should add a log here.
-    if (!logs.some(l => l.includes(`森林老人`) && l.includes(`座位 ${seat}`))) {
-      logs.push(`森林老人禁言了座位 ${seat}`);
+    if (!logs.some(l => l.includes(`森林老人`) && l.includes(`座位${seat}`))) {
+      // Note: formatPlayer(elderPlayer.seat) might not be available if elder is dead/null, but mutedSeats implies elder acted.
+      // But wait, mutedSeats could come from other sources? No, only Elder.
+      // So Elder must be the source.
+      const elder = getActiveRolePlayer("森林老人");
+      if (elder) {
+        logs.push(`${formatPlayer(elder.seat)}禁言了${formatTarget(seat, elder.seat)}`);
+      }
     }
   });
 
@@ -943,6 +967,7 @@ export function resetFlowerGame(snapshot: FlowerSnapshot): { ok: boolean; error?
     p.darkVoteTargetSeat = null;
     p.nightAction = null;
     p.needleCount = 0;
+    p.totalNeedleCount = 0;
     p.pendingNeedleDeath = false;
     p.flags = {};
   });

@@ -1,7 +1,7 @@
 // src/components/ConfirmDialog.tsx
 import { useState, useCallback } from "react";
-import { AppDialog } from "./AppDialog";
-import { Button } from "@/components/ui/button";
+import { AppDialog } from "./AppDialog.tsx";
+import { Button } from "@/components/ui/button.tsx";
 
 interface ConfirmOptions {
     title: string;

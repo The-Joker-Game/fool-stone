@@ -87,6 +87,7 @@ export interface FlowerPlayerState {
   darkVoteTargetSeat?: number | null;
   nightAction?: FlowerNightAction | null;
   needleCount: number;
+  totalNeedleCount: number;
   pendingNeedleDeath: boolean;
   flags?: {
     isBadSpecial?: boolean;

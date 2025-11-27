@@ -1,12 +1,12 @@
 // src/components/JoinRoomDialog.tsx
 import { useState, useCallback } from "react";
-import { AppDialog } from "./AppDialog";
-import { Button } from "@/components/ui/button";
+import { AppDialog } from "./AppDialog.tsx";
+import { Button } from "@/components/ui/button.tsx";
 import {
     InputOTP,
     InputOTPGroup,
     InputOTPSlot,
-} from "@/components/ui/input-otp";
+} from "@/components/ui/input-otp.tsx";
 
 
 
@@ -22,6 +22,8 @@ function JoinRoomContent({
     isNight: boolean
 }) {
     const [value, setValue] = useState(defaultValue);
+    const numberOfSlots = 4;
+    const slotClassName = isNight ? "" : "border-input border-black/50";
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === "Enter" && value.length === 4) {
@@ -39,10 +41,13 @@ function JoinRoomContent({
                 autoFocus
             >
                 <InputOTPGroup>
-                    <InputOTPSlot index={0} />
-                    <InputOTPSlot index={1} />
-                    <InputOTPSlot index={2} />
-                    <InputOTPSlot index={3} />
+                    {Array.from({ length: numberOfSlots }, (_, index) => (
+                        <InputOTPSlot
+                            key={index}
+                            index={index}
+                            className={slotClassName}
+                        />
+                    ))}
                 </InputOTPGroup>
             </InputOTP>
             <div className="flex flex-col gap-2 w-full">

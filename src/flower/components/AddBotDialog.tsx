@@ -1,53 +1,49 @@
-// src/components/EditNameDialog.tsx
-import { useState, useEffect, useCallback } from "react";
-import { AppDialog } from "./AppDialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+// src/components/AddBotDialog.tsx
+import { useState, useCallback } from "react";
+import { AppDialog } from "./AppDialog.tsx";
+import { Button } from "@/components/ui/button.tsx";
+import { Input } from "@/components/ui/input.tsx";
 
 
 
-function EditNameContent({
-    defaultValue,
+function AddBotContent({
     onConfirm,
     onCancel,
     isNight
 }: {
-    defaultValue: string,
     onConfirm: (val: string) => void,
     onCancel: () => void,
     isNight: boolean
 }) {
-    const [value, setValue] = useState(defaultValue);
-
-    // Reset value when defaultValue changes
-    useEffect(() => {
-        setValue(defaultValue);
-    }, [defaultValue]);
+    const [name, setName] = useState("");
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === "Enter" && value.trim()) {
-            onConfirm(value.trim());
+        if (e.key === "Enter") {
+            onConfirm(name);
+            setName("");
         }
     };
 
     return (
-        <div className="py-4">
+        <div className="flex flex-col gap-4 py-4">
             <Input
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="请输入昵称"
-                className={`text-lg h-12 ${isNight ? "bg-black/20 border-white/20 text-white placeholder:text-white/40" : ""}`}
+                placeholder="机器人昵称（可选）"
+                className={isNight ? "bg-white/10 border-white/20 text-white placeholder:text-white/50" : ""}
                 autoFocus
             />
-            <div className="w-full flex flex-col gap-2 mt-4">
+            <div className="flex flex-col gap-2 w-full">
                 <Button
                     type="button"
                     className={isNight ? "bg-white text-black hover:bg-white/90 w-full" : "w-full"}
-                    onClick={() => onConfirm(value.trim())}
-                    disabled={!value.trim()}
+                    onClick={() => {
+                        onConfirm(name);
+                        setName("");
+                    }}
                 >
-                    确定
+                    添加
                 </Button>
                 <Button
                     type="button"
@@ -62,22 +58,20 @@ function EditNameContent({
     );
 }
 
-export function useEditNameDialog(isNight: boolean = false) {
+export function useAddBotDialog(isNight: boolean = false) {
     const [isOpen, setIsOpen] = useState(false);
-    const [defaultValue, setDefaultValue] = useState("");
     const [resolvePromise, setResolvePromise] = useState<((value: string | null) => void) | null>(null);
 
-    const showDialog = useCallback((initialValue: string = ""): Promise<string | null> => {
-        setDefaultValue(initialValue);
+    const showDialog = useCallback((): Promise<string | null> => {
         setIsOpen(true);
         return new Promise<string | null>((resolve) => {
             setResolvePromise(() => resolve);
         });
     }, []);
 
-    const handleConfirm = useCallback((name: string) => {
+    const handleConfirm = useCallback((botName: string) => {
         if (resolvePromise) {
-            resolvePromise(name);
+            resolvePromise(botName);
             setResolvePromise(null);
         }
         setIsOpen(false);
@@ -91,19 +85,18 @@ export function useEditNameDialog(isNight: boolean = false) {
         setIsOpen(false);
     }, [resolvePromise]);
 
-    const EditNameDialogElement = (
+    const AddBotDialogElement = (
         <AppDialog
             open={isOpen}
             onOpenChange={(open) => {
                 if (!open) handleCancel();
                 setIsOpen(open);
             }}
-            title="修改昵称"
-            description="请输入新的昵称"
+            title="添加人机"
+            description="请输入机器人的昵称，留空则自动命名。"
             isNight={isNight}
         >
-            <EditNameContent
-                defaultValue={defaultValue}
+            <AddBotContent
                 onConfirm={handleConfirm}
                 onCancel={handleCancel}
                 isNight={isNight}
@@ -111,5 +104,5 @@ export function useEditNameDialog(isNight: boolean = false) {
         </AppDialog>
     );
 
-    return { showEditNameDialog: showDialog, EditNameDialogElement };
+    return { showAddBotDialog: showDialog, AddBotDialogElement };
 }

@@ -4,9 +4,9 @@ import {
     CardContent,
     CardHeader,
     CardTitle,
-} from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+} from "@/components/ui/card.tsx";
+import { Button } from "@/components/ui/button.tsx";
+import { Badge } from "@/components/ui/badge.tsx";
 import {
     Wifi,
     WifiOff,
@@ -27,7 +27,7 @@ import {
     GiPoliceBadge, GiRobber,
     GiWizardStaff
 } from "react-icons/gi";
-import type { FlowerRole, FlowerPhase, FlowerGameResult } from "../flower/types";
+import type { FlowerRole, FlowerPhase, FlowerGameResult } from "../types.ts";
 
 // Constants duplicated from FlowerRoom.tsx to ensure self-containment
 const ROLE_ICONS: Record<string, React.ElementType> = {

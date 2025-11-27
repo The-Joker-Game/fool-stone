@@ -1,6 +1,6 @@
-import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { Badge } from "../../components/ui/badge";
-import type { FlowerHistoryRecord, FlowerPlayerState } from "../types";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import type { FlowerHistoryRecord, FlowerPlayerState } from "@/flower/types";
 import { VotingGraph } from "./VotingGraph";
 import { Moon, Sun, Skull, MicOff, Gavel, Eye } from "lucide-react";
 

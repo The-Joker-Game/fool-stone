@@ -8,13 +8,13 @@ import {
     DrawerFooter,
     DrawerHeader,
     DrawerTitle,
-} from "@/components/ui/drawer";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+} from "@/components/ui/drawer.tsx";
+import { Button } from "@/components/ui/button.tsx";
+import { Card, CardContent } from "@/components/ui/card.tsx";
+import { Badge } from "@/components/ui/badge.tsx";
 import Avvvatars from "avvvatars-react";
 import { Check, X, Bot } from "lucide-react";
-import type { FlowerPlayerState } from "@/flower/types";
+import type { FlowerPlayerState } from "@/flower/types.ts";
 
 const isFakeBot = (name: string | undefined) => name?.endsWith("\u200B") ?? false;
 
