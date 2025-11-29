@@ -14,9 +14,10 @@ import {
   resolveDayVote,
   passTurn,
   resetFlowerGame,
+  canAutoAdvance,
 } from "./game-flower/engine.js";
 import type { FlowerPlayerState } from "./game-flower/types.js";
-import { checkAndScheduleBotActions, clearRoomTimeouts } from "./game-flower/bot-manager.js";
+import { checkAndScheduleActions } from "./game-flower/scheduler";
 
 /** ===== 简单内存房间状态 ===== */
 type PresenceUser = {
@@ -465,7 +466,7 @@ io.on("connection", (socket: Socket) => {
               // Just update timestamp if unready
               room.snapshot.updatedAt = Date.now();
               io.to(code).emit("state:full", { snapshot: room.snapshot, from: "server", at: Date.now() });
-              checkAndScheduleBotActions(room, io);
+              checkAndScheduleActions(room, io);
             }
           }
         }
@@ -708,7 +709,7 @@ io.on("connection", (socket: Socket) => {
           r.snapshot.chatMessages.push(msg);
           r.snapshot.updatedAt = Date.now();
           io.to(roomCode).emit("state:full", { snapshot: r.snapshot, from: "server", at: Date.now() });
-          checkAndScheduleBotActions(r, io);
+          checkAndScheduleActions(r, io);
         }
         // io.to(roomCode).emit("action", { action, payload: data, from, at: Date.now() }); // Removed to avoid duplicate
         return cb({ ok: true });
@@ -763,7 +764,22 @@ io.on("connection", (socket: Socket) => {
         if (res.ok) {
           if (shouldBroadcast) {
             io.to(roomCode).emit("state:full", { snapshot: r.snapshot, from: "server", at: Date.now() });
-            checkAndScheduleBotActions(r, io);
+
+            // Check for Auto-Advance
+            if (canAutoAdvance(r.snapshot)) {
+              let autoRes;
+              if (r.snapshot.phase === "night_actions") {
+                autoRes = resolveNight(r.snapshot);
+              } else if (r.snapshot.phase === "day_vote") {
+                autoRes = resolveDayVote(r.snapshot);
+              }
+
+              if (autoRes && autoRes.ok) {
+                io.to(roomCode).emit("state:full", { snapshot: r.snapshot, from: "server", at: Date.now() });
+              }
+            }
+
+            checkAndScheduleActions(r, io);
           }
           cb({ ok: true });
         } else {

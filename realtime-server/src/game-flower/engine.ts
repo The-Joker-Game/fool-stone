@@ -159,6 +159,7 @@ export function assignFlowerRoles(snapshot: FlowerSnapshot): AssignResult {
   snapshot.day = { speechOrder: [], currentSpeakerIndex: 0, voteOrder: [], votes: [], tally: {}, pendingExecution: null };
   snapshot.history = [];
   snapshot.logs.push({ at: now, text: "🌙 花蝴蝶对局开始，身份已分发" });
+  snapshot.deadline = now + 30000;
   snapshot.updatedAt = now;
 
   // Initialize bot guesses for Day 1
@@ -354,6 +355,7 @@ export function resolveDayVote(snapshot: FlowerSnapshot): ResolveResult {
 
     if (!hasLastWords) {
       snapshot.phase = "night_actions";
+      snapshot.deadline = Date.now() + 30000;
       snapshot.night.submittedActions = [];
       snapshot.night.lastActions = [];
     }
@@ -806,6 +808,25 @@ function applyNightOutcome(snapshot: FlowerSnapshot, outcome: NightOutcome) {
   if (nightResult) {
     finalizeGame(snapshot, nightResult);
   } else {
+    // Check for Night Death Last Words
+    const deadSeats = outcome.deaths.map(d => d.seat);
+    const lastWordsQueue = deadSeats.filter(seat => !outcome.mutedSeats.includes(seat));
+
+    if (lastWordsQueue.length > 0) {
+      snapshot.phase = "day_last_words";
+      snapshot.day.lastWords = {
+        queue: lastWordsQueue,
+        nextPhase: "day_discussion"
+      };
+      // We use currentSpeakerIndex to track position in the queue (which is just an array of seats)
+      // But wait, speechOrder is for discussion. lastWords.queue is for last words.
+      // We can reuse currentSpeakerIndex to index into lastWords.queue? Yes.
+      snapshot.day.currentSpeakerIndex = 0;
+      snapshot.logs.push({ at: now, text: "💀 昨晚死亡玩家发表遗言" });
+    } else {
+      snapshot.phase = "day_discussion";
+    }
+
     const aliveSeats = snapshot.players
       .filter(p => p.isAlive)
       .map(p => p.seat)
@@ -834,25 +855,6 @@ function applyNightOutcome(snapshot: FlowerSnapshot, outcome: NightOutcome) {
 
     snapshot.day.speechOrder = speechOrder.filter(seat => !outcome.mutedSeats.includes(seat));
     snapshot.day.currentSpeakerIndex = 0;
-
-    // Check for Night Death Last Words
-    const deadSeats = outcome.deaths.map(d => d.seat);
-    const lastWordsQueue = deadSeats.filter(seat => !outcome.mutedSeats.includes(seat));
-
-    if (lastWordsQueue.length > 0) {
-      snapshot.phase = "day_last_words";
-      snapshot.day.lastWords = {
-        queue: lastWordsQueue,
-        nextPhase: "day_discussion"
-      };
-      // We use currentSpeakerIndex to track position in the queue (which is just an array of seats)
-      // But wait, speechOrder is for discussion. lastWords.queue is for last words.
-      // We can reuse currentSpeakerIndex to index into lastWords.queue? Yes.
-      snapshot.day.currentSpeakerIndex = 0;
-      snapshot.logs.push({ at: now, text: "💀 昨晚死亡玩家发表遗言" });
-    } else {
-      snapshot.phase = "day_discussion";
-    }
   }
   outcome.logs.forEach((text) => snapshot.logs.push({ at: now, text }));
   handleRoleUpgrades(snapshot, outcome);
@@ -919,6 +921,7 @@ export function passTurn(snapshot: FlowerSnapshot): { ok: boolean; error?: strin
           p.hasVotedToday = false;
           p.isMutedToday = false;
         });
+        snapshot.deadline = Date.now() + 30000;
         snapshot.logs.push({ at: Date.now(), text: "🌙 进入夜晚" });
       } else {
         snapshot.logs.push({ at: Date.now(), text: "☀️ 遗言结束，进入白天讨论" });
@@ -938,6 +941,7 @@ export function passTurn(snapshot: FlowerSnapshot): { ok: boolean; error?: strin
   if (nextIndex >= day.speechOrder.length) {
     // All players have spoken, move to vote phase
     snapshot.phase = "day_vote";
+    snapshot.deadline = Date.now() + 30000;
     snapshot.day.currentSpeakerIndex = 0; // Reset for next day? Or irrelevant.
     snapshot.logs.push({ at: Date.now(), text: "☀️ 发言结束，进入投票阶段" });
   } else {
@@ -981,5 +985,23 @@ export function resetFlowerGame(snapshot: FlowerSnapshot): { ok: boolean; error?
   });
 
   snapshot.updatedAt = now;
+  snapshot.deadline = undefined;
   return { ok: true };
+}
+
+export function canAutoAdvance(snapshot: FlowerSnapshot): boolean {
+  if (!snapshot.deadline) return false;
+
+  // Rule: Must be past deadline
+  if (Date.now() < snapshot.deadline) return false;
+
+  if (snapshot.phase === "night_actions") {
+    const actionablePlayers = snapshot.players.filter(p => p.isAlive && p.role);
+    return actionablePlayers.every(p => !!p.nightAction);
+  } else if (snapshot.phase === "day_vote") {
+    const actionablePlayers = snapshot.players.filter(p => p.isAlive);
+    return actionablePlayers.every(p => p.hasVotedToday);
+  }
+
+  return false;
 }

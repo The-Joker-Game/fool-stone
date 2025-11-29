@@ -355,6 +355,9 @@ function mergeIncomingSnapshot(target: FlowerSnapshot, incoming: FlowerSnapshotI
   if ("gameResult" in incoming) {
     target.gameResult = (incoming.gameResult as FlowerSnapshot["gameResult"]) ?? null;
   }
+  if ("deadline" in incoming) {
+    target.deadline = incoming.deadline;
+  }
   target.updatedAt = typeof incoming.updatedAt === "number" ? incoming.updatedAt : Date.now();
   saveSnapshotToCache(target);
 }

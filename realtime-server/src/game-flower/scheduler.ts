@@ -1,4 +1,4 @@
-// realtime-server/src/game-flower/bot-manager.ts
+// realtime-server/src/game-flower/scheduler.ts
 import type { Server } from "socket.io";
 // import type { Room } from "../types.js"; // Removed to avoid conflict with index.ts local Room type
 import {
@@ -6,7 +6,8 @@ import {
     submitDayVote,
     passTurn,
     resolveNight,
-    resolveDayVote
+    resolveDayVote,
+    canAutoAdvance
 } from "./engine.js";
 import {
     getBotNightActionTarget,
@@ -28,6 +29,9 @@ function addTimeout(roomCode: string, timeout: NodeJS.Timeout) {
     roomTimeouts.get(roomCode)!.add(timeout);
 }
 
+// Map<RoomCode, DeadlineTimestamp>
+const scheduledDeadlines = new Map<string, number>();
+
 export function clearRoomTimeouts(roomCode: string) {
     const timeouts = roomTimeouts.get(roomCode);
     if (timeouts) {
@@ -35,12 +39,16 @@ export function clearRoomTimeouts(roomCode: string) {
         timeouts.clear();
         roomTimeouts.delete(roomCode);
     }
+    scheduledDeadlines.delete(roomCode);
 }
 
-export function checkAndScheduleBotActions(room: { code: string; snapshot: any }, io: Server) {
+export function checkAndScheduleActions(room: { code: string; snapshot: any }, io: Server) {
     if (!room.snapshot || room.snapshot.engine !== "flower") return;
     const snapshot = room.snapshot as FlowerSnapshot;
     const roomCode = room.code;
+
+    // Schedule Deadline Reminder
+    scheduleDeadlineReminder(room, io);
 
     // 0. Initialize Bot Memory if needed
     snapshot.players.forEach(p => {
@@ -141,7 +149,7 @@ export function checkAndScheduleBotActions(room: { code: string; snapshot: any }
                         console.log(`[Bot] Seat ${currentSpeakerSeat} passed turn`);
                         io.to(roomCode).emit("state:full", { snapshot: snapAfterSpeech, from: "server", at: Date.now() });
                         // Recursive check for next bot
-                        checkAndScheduleBotActions(room, io);
+                        checkAndScheduleActions(room, io);
                     }
                 }, passDelay);
                 addTimeout(roomCode, t2);
@@ -202,7 +210,7 @@ export function checkAndScheduleBotActions(room: { code: string; snapshot: any }
                             console.log(`[Bot] Seat ${currentSpeakerSeat} passed last words`);
                             io.to(roomCode).emit("state:full", { snapshot: snapAfterSpeech, from: "server", at: Date.now() });
                             // Recursive check for next bot
-                            checkAndScheduleBotActions(room, io);
+                            checkAndScheduleActions(room, io);
                         }
                     }, passDelay);
                     addTimeout(roomCode, t2);
@@ -242,4 +250,97 @@ export function checkAndScheduleBotActions(room: { code: string; snapshot: any }
             }
         });
     }
+}
+
+function scheduleDeadlineReminder(room: { code: string; snapshot: any }, io: Server) {
+    const snapshot = room.snapshot as FlowerSnapshot;
+    const roomCode = room.code;
+    const deadline = snapshot.deadline;
+
+    if (!deadline) return;
+
+    // Check if we already scheduled for this deadline
+    if (scheduledDeadlines.get(roomCode) === deadline) return;
+
+    const now = Date.now();
+    const delay = deadline - now;
+
+    if (delay <= 0) return; // Deadline already passed
+
+    scheduledDeadlines.set(roomCode, deadline);
+
+    const t = setTimeout(() => {
+        // Re-fetch room/snapshot
+        if (!room.snapshot || room.snapshot.engine !== "flower") return;
+        const currentSnap = room.snapshot as FlowerSnapshot;
+
+        // Verify deadline is still the same (phase hasn't changed or reset)
+        if (currentSnap.deadline !== deadline) return;
+
+        // 1. Check for Auto-Advance (All actionable players have acted AND deadline passed)
+        if (canAutoAdvance(currentSnap)) {
+            let res;
+            if (currentSnap.phase === "night_actions") {
+                res = resolveNight(currentSnap);
+            } else if (currentSnap.phase === "day_vote") {
+                res = resolveDayVote(currentSnap);
+            }
+
+            if (res && res.ok) {
+                io.to(roomCode).emit("state:full", { snapshot: currentSnap, from: "server", at: Date.now() });
+                checkAndScheduleActions(room, io);
+                return; // Auto-advanced, no reminder needed
+            }
+        }
+
+        // 2. If not auto-advanced, send reminder to inactive humans
+        let targets: number[] = [];
+
+        if (currentSnap.phase === "night_actions") {
+            targets = currentSnap.players
+                .filter(p => p.isAlive && p.role && !p.nightAction && !p.isBot)
+                .map(p => p.seat);
+        } else if (currentSnap.phase === "day_vote") {
+            targets = currentSnap.players
+                .filter(p => p.isAlive && !p.hasVotedToday && !p.isBot)
+                .map(p => p.seat);
+        }
+
+        if (targets.length > 0) {
+            const mentions = targets.map(seat => {
+                const p = currentSnap.players.find(pl => pl.seat === seat);
+                return { seat, name: p?.name || `座位${seat}` };
+            });
+
+            const mentionText = mentions.map(m => `@${m.name}`).join(" ");
+
+            let actionText = "";
+            switch (currentSnap.phase) {
+                case "day_vote":
+                    actionText = "请尽快投票";
+                    break;
+                default:
+                    actionText = "请尽快行动";
+                    break;
+            }
+
+            const content = `${mentionText} ${actionText}`;
+
+            const msgId = `sys_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+            currentSnap.chatMessages.push({
+                id: msgId,
+                sessionId: "system",
+                senderSeat: 0,
+                senderName: "系统",
+                content,
+                mentions,
+                timestamp: Date.now()
+            });
+            currentSnap.updatedAt = Date.now();
+
+            io.to(roomCode).emit("state:full", { snapshot: currentSnap, from: "server", at: Date.now() });
+        }
+    }, delay);
+
+    addTimeout(roomCode, t);
 }

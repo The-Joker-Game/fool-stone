@@ -236,7 +236,7 @@ export default function FlowerRoom() {
     const [dayVoteDrawerOpen, setDayVoteDrawerOpen] = useState(false);
     const [nightActionDrawerOpen, setNightActionDrawerOpen] = useState(false);
 
-    const [notificationType, setNotificationType] = useState<'vote' | 'night' | null>(null);
+
 
     const [activeTab, setActiveTab] = useState<TabId>("players");
 
@@ -309,53 +309,26 @@ export default function FlowerRoom() {
         return ["players", "chat", "actions"];
     }, [roomCode, flowerPhase]);
 
-    const [phaseDeadline, setPhaseDeadline] = useState<number | null>(null);
     const [timeLeft, setTimeLeft] = useState(0);
 
+    const notificationType = useMemo(() => {
+        if (flowerPhase === 'day_vote') return 'vote';
+        if (flowerPhase === 'night_actions') return 'night';
+        return null;
+    }, [flowerPhase]);
+
     // —— Notification Logic ——
-    // 1. Set deadline when phase changes
+    // Update time left based on snapshot deadline
     useEffect(() => {
-        if (flowerPhase === 'day_vote' || flowerPhase === 'night_actions') {
-            if (!roomCode || !flowerSnapshot) return;
-
-            const key = `flower-timer-${roomCode}-${flowerSnapshot.dayCount}-${flowerPhase}`;
-            const saved = localStorage.getItem(key);
-
-            let deadline: number;
-            // Check if saved deadline is in the future, otherwise create a new one
-            if (saved) {
-                const savedDeadline = parseInt(saved, 10);
-                // Only use saved deadline if it's still in the future
-                if (savedDeadline > Date.now()) {
-                    deadline = savedDeadline;
-                } else {
-                    // Saved deadline has expired, create a new one
-                    deadline = Date.now() + 30000;
-                    localStorage.setItem(key, deadline.toString());
-                }
-            } else {
-                deadline = Date.now() + 30000;
-                localStorage.setItem(key, deadline.toString());
-            }
-
-            setPhaseDeadline(deadline);
-            setNotificationType(flowerPhase === 'day_vote' ? 'vote' : 'night');
-        } else {
-            setPhaseDeadline(null);
-            setNotificationType(null);
-        }
-    }, [flowerPhase, roomCode, flowerSnapshot?.dayCount]);
-
-    // 2. Update time left based on deadline
-    useEffect(() => {
-        if (!phaseDeadline) {
+        const deadline = flowerSnapshot?.deadline;
+        if (!deadline || (flowerPhase !== 'day_vote' && flowerPhase !== 'night_actions')) {
             setTimeLeft(0);
             return;
         }
 
         const updateTimer = () => {
             const now = Date.now();
-            const remaining = Math.max(0, Math.ceil((phaseDeadline - now) / 1000));
+            const remaining = Math.max(0, Math.ceil((deadline - now) / 1000));
             setTimeLeft(remaining);
         };
 
@@ -364,23 +337,7 @@ export default function FlowerRoom() {
 
         const timer = setInterval(updateTimer, 1000);
         return () => clearInterval(timer);
-    }, [phaseDeadline]);
-
-    // 3. Clean up old timer data when game is reset
-    useEffect(() => {
-        // When game phase goes back to lobby, clean up all timer data for this room
-        if (flowerPhase === 'lobby' && roomCode) {
-            // Clear all timer keys for this room
-            const keysToRemove: string[] = [];
-            for (let i = 0; i < localStorage.length; i++) {
-                const key = localStorage.key(i);
-                if (key && key.startsWith(`flower-timer-${roomCode}-`)) {
-                    keysToRemove.push(key);
-                }
-            }
-            keysToRemove.forEach(key => localStorage.removeItem(key));
-        }
-    }, [flowerPhase, roomCode]);
+    }, [flowerSnapshot?.deadline, flowerPhase]);
 
     const isMyTurn = useMemo(() => {
         if (flowerPhase === 'day_discussion') {

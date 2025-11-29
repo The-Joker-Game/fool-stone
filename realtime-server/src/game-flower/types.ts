@@ -147,4 +147,5 @@ export interface FlowerSnapshot {
   pendingAction?: { role: FlowerRole; seat: number } | null;
   gameResult?: FlowerGameResult | null;
   updatedAt: number;
+  deadline?: number;
 }
