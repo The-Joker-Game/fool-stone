@@ -17,7 +17,7 @@ import {
   canAutoAdvance,
 } from "./game-flower/engine.js";
 import type { FlowerPlayerState } from "./game-flower/types.js";
-import { checkAndScheduleActions } from "./game-flower/scheduler";
+import { checkAndScheduleActions } from "./game-flower/scheduler.js";
 
 /** ===== 简单内存房间状态 ===== */
 type PresenceUser = {
