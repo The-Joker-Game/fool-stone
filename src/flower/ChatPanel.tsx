@@ -7,7 +7,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import tippy, { type Instance as TippyInstance } from "tippy.js";
 import "tippy.js/dist/tippy.css";
 import Avvvatars from "avvvatars-react";
-import { Send, MessageSquareOff, ArrowDown, Mic, MicOff, SkipForward } from "lucide-react";
+import { Send, MessageSquareOff, ArrowDown, Mic, MicOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
