@@ -173,7 +173,7 @@ const SpeakingOrderHeader = ({
                     onClick={onPassTurn}
                     className="bg-orange-500 hover:bg-orange-600 text-white shadow-md animate-in fade-in zoom-in duration-300 flex items-center gap-1 px-3"
                 >
-                    <SkipForward className="w-3 h-3" />
+                    结束发言
                 </Button>
             )}
         </div>
