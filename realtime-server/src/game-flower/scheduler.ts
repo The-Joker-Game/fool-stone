@@ -21,6 +21,7 @@ import type { FlowerSnapshot } from "./types.js";
 // Keep track of scheduled timeouts to avoid duplicates or memory leaks if room closes
 // Map<RoomCode, Set<TimeoutId>>
 const roomTimeouts = new Map<string, Set<NodeJS.Timeout>>();
+const speakerConfirmTimers = new Map<string, { key: string; timeout: NodeJS.Timeout }>();
 
 function addTimeout(roomCode: string, timeout: NodeJS.Timeout) {
     if (!roomTimeouts.has(roomCode)) {
@@ -39,6 +40,11 @@ export function clearRoomTimeouts(roomCode: string) {
         timeouts.clear();
         roomTimeouts.delete(roomCode);
     }
+    const speakerTimeout = speakerConfirmTimers.get(roomCode);
+    if (speakerTimeout) {
+        clearTimeout(speakerTimeout.timeout);
+        speakerConfirmTimers.delete(roomCode);
+    }
     scheduledDeadlines.delete(roomCode);
 }
 
@@ -49,6 +55,7 @@ export function checkAndScheduleActions(room: { code: string; snapshot: any }, i
 
     // Schedule Deadline Reminder
     scheduleDeadlineReminder(room, io);
+    scheduleSpeakerConfirmation(room, io);
 
     // 0. Initialize Bot Memory if needed
     snapshot.players.forEach(p => {
@@ -302,7 +309,8 @@ function scheduleDeadlineReminder(room: { code: string; snapshot: any }, io: Ser
                 .map(p => p.seat);
         } else if (currentSnap.phase === "day_vote") {
             targets = currentSnap.players
-                .filter(p => p.isAlive && !p.hasVotedToday && !p.isBot)
+                // Only remind alive, unmuted humans who仍有投票权
+                .filter(p => p.isAlive && !p.hasVotedToday && !p.isBot && !p.isMutedToday)
                 .map(p => p.seat);
         }
 
@@ -343,4 +351,59 @@ function scheduleDeadlineReminder(room: { code: string; snapshot: any }, io: Ser
     }, delay);
 
     addTimeout(roomCode, t);
+}
+
+function scheduleSpeakerConfirmation(room: { code: string; snapshot: any }, io: Server) {
+    const snapshot = room.snapshot as FlowerSnapshot;
+    const roomCode = room.code;
+
+    if (!snapshot || snapshot.engine !== "flower" || snapshot.phase !== "day_discussion") {
+        const pending = speakerConfirmTimers.get(roomCode);
+        if (pending) {
+            clearTimeout(pending.timeout);
+            speakerConfirmTimers.delete(roomCode);
+        }
+        return;
+    }
+
+    const day = snapshot.day;
+    const currentSeat = day.speechOrder?.[day.currentSpeakerIndex];
+    if (!currentSeat) {
+        const pending = speakerConfirmTimers.get(roomCode);
+        if (pending) {
+            clearTimeout(pending.timeout);
+            speakerConfirmTimers.delete(roomCode);
+        }
+        return;
+    }
+
+    const key = `${snapshot.dayCount}-${currentSeat}-${day.currentSpeakerIndex}`;
+    const existing = speakerConfirmTimers.get(roomCode);
+    if (existing?.key === key) return;
+    if (existing) {
+        clearTimeout(existing.timeout);
+        speakerConfirmTimers.delete(roomCode);
+    }
+
+    const timeout = setTimeout(() => {
+        speakerConfirmTimers.delete(roomCode);
+        if (!room.snapshot || room.snapshot.engine !== "flower") return;
+        const currentSnap = room.snapshot as FlowerSnapshot;
+        if (currentSnap.phase !== "day_discussion") return;
+        const seatNow = currentSnap.day.speechOrder?.[currentSnap.day.currentSpeakerIndex];
+        const status = currentSnap.day.speakerStatus;
+        const currentKey = `${currentSnap.dayCount}-${seatNow}-${currentSnap.day.currentSpeakerIndex}`;
+        if (currentKey !== key) return;
+        if (!seatNow) return;
+        if (status?.seat === seatNow && status.state === "typing") return;
+
+        const res = passTurn(currentSnap);
+        if (res.ok) {
+            io.to(roomCode).emit("state:full", { snapshot: currentSnap, from: "server", at: Date.now() });
+            checkAndScheduleActions(room, io);
+        }
+    }, 3 * 60 * 1000);
+
+    speakerConfirmTimers.set(roomCode, { key, timeout });
+    addTimeout(roomCode, timeout);
 }

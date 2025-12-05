@@ -23,13 +23,13 @@ export function GameReview({ history, players }: GameReviewProps) {
     return (
         <div className="space-y-6">
             {sortedHistory.map((record) => {
-                // 1. Snapshot for Night Phase (before upgrades)
+                // 1. Snapshot for Night Phase (before upgrades) - kept for potential future use
                 const playersForNight = players.map(p => ({
                     ...p,
                     role: currentRoleMap.get(p.seat) ?? p.role
                 }));
 
-                // Convert night actions to vote entries for VotingGraph
+                // Convert night actions to vote entries (night graph removed; keep transform for possible reuse)
                 const nightVotes: FlowerVoteEntry[] = record.night.actions
                     .filter((a) => a.targetSeat != null)
                     .map((a) => ({
@@ -59,6 +59,9 @@ export function GameReview({ history, players }: GameReviewProps) {
                     });
                 }
 
+                void playersForNight;
+                void nightVotes;
+
                 return (
                     <Card key={record.dayCount} className="backdrop-blur-sm bg-white/50 text-slate-900 border-white/40 shadow-sm overflow-hidden">
                         <CardHeader className="pb-2 border-b border-slate-200/50">
@@ -73,14 +76,6 @@ export function GameReview({ history, players }: GameReviewProps) {
                                     <Moon className="w-4 h-4" />
                                     <span className="font-medium">夜晚行动</span>
                                 </div>
-
-                                {nightVotes.length > 0 ? (
-                                    <div className="mb-4">
-                                        <VotingGraph players={playersForNight} votes={nightVotes} isNight={false} showRole={true} />
-                                    </div>
-                                ) : (
-                                    <div className="text-sm opacity-50 mb-4 text-center py-4">无行动记录</div>
-                                )}
 
                                 {/* Event Summary Logs */}
                                 {record.night.result.logs && record.night.result.logs.length > 0 && (

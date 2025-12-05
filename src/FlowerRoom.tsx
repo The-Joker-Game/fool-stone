@@ -252,6 +252,8 @@ export default function FlowerRoom() {
 
     const resetGame = useFlowerStore((state: FlowerStore) => state.resetGame);
     const passTurn = useFlowerStore((state: FlowerStore) => state.passTurn);
+    const forcePassTurn = useFlowerStore((state: FlowerStore) => state.forcePassTurn);
+    const confirmSpeaking = useFlowerStore((state: FlowerStore) => state.confirmSpeaking);
 
     /** 列表派生 */
     const users = presence?.users ?? [];
@@ -268,6 +270,7 @@ export default function FlowerRoom() {
     const flowerPhase = flowerSnapshot?.phase ?? "lobby";
     const flowerDayCount = flowerSnapshot?.dayCount ?? 0;
     const gameResult = flowerSnapshot?.gameResult ?? null;
+    const speakerStatus = flowerSnapshot?.day?.speakerStatus ?? null;
     const everyoneReady = useMemo(() => {
         if (flowerPhase !== "lobby") return true;
         const playerReadyCheck = (p: FlowerPlayerState) => (p.isBot ? true : !!p.isReady);
@@ -295,6 +298,10 @@ export default function FlowerRoom() {
     };
     const myAlive = !!myFlowerPlayer?.isAlive;
     const myMuted = !!myFlowerPlayer?.isMutedToday;
+    const sortedFlowerPlayers = useMemo(
+        () => [...flowerPlayers].sort((a, b) => Number(b.isAlive) - Number(a.isAlive) || a.seat - b.seat),
+        [flowerPlayers]
+    );
 
 
     const isNight = flowerPhase === "night_actions" || flowerPhase === "night_result";
@@ -339,11 +346,15 @@ export default function FlowerRoom() {
         return () => clearInterval(timer);
     }, [flowerSnapshot?.deadline, flowerPhase]);
 
+    const currentDiscussionSpeakerSeat = useMemo(() => {
+        if (flowerPhase !== "day_discussion") return null;
+        if (!flowerSnapshot?.day?.speechOrder) return null;
+        return flowerSnapshot.day.speechOrder[flowerSnapshot.day.currentSpeakerIndex] ?? null;
+    }, [flowerPhase, flowerSnapshot?.day]);
+
     const isMyTurn = useMemo(() => {
         if (flowerPhase === 'day_discussion') {
-            if (!flowerSnapshot?.day?.speechOrder) return false;
-            const currentSpeakerSeat = flowerSnapshot.day.speechOrder[flowerSnapshot.day.currentSpeakerIndex];
-            return currentSpeakerSeat === mySeat;
+            return currentDiscussionSpeakerSeat === mySeat;
         }
         if (flowerPhase === 'day_last_words') {
             if (!flowerSnapshot?.day?.lastWords?.queue) return false;
@@ -351,7 +362,23 @@ export default function FlowerRoom() {
             return currentSpeakerSeat === mySeat;
         }
         return false;
-    }, [flowerPhase, flowerSnapshot?.day, mySeat]);
+    }, [flowerPhase, flowerSnapshot?.day, mySeat, currentDiscussionSpeakerSeat]);
+
+    const [confirmingSpeak, setConfirmingSpeak] = useState(false);
+    const showSpeakerPrompt = flowerPhase === "day_discussion"
+        && currentDiscussionSpeakerSeat === mySeat
+        && speakerStatus?.seat === mySeat
+        && speakerStatus.state === "awaiting";
+
+    const handleConfirmSpeaking = useCallback(async () => {
+        if (confirmingSpeak) return;
+        setConfirmingSpeak(true);
+        try {
+            await confirmSpeaking();
+        } finally {
+            setConfirmingSpeak(false);
+        }
+    }, [confirmSpeaking, confirmingSpeak]);
 
 
 
@@ -943,6 +970,22 @@ export default function FlowerRoom() {
         <div className="h-[100dvh] flex flex-col overflow-hidden">
             <VantaBackground isNight={isNight} />
 
+            {showSpeakerPrompt && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-6">
+                    <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full text-center space-y-4">
+                        <div className="text-xl font-bold text-gray-900">轮到你发言了</div>
+                        <Button
+                            size="lg"
+                            className="w-full bg-orange-500 hover:bg-orange-600"
+                            onClick={handleConfirmSpeaking}
+                            disabled={confirmingSpeak}
+                        >
+                            {confirmingSpeak ? "正在开启..." : "确认开始发言"}
+                        </Button>
+                    </div>
+                </div>
+            )}
+
             <div className="w-full max-w-md mx-auto flex flex-col h-full relative z-10">
 
                 {/* Fixed Top Card - 不滚动 */}
@@ -1070,7 +1113,7 @@ export default function FlowerRoom() {
                                                     </div>
                                                     <ScrollArea className="space-y-2 min-h-0 flex-1 gap-4">
                                                         {flowerSnapshot
-                                                            ? flowerPlayers.map((player: FlowerPlayerState) => {
+                                                            ? sortedFlowerPlayers.map((player: FlowerPlayerState) => {
                                                                 const isFake = isFakeBot(player.name);
                                                                 const displayName = player.name?.replace(/\u200B/g, "") || `座位${player.seat}`;
                                                                 const tags: string[] = [];
@@ -1085,17 +1128,29 @@ export default function FlowerRoom() {
                                                                 statusParts.push(player.sessionId ? (player.isAlive ? "存活" : "死亡") : "空位");
                                                                 if (player.isMutedToday) statusParts.push("禁言");
                                                                 if (player.hasVotedToday && flowerPhase === "day_vote") statusParts.push("已投票");
+                                                                if (flowerPhase === "day_discussion" && speakerStatus?.seat === player.seat) {
+                                                                    statusParts.push(speakerStatus.state === "typing" ? "打字中" : "准备发言");
+                                                                }
                                                                 // Show night action status only to room owner during night_actions phase
                                                                 if (isHost && flowerPhase === "night_actions" && player.nightAction) statusParts.push("已行动");
 
+                                                                const isDead = !player.isAlive;
+                                                                const cardTone = isDead
+                                                                    ? "bg-gray-100 border-gray-200 text-gray-600"
+                                                                    : themeClass;
+                                                                const nameClass = isDead ? "text-gray-600" : (isNight ? "text-white" : "");
+                                                                const statusLineClass = isDead ? "text-red-500 font-semibold" : mutedTextClass;
+                                                                const avatarWrapperClass = `${presenceInfo?.isDisconnected && !isFake ? "opacity-50 grayscale" : ""} ${isDead ? "opacity-70 grayscale" : ""}`;
+                                                                const actionButtonDeadClass = isDead ? "bg-gray-100 text-gray-600 border-gray-300 hover:bg-gray-200" : "";
+
                                                                 return (
-                                                                    <Card key={`seat-${player.seat}`} className={themeClass}>
+                                                                    <Card key={`seat-${player.seat}`} className={`${cardTone} relative`}>
                                                                         <CardContent className="p-4">
                                                                             <div className="flex items-center gap-3">
                                                                                 {/* Avatar */}
                                                                                 {player.sessionId || player.isBot ? (
                                                                                     <div className="relative">
-                                                                                        <div className={presenceInfo?.isDisconnected && !isFake ? "opacity-50 grayscale" : ""}>
+                                                                                        <div className={avatarWrapperClass}>
                                                                                             <Avvvatars
                                                                                                 value={displayName}
                                                                                                 size={48}
@@ -1118,12 +1173,12 @@ export default function FlowerRoom() {
 
                                                                                 {/* Player Info */}
                                                                                 <div className="flex-1">
-                                                                                    <div className={`font-medium ${isNight ? "text-white" : ""}`}>
+                                                                                    <div className={`font-medium ${nameClass}`}>
                                                                                         {player.sessionId ? displayName : `座位${player.seat}`}
                                                                                     </div>
-                                                                                    <div className={`text-xs ${mutedTextClass}`}>#{player.seat}</div>
+                                                                                    <div className={`text-xs ${isDead ? "text-gray-500" : mutedTextClass}`}>#{player.seat}</div>
                                                                                     {statusParts.length > 0 && (
-                                                                                        <div className={`text-xs ${mutedTextClass} mt-1`}>
+                                                                                        <div className={`text-xs ${statusLineClass} mt-1`}>
                                                                                             {statusParts.join(" · ")}
                                                                                         </div>
                                                                                     )}
@@ -1174,6 +1229,7 @@ export default function FlowerRoom() {
                                                                                                 variant="destructive"
                                                                                                 size="sm"
                                                                                                 onClick={() => kickPlayer(player.sessionId)}
+                                                                                                className={actionButtonDeadClass}
                                                                                             >
                                                                                                 {player.isBot || isFake ? "移除" : "踢出"}
                                                                                             </Button>
@@ -1286,6 +1342,7 @@ export default function FlowerRoom() {
                                                         players={flowerPlayers}
                                                         onSendMessage={addChatMessage}
                                                         mySessionId={getSessionId()}
+                                                        isHost={isHost}
                                                         connected={connected}
                                                         isNight={isNight}
                                                         phase={flowerPhase}
@@ -1294,7 +1351,9 @@ export default function FlowerRoom() {
                                                                 ? flowerSnapshot?.day?.lastWords?.queue?.[flowerSnapshot?.day?.currentSpeakerIndex ?? 0] ?? null
                                                                 : flowerSnapshot?.day?.speechOrder?.[flowerSnapshot?.day?.currentSpeakerIndex ?? 0] ?? null
                                                         }
+                                                        speakerStatus={flowerSnapshot?.day?.speakerStatus}
                                                         onPassTurn={passTurn}
+                                                        onForcePass={forcePassTurn}
                                                     />
                                                 </div>
                                             )}
@@ -1345,7 +1404,7 @@ export default function FlowerRoom() {
                                                                             flowerSnapshot?.history.forEach(record => {
                                                                                 if (record.night?.result?.policeReports) {
                                                                                     record.night.result.policeReports.forEach(report => {
-                                                                                        let resultText = "未知";
+                                                                                        let resultText = "无法验明";
                                                                                         let type: 'bad' | 'good' | 'unknown' = 'unknown';
 
                                                                                         if (report.result === 'bad_special') {

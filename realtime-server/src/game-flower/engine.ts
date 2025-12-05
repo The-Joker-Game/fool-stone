@@ -65,7 +65,15 @@ function emptyNightState(): FlowerNightState {
 }
 
 function emptyDayState(): FlowerDayState {
-  return { speechOrder: [], currentSpeakerIndex: 0, voteOrder: [], votes: [], tally: {}, pendingExecution: null };
+  return {
+    speechOrder: [],
+    currentSpeakerIndex: 0,
+    voteOrder: [],
+    votes: [],
+    tally: {},
+    pendingExecution: null,
+    speakerStatus: null,
+  };
 }
 
 export function initFlowerRoom(roomCode: string, players: InitPlayer[]): FlowerSnapshot {
@@ -755,7 +763,11 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
     }
   });
 
-  return { deaths, mutedSeats, butterflyLink, policeReports, upgrades: [], darkVotes, logs };
+  // Sort deaths by seat to avoid leaking action order
+  const sortedDeaths = [...deaths].sort((a, b) => a.seat - b.seat);
+  // Sort muted seats to present consistently
+  const sortedMuted = [...mutedSeats].sort((a, b) => a - b);
+  return { deaths: sortedDeaths, mutedSeats: sortedMuted, butterflyLink, policeReports, upgrades: [], darkVotes, logs };
 }
 
 function applyNightOutcome(snapshot: FlowerSnapshot, outcome: NightOutcome) {
@@ -822,6 +834,7 @@ function applyNightOutcome(snapshot: FlowerSnapshot, outcome: NightOutcome) {
       // But wait, speechOrder is for discussion. lastWords.queue is for last words.
       // We can reuse currentSpeakerIndex to index into lastWords.queue? Yes.
       snapshot.day.currentSpeakerIndex = 0;
+      snapshot.day.speakerStatus = null;
       snapshot.logs.push({ at: now, text: "💀 昨晚死亡玩家发表遗言" });
     } else {
       snapshot.phase = "day_discussion";
@@ -855,6 +868,8 @@ function applyNightOutcome(snapshot: FlowerSnapshot, outcome: NightOutcome) {
 
     snapshot.day.speechOrder = speechOrder.filter(seat => !outcome.mutedSeats.includes(seat));
     snapshot.day.currentSpeakerIndex = 0;
+    const firstSpeaker = snapshot.day.speechOrder[0] ?? null;
+    snapshot.day.speakerStatus = firstSpeaker ? { seat: firstSpeaker, state: "awaiting" } : null;
   }
   outcome.logs.forEach((text) => snapshot.logs.push({ at: now, text }));
   handleRoleUpgrades(snapshot, outcome);
@@ -923,8 +938,11 @@ export function passTurn(snapshot: FlowerSnapshot): { ok: boolean; error?: strin
         });
         snapshot.deadline = Date.now() + 30000;
         snapshot.logs.push({ at: Date.now(), text: "🌙 进入夜晚" });
+        snapshot.day.speakerStatus = null;
       } else {
         snapshot.logs.push({ at: Date.now(), text: "☀️ 遗言结束，进入白天讨论" });
+        const firstSpeaker = snapshot.day.speechOrder?.[0] ?? null;
+        snapshot.day.speakerStatus = firstSpeaker ? { seat: firstSpeaker, state: "awaiting" } : null;
       }
     } else {
       snapshot.day.currentSpeakerIndex = nextIndex;
@@ -943,12 +961,50 @@ export function passTurn(snapshot: FlowerSnapshot): { ok: boolean; error?: strin
     snapshot.phase = "day_vote";
     snapshot.deadline = Date.now() + 30000;
     snapshot.day.currentSpeakerIndex = 0; // Reset for next day? Or irrelevant.
+    snapshot.day.speakerStatus = null;
     snapshot.logs.push({ at: Date.now(), text: "☀️ 发言结束，进入投票阶段" });
   } else {
     day.currentSpeakerIndex = nextIndex;
+    const nextSpeaker = day.speechOrder?.[nextIndex] ?? null;
+    snapshot.day.speakerStatus = nextSpeaker ? { seat: nextSpeaker, state: "awaiting" } : null;
   }
   snapshot.updatedAt = Date.now();
   return { ok: true };
+}
+
+export function updateSpeakerStatus(
+  snapshot: FlowerSnapshot,
+  seat: number,
+  state: "awaiting" | "typing"
+): { ok: boolean; error?: string } {
+  if (!snapshot) return { ok: false, error: "没有可用的快照" };
+  if (snapshot.phase !== "day_discussion") return { ok: false, error: "当前阶段无法更新发言状态" };
+  const day = snapshot.day;
+  const currentSeat = day.speechOrder?.[day.currentSpeakerIndex];
+  if (!currentSeat || currentSeat !== seat) return { ok: false, error: "当前发言人不匹配" };
+
+  day.speakerStatus = { seat, state, confirmedAt: Date.now() };
+  snapshot.updatedAt = Date.now();
+  if (state === "typing") {
+    snapshot.logs.push({ at: Date.now(), text: `🎤 座位 ${seat} 开始发言` });
+  }
+  return { ok: true };
+}
+
+export function forcePassTurn(snapshot: FlowerSnapshot, bySeat?: number | null): { ok: boolean; error?: string } {
+  const currentSeat =
+    snapshot.phase === "day_discussion"
+      ? snapshot.day.speechOrder?.[snapshot.day.currentSpeakerIndex]
+      : snapshot.phase === "day_last_words"
+        ? snapshot.day.lastWords?.queue?.[snapshot.day.currentSpeakerIndex]
+        : null;
+
+  const res = passTurn(snapshot);
+  if (res.ok && currentSeat) {
+    const actor = bySeat ? `（房主座位 ${bySeat}）` : "";
+    snapshot.logs.push({ at: Date.now(), text: `⚠️ 座位 ${currentSeat} 的发言被强制结束${actor}` });
+  }
+  return res;
 }
 
 export function resetFlowerGame(snapshot: FlowerSnapshot): { ok: boolean; error?: string } {
