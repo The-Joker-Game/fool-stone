@@ -3,7 +3,7 @@ name: Deploy to Server
 on:
   push:
     branches:
-      - feature/flower
+      - feature/flower-ai
 
 permissions:
   contents: read

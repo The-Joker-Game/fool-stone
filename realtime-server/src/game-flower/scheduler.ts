@@ -11,10 +11,12 @@ import {
 } from "./engine.js";
 import {
     getBotNightActionTarget,
-    getBotVoteTarget,
+    getBotVoteTarget
+} from "./bot-logic.js";
+import {
     generateBotSpeech,
     generateBotLastWords
-} from "./bot-logic.js";
+} from "./bot-logic-ai.js";
 import { initBotMemory, getBotMemory } from "./bot-state.js";
 import type { FlowerSnapshot } from "./types.js";
 
@@ -108,7 +110,7 @@ export function checkAndScheduleActions(room: { code: string; snapshot: any }, i
         if (currentSpeaker && currentSpeaker.isBot && currentSpeaker.isAlive) {
             // Schedule speech
             const delay = Math.random() * 3000 + 2000; // 2-5s
-            const t = setTimeout(() => {
+            const t = setTimeout(async () => {
                 if (!room.snapshot || room.snapshot.engine !== "flower") return;
                 const currentSnap = room.snapshot as FlowerSnapshot;
                 if (currentSnap.phase !== "day_discussion") return;
@@ -117,8 +119,8 @@ export function checkAndScheduleActions(room: { code: string; snapshot: any }, i
                 const freshSpeakerSeat = currentSnap.day.speechOrder[currentSnap.day.currentSpeakerIndex];
                 if (freshSpeakerSeat !== currentSpeakerSeat) return;
 
-                // Generate speech
-                const speech = generateBotSpeech(currentSnap, currentSpeakerSeat);
+                // Generate speech (async AI call)
+                const speech = await generateBotSpeech(currentSnap, currentSpeakerSeat);
 
                 // Add chat message
                 const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -169,7 +171,7 @@ export function checkAndScheduleActions(room: { code: string; snapshot: any }, i
             if (currentSpeaker && currentSpeaker.isBot) { // Removed isAlive check as they are dead
                 // Schedule speech
                 const delay = Math.random() * 3000 + 2000; // 2-5s
-                const t = setTimeout(() => {
+                const t = setTimeout(async () => {
                     if (!room.snapshot || room.snapshot.engine !== "flower") return;
                     const currentSnap = room.snapshot as FlowerSnapshot;
                     if (currentSnap.phase !== "day_last_words") return;
@@ -178,8 +180,8 @@ export function checkAndScheduleActions(room: { code: string; snapshot: any }, i
                     const freshLastWords = currentSnap.day.lastWords;
                     if (!freshLastWords || freshLastWords.queue[currentSnap.day.currentSpeakerIndex] !== currentSpeakerSeat) return;
 
-                    // Generate speech
-                    const speech = generateBotLastWords(currentSnap, currentSpeakerSeat);
+                    // Generate speech (async AI call)
+                    const speech = await generateBotLastWords(currentSnap, currentSpeakerSeat);
 
                     // Add chat message
                     const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
