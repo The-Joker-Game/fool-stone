@@ -365,20 +365,46 @@ export default function FlowerRoom() {
     }, [flowerPhase, flowerSnapshot?.day, mySeat, currentDiscussionSpeakerSeat]);
 
     const [confirmingSpeak, setConfirmingSpeak] = useState(false);
-    const showSpeakerPrompt = flowerPhase === "day_discussion"
-        && currentDiscussionSpeakerSeat === mySeat
-        && speakerStatus?.seat === mySeat
-        && speakerStatus.state === "awaiting";
+    // Track last-words prompt acknowledgement so we don't show repeatedly
+    const [ackLastWordsKey, setAckLastWordsKey] = useState<string | null>(null);
+
+    const lastWordsPromptKey = useMemo(() => {
+        if (flowerPhase !== "day_last_words") return null;
+        const idx = flowerSnapshot?.day?.currentSpeakerIndex ?? 0;
+        return `${flowerDayCount}-${idx}`;
+    }, [flowerPhase, flowerDayCount, flowerSnapshot?.day?.currentSpeakerIndex]);
+
+    const isMyLastWordsTurn = useMemo(() => {
+        if (flowerPhase !== "day_last_words") return false;
+        const queue = flowerSnapshot?.day?.lastWords?.queue;
+        if (!queue || queue.length === 0) return false;
+        const currentSeat = queue[flowerSnapshot?.day?.currentSpeakerIndex ?? 0];
+        return currentSeat === mySeat;
+    }, [flowerPhase, flowerSnapshot?.day?.lastWords?.queue, flowerSnapshot?.day?.currentSpeakerIndex, mySeat]);
+
+    const showSpeakerPrompt =
+        (flowerPhase === "day_discussion"
+            && currentDiscussionSpeakerSeat === mySeat
+            && speakerStatus?.seat === mySeat
+            && speakerStatus.state === "awaiting")
+        || (flowerPhase === "day_last_words"
+            && isMyLastWordsTurn
+            && lastWordsPromptKey !== ackLastWordsKey);
 
     const handleConfirmSpeaking = useCallback(async () => {
         if (confirmingSpeak) return;
+        // For last words, just acknowledge the prompt locally (no server call)
+        if (flowerPhase === "day_last_words") {
+            setAckLastWordsKey(lastWordsPromptKey);
+            return;
+        }
         setConfirmingSpeak(true);
         try {
             await confirmSpeaking();
         } finally {
             setConfirmingSpeak(false);
         }
-    }, [confirmSpeaking, confirmingSpeak]);
+    }, [confirmingSpeak, confirmSpeaking, flowerPhase, lastWordsPromptKey]);
 
 
 

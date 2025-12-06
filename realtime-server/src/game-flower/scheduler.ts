@@ -23,6 +23,47 @@ import type { FlowerSnapshot } from "./types.js";
 const roomTimeouts = new Map<string, Set<NodeJS.Timeout>>();
 const speakerConfirmTimers = new Map<string, { key: string; timeout: NodeJS.Timeout }>();
 
+function logPendingActionables(snapshot: FlowerSnapshot) {
+    if (snapshot.phase === "day_vote") {
+        const pending = snapshot.players
+            .filter(p => p.isAlive && !p.isMutedToday && !p.hasVotedToday)
+            .map(p => p.seat);
+        console.log(`[Scheduler][${snapshot.roomCode}] pending day_vote seats=${pending.join(",") || "-"}`);
+    } else if (snapshot.phase === "night_actions") {
+        const pending = snapshot.players
+            .filter(p => p.isAlive && p.role && !p.nightAction)
+            .map(p => `${p.seat}:${p.role}`);
+        console.log(`[Scheduler][${snapshot.roomCode}] pending night_actions seats=${pending.join(",") || "-"}`);
+    }
+}
+
+function tryAutoAdvanceIfDeadlinePassed(room: { code: string; snapshot: any }, io: Server): boolean {
+    const snap = room.snapshot as FlowerSnapshot;
+    if (!snap?.deadline) return false;
+    if (Date.now() < snap.deadline) return false;
+
+    if (!canAutoAdvance(snap)) {
+        logPendingActionables(snap);
+        return false;
+    }
+
+    let res;
+    if (snap.phase === "night_actions") {
+        console.log(`[Scheduler][${room.code}] deadline passed, auto-resolving night`);
+        res = resolveNight(snap);
+    } else if (snap.phase === "day_vote") {
+        console.log(`[Scheduler][${room.code}] deadline passed, auto-resolving day vote`);
+        res = resolveDayVote(snap);
+    }
+
+    if (res && res.ok) {
+        io.to(room.code).emit("state:full", { snapshot: snap, from: "server", at: Date.now() });
+        return true;
+    }
+
+    return false;
+}
+
 function addTimeout(roomCode: string, timeout: NodeJS.Timeout) {
     if (!roomTimeouts.has(roomCode)) {
         roomTimeouts.set(roomCode, new Set());
@@ -52,6 +93,12 @@ export function checkAndScheduleActions(room: { code: string; snapshot: any }, i
     if (!room.snapshot || room.snapshot.engine !== "flower") return;
     const snapshot = room.snapshot as FlowerSnapshot;
     const roomCode = room.code;
+
+    // If deadline已到且所有人已行动，立即结算，避免错过的定时器
+    const advanced = tryAutoAdvanceIfDeadlinePassed(room, io);
+    if (advanced) {
+        return;
+    }
 
     // Schedule Deadline Reminder
     scheduleDeadlineReminder(room, io);
@@ -275,6 +322,11 @@ function scheduleDeadlineReminder(room: { code: string; snapshot: any }, io: Ser
     if (delay <= 0) return; // Deadline already passed
 
     scheduledDeadlines.set(roomCode, deadline);
+    console.log(
+        `[Scheduler][${roomCode}] schedule deadline reminder phase=${snapshot.phase} delay=${delay}ms target=${new Date(
+            deadline
+        ).toISOString()}`
+    );
 
     const t = setTimeout(() => {
         // Re-fetch room/snapshot
@@ -283,6 +335,7 @@ function scheduleDeadlineReminder(room: { code: string; snapshot: any }, io: Ser
 
         // Verify deadline is still the same (phase hasn't changed or reset)
         if (currentSnap.deadline !== deadline) return;
+        console.log(`[Scheduler][${roomCode}] deadline reached phase=${currentSnap.phase} at=${new Date().toISOString()}`);
 
         // 1. Check for Auto-Advance (All actionable players have acted AND deadline passed)
         if (canAutoAdvance(currentSnap)) {
@@ -298,6 +351,8 @@ function scheduleDeadlineReminder(room: { code: string; snapshot: any }, io: Ser
                 checkAndScheduleActions(room, io);
                 return; // Auto-advanced, no reminder needed
             }
+        } else {
+            logPendingActionables(currentSnap);
         }
 
         // 2. If not auto-advanced, send reminder to inactive humans
