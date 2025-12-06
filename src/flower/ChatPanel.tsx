@@ -203,7 +203,7 @@ const SpeakingOrderHeader = ({
                         onClick={onForcePass}
                         className="text-orange-600 border-orange-200 hover:bg-orange-50"
                     >
-                        太磨蹭了，帮他过麦
+                        太磨蹭，过麦！
                     </Button>
                 )}
             </div>

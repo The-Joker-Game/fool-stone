@@ -1055,7 +1055,8 @@ export function canAutoAdvance(snapshot: FlowerSnapshot): boolean {
     const actionablePlayers = snapshot.players.filter(p => p.isAlive && p.role);
     return actionablePlayers.every(p => !!p.nightAction);
   } else if (snapshot.phase === "day_vote") {
-    const actionablePlayers = snapshot.players.filter(p => p.isAlive);
+    // 被禁言的玩家没有投票权，自动结算时无需等待他们
+    const actionablePlayers = snapshot.players.filter(p => p.isAlive && !p.isMutedToday);
     return actionablePlayers.every(p => p.hasVotedToday);
   }
 
