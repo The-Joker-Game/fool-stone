@@ -1,4 +1,5 @@
 // realtime-server/src/index.ts
+import { config as loadEnv } from "dotenv";
 import express, { Request, Response } from "express";
 import cors from "cors";
 import http from "http";
@@ -20,6 +21,10 @@ import {
 } from "./game-flower/engine.js";
 import type { FlowerPlayerState } from "./game-flower/types.js";
 import { checkAndScheduleActions } from "./game-flower/scheduler.js";
+
+// Load env vars (allow .env.local to override)
+loadEnv();
+loadEnv({ path: ".env.local", override: true });
 
 /** ===== 简单内存房间状态 ===== */
 type PresenceUser = {
