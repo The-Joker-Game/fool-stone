@@ -11,7 +11,7 @@ import { Send, MessageSquareOff, ArrowDown, Mic, MicOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import type { ChatMessage, ChatMention, FlowerPlayerState, FlowerPhase } from "./types";
+import type { ChatMessage, ChatMention, FlowerPlayerState, FlowerPhase, FlowerDayState } from "./types";
 import { getSessionId } from "../realtime/socket";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -31,11 +31,14 @@ interface ChatPanelProps {
     players: FlowerPlayerState[];
     onSendMessage: (content: string, mentions: ChatMention[]) => Promise<{ ok: boolean; error?: string }>;
     mySessionId: string;
+    isHost?: boolean;
     connected?: boolean; // 新增 connected 属性
     isNight?: boolean;
     phase?: FlowerPhase;
     currentSpeakerSeat?: number | null;
+    speakerStatus?: FlowerDayState["speakerStatus"];
     onPassTurn?: () => void;
+    onForcePass?: () => void;
 }
 
 interface MentionListProps {
@@ -104,13 +107,19 @@ const SpeakingOrderHeader = ({
     currentSpeakerSeat,
     players,
     mySessionId,
-    onPassTurn
+    onPassTurn,
+    speakerStatus,
+    isHost,
+    onForcePass
 }: {
     phase?: FlowerPhase;
     currentSpeakerSeat?: number | null;
     players: FlowerPlayerState[];
     mySessionId: string;
     onPassTurn?: () => void;
+    speakerStatus?: FlowerDayState["speakerStatus"];
+    isHost?: boolean;
+    onForcePass?: () => void;
 }) => {
     if (phase !== "day_discussion" && phase !== "day_vote" && phase !== "day_last_words") return null;
 
@@ -118,6 +127,14 @@ const SpeakingOrderHeader = ({
     const isLastWords = phase === "day_last_words";
     const currentSpeaker = players.find(p => p.seat === currentSpeakerSeat);
     const isMyTurn = currentSpeaker?.sessionId === mySessionId;
+    const statusText = (() => {
+        if (isVote || isLastWords) return "";
+        if (!currentSpeaker) return "等待发言...";
+        if (speakerStatus && speakerStatus.seat === currentSpeakerSeat) {
+            return speakerStatus.state === "typing" ? "打字中..." : "准备发言";
+        }
+        return "正在发言...";
+    })();
 
     return (
         <div className="relative z-20 bg-orange-50/90 backdrop-blur-sm border-b border-orange-100 p-2 flex items-center justify-between min-h-[3.5rem] transition-colors duration-300">
@@ -154,9 +171,11 @@ const SpeakingOrderHeader = ({
                                             {cleanName(currentSpeaker.name)}
                                             <span className="text-[10px] font-normal bg-orange-100 text-orange-700 px-1 rounded">#{currentSpeaker.seat}</span>
                                         </span>
-                                        <span className="text-[10px] text-orange-600 font-medium">
-                                            {isMyTurn ? "轮到你了！" : isLastWords ? "发表遗言..." : "正在发言..."}
-                                        </span>
+                                        {!isVote && (
+                                            <span className="text-[10px] text-orange-600 font-medium">
+                                                {isMyTurn ? (statusText || "轮到你了！") : (isLastWords ? "发表遗言..." : (statusText || "正在发言..."))}
+                                            </span>
+                                        )}
                                     </div>
                                 </>
                             ) : (
@@ -167,21 +186,46 @@ const SpeakingOrderHeader = ({
                 </AnimatePresence>
             </div>
 
-            {!isVote && isMyTurn && (
-                <Button
-                    size="sm"
-                    onClick={onPassTurn}
-                    className="bg-orange-500 hover:bg-orange-600 text-white shadow-md animate-in fade-in zoom-in duration-300 flex items-center gap-1 px-3"
-                >
-                    结束发言
-                </Button>
-            )}
+            <div className="flex items-center gap-2">
+                {!isVote && isMyTurn && (
+                    <Button
+                        size="sm"
+                        onClick={onPassTurn}
+                        className="bg-orange-500 hover:bg-orange-600 text-white shadow-md animate-in fade-in zoom-in duration-300 flex items-center gap-1 px-3"
+                    >
+                        结束发言
+                    </Button>
+                )}
+                {!isVote && isHost && !isMyTurn && currentSpeaker && (
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={onForcePass}
+                        className="text-orange-600 border-orange-200 hover:bg-orange-50"
+                    >
+                        太磨蹭，过麦！
+                    </Button>
+                )}
+            </div>
         </div>
     );
 };
 
 // --- 主组件 ---
-export function ChatPanel({ messages, players, onSendMessage, mySessionId, connected = true, isNight = false, phase, currentSpeakerSeat, onPassTurn }: ChatPanelProps) {
+export function ChatPanel({
+    messages,
+    players,
+    onSendMessage,
+    mySessionId,
+    isHost = false,
+    connected = true,
+    isNight = false,
+    phase,
+    currentSpeakerSeat,
+    speakerStatus,
+    onPassTurn,
+    onForcePass
+}: ChatPanelProps) {
     const scrollRef = useRef<HTMLDivElement>(null);
     const [isSending, setIsSending] = useState(false);
     const [editorContent, setEditorContent] = useState("");
@@ -496,6 +540,9 @@ export function ChatPanel({ messages, players, onSendMessage, mySessionId, conne
                 players={players}
                 mySessionId={mySessionId}
                 onPassTurn={onPassTurn}
+                speakerStatus={speakerStatus}
+                isHost={isHost}
+                onForcePass={onForcePass}
             />
             <ScrollArea
                 ref={scrollRef}

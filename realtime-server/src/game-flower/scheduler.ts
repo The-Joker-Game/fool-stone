@@ -23,6 +23,48 @@ import type { FlowerSnapshot } from "./types.js";
 // Keep track of scheduled timeouts to avoid duplicates or memory leaks if room closes
 // Map<RoomCode, Set<TimeoutId>>
 const roomTimeouts = new Map<string, Set<NodeJS.Timeout>>();
+const speakerConfirmTimers = new Map<string, { key: string; timeout: NodeJS.Timeout }>();
+
+function logPendingActionables(snapshot: FlowerSnapshot) {
+    if (snapshot.phase === "day_vote") {
+        const pending = snapshot.players
+            .filter(p => p.isAlive && !p.isMutedToday && !p.hasVotedToday)
+            .map(p => p.seat);
+        console.log(`[Scheduler][${snapshot.roomCode}] pending day_vote seats=${pending.join(",") || "-"}`);
+    } else if (snapshot.phase === "night_actions") {
+        const pending = snapshot.players
+            .filter(p => p.isAlive && p.role && !p.nightAction)
+            .map(p => `${p.seat}:${p.role}`);
+        console.log(`[Scheduler][${snapshot.roomCode}] pending night_actions seats=${pending.join(",") || "-"}`);
+    }
+}
+
+function tryAutoAdvanceIfDeadlinePassed(room: { code: string; snapshot: any }, io: Server): boolean {
+    const snap = room.snapshot as FlowerSnapshot;
+    if (!snap?.deadline) return false;
+    if (Date.now() < snap.deadline) return false;
+
+    if (!canAutoAdvance(snap)) {
+        logPendingActionables(snap);
+        return false;
+    }
+
+    let res;
+    if (snap.phase === "night_actions") {
+        console.log(`[Scheduler][${room.code}] deadline passed, auto-resolving night`);
+        res = resolveNight(snap);
+    } else if (snap.phase === "day_vote") {
+        console.log(`[Scheduler][${room.code}] deadline passed, auto-resolving day vote`);
+        res = resolveDayVote(snap);
+    }
+
+    if (res && res.ok) {
+        io.to(room.code).emit("state:full", { snapshot: snap, from: "server", at: Date.now() });
+        return true;
+    }
+
+    return false;
+}
 
 function addTimeout(roomCode: string, timeout: NodeJS.Timeout) {
     if (!roomTimeouts.has(roomCode)) {
@@ -41,6 +83,11 @@ export function clearRoomTimeouts(roomCode: string) {
         timeouts.clear();
         roomTimeouts.delete(roomCode);
     }
+    const speakerTimeout = speakerConfirmTimers.get(roomCode);
+    if (speakerTimeout) {
+        clearTimeout(speakerTimeout.timeout);
+        speakerConfirmTimers.delete(roomCode);
+    }
     scheduledDeadlines.delete(roomCode);
 }
 
@@ -49,8 +96,15 @@ export function checkAndScheduleActions(room: { code: string; snapshot: any }, i
     const snapshot = room.snapshot as FlowerSnapshot;
     const roomCode = room.code;
 
+    // If deadline已到且所有人已行动，立即结算，避免错过的定时器
+    const advanced = tryAutoAdvanceIfDeadlinePassed(room, io);
+    if (advanced) {
+        return;
+    }
+
     // Schedule Deadline Reminder
     scheduleDeadlineReminder(room, io);
+    scheduleSpeakerConfirmation(room, io);
 
     // 0. Initialize Bot Memory if needed
     snapshot.players.forEach(p => {
@@ -270,6 +324,11 @@ function scheduleDeadlineReminder(room: { code: string; snapshot: any }, io: Ser
     if (delay <= 0) return; // Deadline already passed
 
     scheduledDeadlines.set(roomCode, deadline);
+    console.log(
+        `[Scheduler][${roomCode}] schedule deadline reminder phase=${snapshot.phase} delay=${delay}ms target=${new Date(
+            deadline
+        ).toISOString()}`
+    );
 
     const t = setTimeout(() => {
         // Re-fetch room/snapshot
@@ -278,6 +337,7 @@ function scheduleDeadlineReminder(room: { code: string; snapshot: any }, io: Ser
 
         // Verify deadline is still the same (phase hasn't changed or reset)
         if (currentSnap.deadline !== deadline) return;
+        console.log(`[Scheduler][${roomCode}] deadline reached phase=${currentSnap.phase} at=${new Date().toISOString()}`);
 
         // 1. Check for Auto-Advance (All actionable players have acted AND deadline passed)
         if (canAutoAdvance(currentSnap)) {
@@ -293,6 +353,8 @@ function scheduleDeadlineReminder(room: { code: string; snapshot: any }, io: Ser
                 checkAndScheduleActions(room, io);
                 return; // Auto-advanced, no reminder needed
             }
+        } else {
+            logPendingActionables(currentSnap);
         }
 
         // 2. If not auto-advanced, send reminder to inactive humans
@@ -304,7 +366,8 @@ function scheduleDeadlineReminder(room: { code: string; snapshot: any }, io: Ser
                 .map(p => p.seat);
         } else if (currentSnap.phase === "day_vote") {
             targets = currentSnap.players
-                .filter(p => p.isAlive && !p.hasVotedToday && !p.isBot)
+                // Only remind alive, unmuted humans who仍有投票权
+                .filter(p => p.isAlive && !p.hasVotedToday && !p.isBot && !p.isMutedToday)
                 .map(p => p.seat);
         }
 
@@ -345,4 +408,59 @@ function scheduleDeadlineReminder(room: { code: string; snapshot: any }, io: Ser
     }, delay);
 
     addTimeout(roomCode, t);
+}
+
+function scheduleSpeakerConfirmation(room: { code: string; snapshot: any }, io: Server) {
+    const snapshot = room.snapshot as FlowerSnapshot;
+    const roomCode = room.code;
+
+    if (!snapshot || snapshot.engine !== "flower" || snapshot.phase !== "day_discussion") {
+        const pending = speakerConfirmTimers.get(roomCode);
+        if (pending) {
+            clearTimeout(pending.timeout);
+            speakerConfirmTimers.delete(roomCode);
+        }
+        return;
+    }
+
+    const day = snapshot.day;
+    const currentSeat = day.speechOrder?.[day.currentSpeakerIndex];
+    if (!currentSeat) {
+        const pending = speakerConfirmTimers.get(roomCode);
+        if (pending) {
+            clearTimeout(pending.timeout);
+            speakerConfirmTimers.delete(roomCode);
+        }
+        return;
+    }
+
+    const key = `${snapshot.dayCount}-${currentSeat}-${day.currentSpeakerIndex}`;
+    const existing = speakerConfirmTimers.get(roomCode);
+    if (existing?.key === key) return;
+    if (existing) {
+        clearTimeout(existing.timeout);
+        speakerConfirmTimers.delete(roomCode);
+    }
+
+    const timeout = setTimeout(() => {
+        speakerConfirmTimers.delete(roomCode);
+        if (!room.snapshot || room.snapshot.engine !== "flower") return;
+        const currentSnap = room.snapshot as FlowerSnapshot;
+        if (currentSnap.phase !== "day_discussion") return;
+        const seatNow = currentSnap.day.speechOrder?.[currentSnap.day.currentSpeakerIndex];
+        const status = currentSnap.day.speakerStatus;
+        const currentKey = `${currentSnap.dayCount}-${seatNow}-${currentSnap.day.currentSpeakerIndex}`;
+        if (currentKey !== key) return;
+        if (!seatNow) return;
+        if (status?.seat === seatNow && status.state === "typing") return;
+
+        const res = passTurn(currentSnap);
+        if (res.ok) {
+            io.to(roomCode).emit("state:full", { snapshot: currentSnap, from: "server", at: Date.now() });
+            checkAndScheduleActions(room, io);
+        }
+    }, 3 * 60 * 1000);
+
+    speakerConfirmTimers.set(roomCode, { key, timeout });
+    addTimeout(roomCode, timeout);
 }

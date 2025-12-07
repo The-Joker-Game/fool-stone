@@ -13,6 +13,8 @@ import {
   submitDayVote,
   resolveDayVote,
   passTurn,
+  forcePassTurn,
+  updateSpeakerStatus,
   resetFlowerGame,
   canAutoAdvance,
 } from "./game-flower/engine.js";
@@ -752,6 +754,22 @@ io.on("connection", (socket: Socket) => {
             res = passTurn(r.snapshot);
             shouldBroadcast = true;
             break;
+          case "flower:force_pass_turn": {
+            if (socket.data.sessionId !== r.hostSessionId) return cb({ ok: false, msg: "只有房主可以强制过麦" });
+            const hostPlayer = r.snapshot.players.find((p: FlowerPlayerState) => p.sessionId === socket.data.sessionId) || null;
+            res = forcePassTurn(r.snapshot, hostPlayer?.seat ?? null);
+            shouldBroadcast = true;
+            break;
+          }
+          case "flower:speaker_status": {
+            const status = data?.status;
+            if (status !== "typing" && status !== "awaiting") return cb({ ok: false, msg: "非法发言状态" });
+            const player = r.snapshot.players.find((p: FlowerPlayerState) => p.sessionId === socket.data.sessionId);
+            if (!player) return cb({ ok: false, msg: "未找到玩家" });
+            res = updateSpeakerStatus(r.snapshot, player.seat, status);
+            shouldBroadcast = true;
+            break;
+          }
           case "flower:reset_game":
             if (socket.data.sessionId !== r.hostSessionId) return cb({ ok: false, msg: "只有房主可以重置" });
             res = resetFlowerGame(r.snapshot);

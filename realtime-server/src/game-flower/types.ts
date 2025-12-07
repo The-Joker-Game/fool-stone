@@ -58,6 +58,11 @@ export interface FlowerDayState {
     queue: number[];
     nextPhase: FlowerPhase;
   } | null;
+  speakerStatus?: {
+    seat: number | null;
+    state: "awaiting" | "typing";
+    confirmedAt?: number;
+  } | null;
 }
 export interface FlowerDayVoteResult {
   topSeats: number[];

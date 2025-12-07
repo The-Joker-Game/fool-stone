@@ -36,6 +36,8 @@ export interface FlowerStore {
   addChatMessage: (content: string, mentions: ChatMention[]) => Promise<{ ok: boolean; error?: string }>;
 
   passTurn: () => Promise<void>;
+  forcePassTurn: () => Promise<void>;
+  confirmSpeaking: () => Promise<void>;
   resetGame: () => Promise<void>;
 }
 
@@ -178,6 +180,20 @@ export const useFlowerStore = create<FlowerStore>()(
         console.error("pass turn failed", err);
       }
     },
+    forcePassTurn: async () => {
+      try {
+        await rt.sendIntent("flower:force_pass_turn", {});
+      } catch (err) {
+        console.error("force pass turn failed", err);
+      }
+    },
+    confirmSpeaking: async () => {
+      try {
+        await rt.sendIntent("flower:speaker_status", { status: "typing" });
+      } catch (err) {
+        console.error("confirm speaking failed", err);
+      }
+    },
     resetGame: async () => {
       try {
         await rt.sendIntent("flower:reset_game", {});
@@ -199,7 +215,15 @@ function createEmptyNightState(): FlowerNightState {
 }
 
 function createEmptyDayState(): FlowerDayState {
-  return { speechOrder: [], currentSpeakerIndex: 0, voteOrder: [], votes: [], tally: {}, pendingExecution: null };
+  return {
+    speechOrder: [],
+    currentSpeakerIndex: 0,
+    voteOrder: [],
+    votes: [],
+    tally: {},
+    pendingExecution: null,
+    speakerStatus: null,
+  };
 }
 
 function normalizeSnapshot(snapshot: FlowerSnapshot) {
@@ -209,6 +233,7 @@ function normalizeSnapshot(snapshot: FlowerSnapshot) {
   if (!snapshot.day) snapshot.day = createEmptyDayState();
   if (!Array.isArray(snapshot.day.votes)) snapshot.day.votes = [];
   if (!snapshot.day.tally) snapshot.day.tally = {};
+  if (typeof snapshot.day.speakerStatus === "undefined") snapshot.day.speakerStatus = null;
   // 确保 chatMessages 字段存在
   if (!Array.isArray(snapshot.chatMessages)) snapshot.chatMessages = [];
   if (!Array.isArray(snapshot.history)) snapshot.history = [];
