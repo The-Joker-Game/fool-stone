@@ -1,7 +1,7 @@
 // realtime-server/src/game-flower/bot-logic-ai.ts
-// AI-powered bot logic using Google Gemini API
+// AI-powered bot logic using DeepSeek API (OpenAI Compatible)
 
-import { GoogleGenAI } from '@google/genai';
+import OpenAI from 'openai';
 import type { FlowerSnapshot, FlowerRole } from "./types.js";
 import { getBotMemory } from "./bot-state.js";
 import {
@@ -9,10 +9,13 @@ import {
     getBotVoteTarget
 } from "./bot-logic.js";
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 
-// Initialize Gemini AI client
-const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
+// Initialize DeepSeek AI client
+const ai = DEEPSEEK_API_KEY ? new OpenAI({
+    baseURL: 'https://api.deepseek.com',
+    apiKey: DEEPSEEK_API_KEY
+}) : null;
 
 // Re-export night action and vote logic from original bot-logic.ts
 export { getBotNightActionTarget, getBotVoteTarget };
@@ -23,7 +26,7 @@ export { getBotNightActionTarget, getBotVoteTarget };
 function buildGameContextPrompt(snapshot: FlowerSnapshot, botSeat: number, isLastWords: boolean = false): string {
     const mem = getBotMemory(snapshot.roomCode, botSeat);
     const bot = snapshot.players.find(p => p.seat === botSeat);
-    
+
     if (!bot || !mem) {
         return "游戏状态未知。";
     }
@@ -101,9 +104,9 @@ function buildGameContextPrompt(snapshot: FlowerSnapshot, botSeat: number, isLas
 ${playerList}
 
 【昨晚情况】
-${lastNightDeaths.length > 0 
-    ? lastNightDeaths.map(d => `${d.seat}号玩家死亡（原因：${d.reason}）`).join("\n")
-    : "昨晚平安夜，无人死亡"}
+${lastNightDeaths.length > 0
+            ? lastNightDeaths.map(d => `${d.seat}号玩家死亡（原因：${d.reason}）`).join("\n")
+            : "昨晚平安夜，无人死亡"}
 
 【我的怀疑度评估】
 ${suspicionList || "暂无怀疑度信息"}
@@ -165,8 +168,8 @@ ${isLastWords ? `
  */
 export async function generateBotSpeech(snapshot: FlowerSnapshot, botSeat: number): Promise<string> {
     // Fallback if AI is not configured
-    if (!ai || !GEMINI_API_KEY) {
-        console.warn("[Bot AI] Gemini API not configured, falling back to default message");
+    if (!ai || !DEEPSEEK_API_KEY) {
+        console.warn("[Bot AI] DeepSeek API not configured, falling back to default message");
         return "我是好人，过。";
     }
 
@@ -177,13 +180,14 @@ export async function generateBotSpeech(snapshot: FlowerSnapshot, botSeat: numbe
 
     try {
         const prompt = buildGameContextPrompt(snapshot, botSeat, false);
-        
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
+
+        const response = await ai.chat.completions.create({
+            model: 'deepseek-chat',
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: 100
         });
 
-        let speech = response.text?.trim() || "";
+        let speech = response.choices[0]?.message?.content?.trim() || "";
 
         // Fallback if response is empty
         if (!speech || speech.length < 5) {
@@ -204,8 +208,8 @@ export async function generateBotSpeech(snapshot: FlowerSnapshot, botSeat: numbe
  */
 export async function generateBotLastWords(snapshot: FlowerSnapshot, botSeat: number): Promise<string> {
     // Fallback if AI is not configured
-    if (!ai || !GEMINI_API_KEY) {
-        console.warn("[Bot AI] Gemini API not configured, falling back to default last words");
+    if (!ai || !DEEPSEEK_API_KEY) {
+        console.warn("[Bot AI] DeepSeek API not configured, falling back to default last words");
         return "我是好人，大家加油。";
     }
 
@@ -216,14 +220,15 @@ export async function generateBotLastWords(snapshot: FlowerSnapshot, botSeat: nu
 
     try {
         const prompt = buildGameContextPrompt(snapshot, botSeat, true);
-        
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
+
+        const response = await ai.chat.completions.create({
+            model: 'deepseek-chat',
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: 100
         });
 
-        let lastWords = response.text?.trim() || "";
-        
+        let lastWords = response.choices[0]?.message?.content?.trim() || "";
+
         // Fallback if response is empty
         if (!lastWords || lastWords.length < 5) {
             console.warn("[Bot AI] Empty or too short response for last words, using fallback");
