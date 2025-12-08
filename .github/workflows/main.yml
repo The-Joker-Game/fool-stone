@@ -1,0 +1,116 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches:
+      - flower_ai_merge
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Build realtime-server
+        run: |
+          cd realtime-server
+          npm ci
+          npm run build
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known_hosts
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          : "${DEPLOY_HOST:?Set DEPLOY_HOST in the repository secrets.}"
+          PORT=${DEPLOY_PORT:-22}
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${PORT}" "${DEPLOY_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Upload build artifacts
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          : "${DEPLOY_USER:?Set DEPLOY_USER in the repository secrets.}"
+          PORT=${DEPLOY_PORT:-22}
+          TARGET_PATH=${DEPLOY_PATH:-/usr/share/nginx/html/fs}
+          ssh -p "${PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "mkdir -p ${TARGET_PATH}"
+          rsync -az --delete -e "ssh -p ${PORT}" dist/ "${DEPLOY_USER}@${DEPLOY_HOST}:${TARGET_PATH}"
+
+      - name: Upload realtime-server artifacts
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          REALTIME_SERVER_PATH: ${{ secrets.REALTIME_SERVER_PATH }}
+        run: |
+          : "${DEPLOY_USER:?Set DEPLOY_USER in the repository secrets.}"
+          PORT=${DEPLOY_PORT:-22}
+          TARGET_PATH=${REALTIME_SERVER_PATH:-/opt/fool-stone/realtime-server}
+          ssh -p "${PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "mkdir -p ${TARGET_PATH}"
+          rsync -az --delete -e "ssh -p ${PORT}" realtime-server/dist/ "${DEPLOY_USER}@${DEPLOY_HOST}:${TARGET_PATH}/dist/"
+          rsync -az -e "ssh -p ${PORT}" realtime-server/package.json "${DEPLOY_USER}@${DEPLOY_HOST}:${TARGET_PATH}/"
+          rsync -az -e "ssh -p ${PORT}" realtime-server/package-lock.json "${DEPLOY_USER}@${DEPLOY_HOST}:${TARGET_PATH}/"
+
+      - name: Setup and reload realtime-server with PM2
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          REALTIME_SERVER_PATH: ${{ secrets.REALTIME_SERVER_PATH }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          PORT=${DEPLOY_PORT:-22}
+          TARGET_PATH=${REALTIME_SERVER_PATH:-/opt/fool-stone/realtime-server}
+          ssh -p "${PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" bash << EOF
+            export GEMINI_API_KEY="${GEMINI_API_KEY}"
+            cd "${TARGET_PATH}"
+            if [ -f package.json ]; then
+              npm ci --production
+            fi
+            if ! command -v pm2 &> /dev/null; then
+              echo "PM2 not installed, installing..."
+              npm install -g pm2
+            fi
+            if pm2 list | grep -q "fool-stone-realtime"; then
+              echo "Application already running in PM2, reloading..."
+              pm2 reload fool-stone-realtime --update-env
+            else
+              echo "Application not running in PM2, starting..."
+              pm2 start dist/index.js --name fool-stone-realtime
+              pm2 save
+            fi
+          EOF
+
+      - name: Reload Nginx
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          PORT=${DEPLOY_PORT:-22}
+          ssh -p "${PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "nginx -s reload"
