@@ -3,7 +3,7 @@ name: Deploy to Server
 on:
   push:
     branches:
-      - feature/flower-ai
+      - flower_ai_merge
 
 permissions:
   contents: read
@@ -82,10 +82,12 @@ jobs:
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           REALTIME_SERVER_PATH: ${{ secrets.REALTIME_SERVER_PATH }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           PORT=${DEPLOY_PORT:-22}
           TARGET_PATH=${REALTIME_SERVER_PATH:-/opt/fool-stone/realtime-server}
           ssh -p "${PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" bash << EOF
+            export GEMINI_API_KEY="${GEMINI_API_KEY}"
             cd "${TARGET_PATH}"
             if [ -f package.json ]; then
               npm ci --production
@@ -96,7 +98,7 @@ jobs:
             fi
             if pm2 list | grep -q "fool-stone-realtime"; then
               echo "Application already running in PM2, reloading..."
-              pm2 reload fool-stone-realtime
+              pm2 reload fool-stone-realtime --update-env
             else
               echo "Application not running in PM2, starting..."
               pm2 start dist/index.js --name fool-stone-realtime
