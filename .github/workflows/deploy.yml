@@ -3,7 +3,7 @@ name: Deploy to Server
 on:
   push:
     branches:
-      - flower_ai_merge
+      - main
 
 permissions:
   contents: read
