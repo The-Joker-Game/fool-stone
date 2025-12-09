@@ -7,7 +7,8 @@ import type {
   FlowerNightState,
   FlowerDayState,
 } from "./types.js";
-import { updateBotGuesses } from "./bot-state.js";
+// import { updateBotGuesses } from "./bot-state.js"; // Removed
+
 
 export const FLOWER_ROLES: FlowerRole[] = [
   "花蝴蝶",
@@ -171,7 +172,8 @@ export function assignFlowerRoles(snapshot: FlowerSnapshot): AssignResult {
   snapshot.updatedAt = now;
 
   // Initialize bot guesses for Day 1
-  updateBotGuesses(snapshot.roomCode, snapshot.dayCount, snapshot.players);
+  // updateBotGuesses(snapshot.roomCode, snapshot.dayCount, snapshot.players); // Removed in favor of AI logic
+
 
   return { ok: true };
 }
@@ -343,7 +345,8 @@ export function resolveDayVote(snapshot: FlowerSnapshot): ResolveResult {
     });
 
     // Update bot guesses for the new day
-    updateBotGuesses(snapshot.roomCode, snapshot.dayCount, snapshot.players);
+    // updateBotGuesses(snapshot.roomCode, snapshot.dayCount, snapshot.players); // Removed in favor of AI logic
+
 
     // Check for Last Words eligibility for the executed player
     let hasLastWords = false;

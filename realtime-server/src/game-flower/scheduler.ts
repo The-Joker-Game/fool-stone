@@ -10,14 +10,15 @@ import {
     canAutoAdvance
 } from "./engine.js";
 import {
+    getBotSpeechDecision,
     getBotNightActionTarget,
     getBotVoteTarget
-} from "./bot-logic.js";
-import {
-    generateBotSpeech,
-    generateBotLastWords
 } from "./bot-logic-ai.js";
-import { initBotMemory, getBotMemory } from "./bot-state.js";
+import {
+    initBotMemory,
+    getBotMemory,
+    updateBotMemoryFromAssessment
+} from "./bot-state.js";
 import type { FlowerSnapshot } from "./types.js";
 
 // Keep track of scheduled timeouts to avoid duplicates or memory leaks if room closes
@@ -120,7 +121,7 @@ export function checkAndScheduleActions(room: { code: string; snapshot: any }, i
                 // Check if already scheduled? 
                 // Simple approach: Random delay, then check again if action still needed.
                 const delay = Math.random() * 5000 + 2000; // 2-7s
-                const t = setTimeout(() => {
+                const t = setTimeout(async () => {
                     // Re-fetch room/snapshot to ensure valid state
                     if (!room.snapshot || room.snapshot.engine !== "flower") return;
                     const currentSnap = room.snapshot as FlowerSnapshot;
@@ -129,7 +130,7 @@ export function checkAndScheduleActions(room: { code: string; snapshot: any }, i
                     const currentPlayer = currentSnap.players.find(cp => cp.seat === p.seat);
                     if (!currentPlayer || !currentPlayer.isAlive || currentPlayer.nightAction) return;
 
-                    const target = getBotNightActionTarget(currentSnap, p.seat, p.role!);
+                    const target = await getBotNightActionTarget(currentSnap, p.seat, p.role!);
                     // Even if target is null (e.g. no valid target), we might want to "skip" or do nothing.
                     // But engine.ts submitNightAction handles logic.
                     // If target is null, maybe we don't submit? Or submit empty?
@@ -174,7 +175,18 @@ export function checkAndScheduleActions(room: { code: string; snapshot: any }, i
                 if (freshSpeakerSeat !== currentSpeakerSeat) return;
 
                 // Generate speech (async AI call)
-                const speech = await generateBotSpeech(currentSnap, currentSpeakerSeat);
+                const decision = await getBotSpeechDecision(currentSnap, currentSpeakerSeat, false);
+                const speech = decision.content;
+
+                // Update Bot Memory with the assessments and plans
+                updateBotMemoryFromAssessment(
+                    roomCode,
+                    currentSpeakerSeat,
+                    decision.playerAssessments,
+                    decision.strategicNote,
+                    decision.claimedRole,
+                    decision.strategicPlan
+                );
 
                 // Add chat message
                 const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -235,7 +247,13 @@ export function checkAndScheduleActions(room: { code: string; snapshot: any }, i
                     if (!freshLastWords || freshLastWords.queue[currentSnap.day.currentSpeakerIndex] !== currentSpeakerSeat) return;
 
                     // Generate speech (async AI call)
-                    const speech = await generateBotLastWords(currentSnap, currentSpeakerSeat);
+                    const decision = await getBotSpeechDecision(currentSnap, currentSpeakerSeat, true);
+                    const speech = decision.content;
+
+                    // Update Bot Memory might not be strictly needed for dead players,
+                    // but it helps if there are other mechs or just for consistency.
+                    // We can skip updating future plans (vote/ally) since they are dead.
+                    // updateBotMemoryFromAssessment(...); // Optional, maybe skip for now.
 
                     // Add chat message
                     const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -282,7 +300,7 @@ export function checkAndScheduleActions(room: { code: string; snapshot: any }, i
         snapshot.players.forEach(p => {
             if (p.isBot && p.isAlive && !p.hasVotedToday) {
                 const delay = Math.random() * 4000 + 1000; // 1-5s
-                const t = setTimeout(() => {
+                const t = setTimeout(async () => {
                     if (!room.snapshot || room.snapshot.engine !== "flower") return;
                     const currentSnap = room.snapshot as FlowerSnapshot;
                     if (currentSnap.phase !== "day_vote") return;
@@ -290,7 +308,7 @@ export function checkAndScheduleActions(room: { code: string; snapshot: any }, i
                     const currentPlayer = currentSnap.players.find(cp => cp.seat === p.seat);
                     if (!currentPlayer || !currentPlayer.isAlive || currentPlayer.hasVotedToday) return;
 
-                    const target = getBotVoteTarget(currentSnap, p.seat, p.role!);
+                    const target = await getBotVoteTarget(currentSnap, p.seat, p.role!);
                     if (target !== null) {
                         const res = submitDayVote(currentSnap, {
                             voterSeat: p.seat,
