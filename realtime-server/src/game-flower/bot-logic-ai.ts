@@ -574,7 +574,7 @@ export async function getBotSpeechPlan(
                     strict: true
                 }
             },
-            reasoning_effort: 'low',
+            reasoning_effort: 'high',
         });
 
         const rawContent = response.choices[0]?.message?.content || "";
@@ -664,7 +664,7 @@ Output: 服了，首刀我？我是警察啊！昨晚验的3号是查杀，铁�
             ],
             stream: true,
             temperature: 1,
-            reasoning_effort: "low",
+            reasoning_effort: "high",
         });
         let buffer = "";
         for await (const chunk of stream) {
@@ -853,7 +853,7 @@ export async function getBotNightActionTarget(
                     strict: true
                 }
             },
-            reasoning_effort: "low"
+            reasoning_effort: "high"
         });
 
         const rawContent = response.choices[0]?.message?.content || "";
