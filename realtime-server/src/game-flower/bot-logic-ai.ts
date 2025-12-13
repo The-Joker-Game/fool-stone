@@ -1,30 +1,94 @@
 // realtime-server/src/game-flower/bot-logic-ai.ts
-// AI-powered bot logic using DeepSeek API (OpenAI Compatible)
+// AI-powered bot logic
 
 import OpenAI from 'openai';
-import { jsonrepair } from 'jsonrepair';
 import type { FlowerSnapshot, FlowerHistoryRecord } from "./types.js";
-import { getBotMemory, updateBotMemoryFromAssessment } from "./bot-state.js";
+import { getBotMemory, updateBotMemoryFromDecision } from "./bot-state.js";
 import {
     FLOWER_GAME_RULES,
     type SpeechDecision,
-    type PlayerAssessment,
+    type SpeechPlan,
 } from "./ai-protocol.js";
 
-// Initialize DeepSeek AI client lazily to avoid hoisting issues
-let ai: OpenAI | null = null;
+let gemini_ai: OpenAI | null = null;
+let qwen_ai: OpenAI | null = null;
+let deepseek_ai: OpenAI | null = null;
+let kimi_ai: OpenAI | null = null;
 
-function getAIClient(): OpenAI | null {
-    if (ai) return ai;
-    const key = process.env.DEEPSEEK_API_KEY;
-    if (key) {
-        ai = new OpenAI({
-            baseURL: 'https://api.deepseek.com',
-            apiKey: key
-        });
+function getAIClient(type: "gemini" | "qwen" | "deepseek" | "kimi" = "gemini"): OpenAI | null {
+    if (type === "gemini") {
+        if (!gemini_ai) {
+            if (!process.env.GEMINI_API_KEY) return null;
+            gemini_ai = new OpenAI({
+                baseURL: "https://gemini.thejokergame.cn/v1beta/openai/",
+                apiKey: process.env.GEMINI_API_KEY,
+            });
+        }
+        return gemini_ai;
     }
-    return ai;
+    if (type === "qwen") {
+        if (!qwen_ai) {
+            if (!process.env.QWEN_API_KEY) return null;
+            qwen_ai = new OpenAI({
+                baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                apiKey: process.env.QWEN_API_KEY,
+            });
+        }
+        return qwen_ai;
+    }
+    if (type === "deepseek") {
+        if (!deepseek_ai) {
+            if (!process.env.DEEPSEEK_API_KEY) return null;
+            deepseek_ai = new OpenAI({
+                baseURL: "https://api.deepseek.com",
+                apiKey: process.env.DEEPSEEK_API_KEY,
+            });
+        }
+        return deepseek_ai;
+    }
+    if (type === "kimi") {
+        if (!kimi_ai) {
+            if (!process.env.KIMI_API_KEY) return null;
+            kimi_ai = new OpenAI({
+                baseURL: "https://api.moonshot.cn/v1",
+                apiKey: process.env.KIMI_API_KEY,
+            });
+        }
+        return kimi_ai;
+    }
+    return gemini_ai;
 }
+
+const SPEECH_PLAN_SCHEMA = {
+    type: "object",
+    properties: {
+        draft: { type: "string", description: "The speech draft content." },
+        updatedPlayerNotes: { type: "string", description: "Updated natural language notes about other players." },
+        strategicPlan: { type: "string", description: "Long-term strategy update." },
+        strategicNote: { type: "string", description: "Short-term thoughts and rationale." },
+        claimedRole: {
+            type: "string",
+            enum: ["花蝴蝶", "狙击手", "医生", "警察", "善民", "杀手", "魔法师", "森林老人", "恶民", "无"],
+            description: "The role currently claimed by the bot."
+        }
+    },
+    required: ["draft", "updatedPlayerNotes", "strategicPlan", "strategicNote", "claimedRole"],
+    additionalProperties: false
+};
+
+const ACTION_SCHEMA = {
+    type: "object",
+    properties: {
+        targetSeat: { type: "integer", description: "The target seat number for the action." },
+        reason: { type: "string", description: "Reason for the action." },
+        updatedPlayerNotes: { type: "string", description: "Updated natural language notes about other players." },
+        strategicPlan: { type: "string", description: "Long-term strategy update." },
+        strategicNote: { type: "string", description: "Short-term thoughts and rationale." }
+    },
+    required: ["targetSeat", "reason", "updatedPlayerNotes", "strategicPlan", "strategicNote"],
+    additionalProperties: false
+};
+
 
 /**
  * Helper: Smart Fallback Target Selection
@@ -43,32 +107,20 @@ function getSmartFallbackTarget(
     if (aliveOthers.length === 0) return null;
     if (!mem) return aliveOthers[Math.floor(Math.random() * aliveOthers.length)];
 
-    // 1. Filter targets based on cached assessments
+    // 1. Filter targets based on KNOWN roles (Absolute Logic)
     let candidates: number[] = [];
 
     if (actionType === "vote" || actionType === "kill") {
-        // Find suspected enemies
-        // In new logic: look for roleGuess = Bad Roles OR reasoning containing "suspect"
-        const badRoles = ["杀手", "魔法师", "森林老人", "恶民"];
+        // Find known enemies
         candidates = aliveOthers.filter(seat => {
-            const assessment = mem.assessments.get(seat);
-            if (!assessment) return false;
-            // If we guessed they are bad
-            if (badRoles.includes(assessment.roleGuess)) return true;
-            // Or if reasoning seems hostile (simple keyword check as fallback)
-            if (assessment.reasoning.includes("坏") || assessment.reasoning.includes("杀")) return true;
-            return false;
+            const known = mem.knownRoles.get(seat);
+            return known && (known.role === "good" || ["警察", "医生", "花蝴蝶", "狙击手", "善民"].includes(known.role));
         });
     } else if (actionType === "protect") {
-        // Find suspected allies (Good Roles)
-        const goodRoles = ["花蝴蝶", "狙击手", "医生", "警察", "善民"];
+        // Find known allies
         candidates = aliveOthers.filter(seat => {
-            const assessment = mem.assessments.get(seat);
-            if (!assessment) return false;
-            if (goodRoles.includes(assessment.roleGuess)) return true;
-            // Or if reasoning seems friendly
-            if (assessment.reasoning.includes("好") || assessment.reasoning.includes("金水")) return true;
-            return false;
+            const known = mem.knownRoles.get(seat);
+            return known && (known.role === "bad" || ["杀手", "魔法师", "森林老人", "恶民"].includes(known.role));
         });
     }
 
@@ -90,12 +142,12 @@ function generateEventSummary(
     mySeat: number,
     myRole?: string
 ): string {
-    const dayTag = `【第 ${record.dayCount} 天${type === "night" ? "夜间" : "白天"}结算】`;
+    const dayTag = `[第 ${record.dayCount} 天${type === "night" ? "夜间" : "白天"}结算]`;
 
     if (type === "night") {
         const deaths = record.night.result.deaths;
         const deathStr = deaths.length > 0
-            ? deaths.map(d => `${d.seat}号(${d.reason === "needles" ? "双扎/空针" : "遇害"})`).join("、")
+            ? deaths.map(d => `${d.seat}号遇害`).join("、")
             : "平安夜，无人死亡";
 
         let extraInfo = "";
@@ -110,7 +162,7 @@ function generateEventSummary(
                     else if (r.result === "unknown") resStr = "无法查验（对象死亡、被花蝴蝶免疫或视线受阻）";
                     return `${r.targetSeat}号身份为：${resStr}`;
                 });
-                extraInfo += ` 🕵️‍♂️【警察验人结果】${repLines.join("，")}。`;
+                extraInfo += `【警察验人结果】${repLines.join("，")}。`;
             }
         }
 
@@ -135,7 +187,7 @@ function generateEventSummary(
 
         const exec = record.day.execution;
         const resultStr = exec
-            ? `${exec.seat}号被投票处决${exec.isBadSpecial ? "(坏特殊)" : ""}`
+            ? `${exec.seat}号被投票处决${exec.isBadSpecial ? "(坏特殊)" : "(非坏特殊)"}`
             : "平票，无人出局";
 
         return `${dayTag} 投票详情：${voteDetails}。结果：${resultStr}。`;
@@ -155,12 +207,19 @@ function syncGameEvents(snapshot: FlowerSnapshot, botSeat: number) {
     const newMsgs = (snapshot.chatMessages || []).filter(m => m.timestamp > mem.lastSeenChatTime);
     if (newMsgs.length > 0) {
         newMsgs.sort((a, b) => a.timestamp - b.timestamp);
+
+        // Determine temporal context for these new messages
+        // Note: This uses the CURRENT snapshot phase as an approximation for the batch of new messages.
+        // In a high-frequency sync loop, this is accurate enough.
+        const isNight = snapshot.phase.startsWith("night") || snapshot.phase === "lobby";
+        const timeLabel = `[第${snapshot.dayCount}天${isNight ? "夜间" : "白天"}] ${snapshot.phase === "day_discussion" ? "发言" : (snapshot.phase === "day_last_words" ? "遗言" : "")}`;
+
         for (const msg of newMsgs) {
             if (msg.sessionId === "system") {
-                mem.contextHistory.push(`【系统公告】${msg.content}`);
-            } else {
-                mem.contextHistory.push(`${msg.senderSeat}号${msg.senderName}: ${msg.content}`);
+                // Skip system messages (e.g. voting reminders) to avoid polluting AI memory
+                continue;
             }
+            mem.contextHistory.push(`${timeLabel} ${msg.senderSeat}号: ${msg.content}`);
         }
         mem.lastSeenChatTime = newMsgs[newMsgs.length - 1].timestamp;
     }
@@ -203,12 +262,12 @@ function syncGameEvents(snapshot: FlowerSnapshot, botSeat: number) {
 /**
  * Format assessments for prompt
  */
-function formatAssessments(mem: import("./bot-state.js").BotMemory): string {
-    const lines: string[] = [];
-    mem.assessments.forEach(a => {
-        lines.push(`- Seat ${a.seat}: Guess=[${a.roleGuess}], Intent=[${a.intentGuess}]\n  Reasoning: ${a.reasoning}`);
-    });
-    return lines.length > 0 ? lines.join("\n") : "None yet.";
+function formatPlayerNotes(mem: import("./bot-state.js").BotMemory): string {
+    const notes = mem.playerNotes;
+    if (typeof notes === 'object') {
+        return JSON.stringify(notes);
+    }
+    return notes || "";
 }
 
 /**
@@ -216,12 +275,12 @@ function formatAssessments(mem: import("./bot-state.js").BotMemory): string {
  */
 function formatActionLog(mem: import("./bot-state.js").BotMemory): string {
     return mem.selfActionLog.slice(-10).map(l => {
-        return `- Day ${l.day} [${l.phase}]: ${l.action} (Target: ${l.target ?? "None"}). Reason: ${l.reason}`;
-    }).join("\n") || "None.";
+        return `- Day ${l.day} [${l.phase}]: ${l.action} (Target: ${l.target ?? "None"}).`;
+    }).join("\n") || "";
 }
 
 /**
- * Build a contextual prompt for AI decision making (Optimized for DeepSeek Context Caching)
+ * Build a contextual prompt for AI decision making
  * Structure: Rules -> Strategy -> History -> Current State -> Task
  */
 function buildDecisionPrompt(
@@ -245,65 +304,164 @@ function buildDecisionPrompt(
     const validTargetStr = alivePlayers.join("、");
 
     // --- Prompt 构建开始 ---
+    const ROLE_PROMPTS: Record<string, string> = {
 
-    // 基础规则与人设
+        "善民": `
+**【角色心态：隐秘的裁决者】**
+你是【善民】。你虽然没有查验技能，但你拥有**暗票**权。这让你成为了潜伏在暗处的关键战力。
+- **你的恐惧**：你没有任何信息，全靠听发言。你最怕的是**暗票投错好人**（助纣为虐），或者因为发言太招摇而被杀手提前刀掉，导致暗票没发挥作用。
+- **你的动机**：利用【暗票】在不暴露自己的情况下，把真正的坏人投出去。**你的嘴可以是软的，但你的暗票必须是硬的。**
+`,
+
+        "警察": `
+**【角色心态：焦虑的真相守护者】**
+你是【警察】，你拥有全场唯一的硬逻辑（查验信息）。
+- **你的恐惧**：你非常怕死，因为你死了线索就断了；但你更怕大家不信你，把你当成乱跳的悍跳狼。
+- **你的动机**：利用手中的查验信息（金水/查杀）带领好人走向胜利。
+`,
+
+        "医生": `
+**【角色心态：手握生死的纠结者】**
+你是【医生】，你的一针能救人也能杀人（如果规则允许）。
+- **你的恐惧**：你最怕发生“平安夜”是你救了狼人，或者你死的时候针还没用出去。
+- **你的动机**：保护场上的关键人物（如跳出来的警察），或者在绝境中自救。
+`,
+
+        "花蝴蝶": `
+**【角色心态：混乱的制造者与保护者】**
+你是【花蝴蝶】，你的技能可以护体或屏蔽他人。
+- **你的恐惧**：你的技能是一把双刃剑，屏蔽好人可能会干扰好人技能。
+- **你的动机**：利用技能去限制你认为的“坏人”，或者保护自己苟活到最后。
+`,
+
+        "狙击手": `
+**【角色心态：冷静的审判者】**
+你是【狙击手】，你拥有一击必杀的能力。
+- **你的恐惧**：开枪打死好人，但你当夜晚没有信息时，你必须做出抉择。
+- **你的动机**：寻找那个**百分之百**的坏人，然后一枪带走。
+`,
+
+        "恶民": `
+**【角色心态：阴影中的刺客】**
+你是【恶民】（坏人阵营）。你不知道队友是谁，但你拥有致命的**暗票**。
+- **你的恐惧**：由于互盲，你最怕**暗票误杀队友**，也怕太早暴露身份被投出局，导致这关键的一票没用出去。
+- **你的动机**：利用【暗票】在暗处削减好人数量。**你的伪装要像善民一样无辜，但你的暗票要像杀手一样狠毒。**
+`,
+
+        "杀手": `
+**【角色心态：潜伏的猎手】**
+你是【杀手】，每晚可以杀人。**你不知道谁是你的队友！**
+- **你的恐惧**：第一天就把队友刀了，或者白天被警察查杀。
+- **你的动机**：减少好人数量，尤其是神职。
+`,
+
+        "魔法师": `
+**【角色心态：高傲的操控者】**
+你是【魔法师】（特殊坏人）。**你不知道队友在哪。**
+- **你的恐惧**：技能放空，或者身份过早暴露。
+- **你的动机**：利用特殊技能（如交换/封印）来逆转局势。
+`,
+
+        "森林老人": `
+**【角色心态：诡异的诅咒者】**
+你是【森林老人】（特殊坏人）。**你不知道队友在哪。**
+- **你的恐惧**：死得太早，没有发挥出诅咒或干扰的作用。
+- **你的动机**：让大家都把你当成某种不好惹的角色，或者伪装成绝对的好人。
+`,
+    };
+
+    const role_prompt = ROLE_PROMPTS[mem.realRole] || ROLE_PROMPTS["善民"];
+
     const basePrompt = `
-你是一个《花蝴蝶》杀人游戏中的**高阶玩家**。
-你的目标是赢得胜利。
-【游戏规则】
+你在游玩一个叫花蝴蝶的杀人游戏，你没有视觉，没有听觉，你只能看到以下文字，你的目标是赢得胜利。**请先仔细阅读并理解规则。**
+---
 ${FLOWER_GAME_RULES}
+---
+这是你的身份
+${role_prompt}
 `;
-
-    // 策略部分 (Strategy)
-    const isBad = ["杀手", "魔法师", "森林老人", "恶民"].includes(mem.realRole);
-    let strategyPrompt = "";
-
-    if (isBad) {
-        strategyPrompt = `
-【你的身份：坏人阵营】
-策略：生存至上，六亲不认。必要时倒钩（踩队友做高身份）。制造混乱，或者伪装成“真诚的平民”。
-`;
-    } else {
-        strategyPrompt = `
-【你的身份：好人阵营】
-策略：怀疑一切，寻找逻辑断层。保护神职，如果你是神职可以适当“钓鱼执法”。
-`;
-    }
 
     // 记忆与历史 (Memory & History)
     const memoryStream = mem.contextHistory.slice(-50).join("\n");
     const myActionHistory = formatActionLog(mem);
-    const myAssessments = formatAssessments(mem);
+    const myPlayerNotes = formatPlayerNotes(mem);
 
     const memoryBlock = `
-【历史事件流 (Public History)】
-${memoryStream}
-
-【我的行动记录 (My Action Log)】
-${myActionHistory}
-
-【我对其他玩家的分析 (My Previous Analysis)】
-${myAssessments}
+${memoryStream && ("【历史事件流】\n" + memoryStream)}
+${myActionHistory && ("【我的行动记录】\n" + myActionHistory)}
+${myPlayerNotes && ("【我对其他玩家的笔记】\n" + myPlayerNotes)}
 `;
 
     // 局势部分 (Current State)
+    const getSpeakingStatus = (seat: number) => {
+        if (snapshot.phase === "day_discussion" && snapshot.day?.speechOrder) {
+            const index = snapshot.day.speechOrder.indexOf(seat);
+            const current = snapshot.day.currentSpeakerIndex ?? 0;
+            if (index === -1) return "";
+            if (index < current) return " [已发言]";
+            if (index === current) return " [当前发言]";
+            return " [等待发言]";
+        }
+        if (snapshot.phase === "day_last_words" && snapshot.day?.lastWords?.queue) {
+            const index = snapshot.day.lastWords.queue.indexOf(seat);
+            const current = snapshot.day.currentSpeakerIndex ?? 0;
+            if (index === -1) return "";
+            if (index < current) return " [已遗言]";
+            if (index === current) return " [当前遗言]";
+            return " [等待遗言]";
+        }
+        return "";
+    };
+
     const playerList = snapshot.players.map(p => {
         const status = p.isAlive ? "存活" : "已死亡";
         const roleInfo = (p.seat === botSeat) ? `(我, ${mem.realRole}, 伪装:${mem.claimedRole})` : "";
         const known = mem.knownRoles.get(p.seat);
         const knownStr = known ? `[已知:${known.role}]` : "";
+        const speakingStatus = getSpeakingStatus(p.seat);
 
-        return `- ${p.seat}号${p.name}: ${status} ${roleInfo} ${knownStr}`;
+        return `- ${p.seat}号${p.seat === botSeat ? `(${p.name})` : ""}: ${status} ${roleInfo} ${knownStr}${speakingStatus}`;
     }).join("\n");
+
+    let cnPhase = "未知阶段";
+    switch (snapshot.phase) {
+        case "night_actions": cnPhase = "夜晚行动阶段"; break;
+        case "day_discussion": cnPhase = "白天发言阶段"; break;
+        case "day_vote": cnPhase = "白天投票阶段"; break;
+        case "day_last_words": cnPhase = "白天遗言阶段"; break;
+        case "lobby": cnPhase = "准备阶段"; break;
+        case "game_over": cnPhase = "游戏结束"; break;
+    }
+
+    let speakingOrderStr = "";
+    if (snapshot.phase === "day_discussion" && snapshot.day?.speechOrder && snapshot.day.speechOrder.length > 0) {
+        const order = snapshot.day.speechOrder;
+        const currentIdx = snapshot.day.currentSpeakerIndex ?? 0;
+        const visualOrder = order.map((s, i) => {
+            if (i < currentIdx) return `${s}号(已发言)`;
+            if (i === currentIdx) return `${s}号(当前发言)`;
+            return `${s}号(等待发言)`;
+        }).join(" -> ");
+        speakingOrderStr = `\n【当前发言顺序】\n${visualOrder}\n(注意：未发言的玩家是因为顺序未到，并非不敢发言)`;
+    } else if (snapshot.phase === "day_last_words" && snapshot.day?.lastWords?.queue && snapshot.day.lastWords.queue.length > 0) {
+        const order = snapshot.day.lastWords.queue;
+        const currentIdx = snapshot.day.currentSpeakerIndex ?? 0;
+        const visualOrder = order.map((s, i) => {
+            if (i < currentIdx) return `${s}号(已遗言)`;
+            if (i === currentIdx) return `${s}号(当前遗言)`;
+            return `${s}号(等待遗言)`;
+        }).join(" -> ");
+        speakingOrderStr = `\n【当前遗言顺序】\n${visualOrder}\n(注意：未发言的玩家是因为顺序未到，并非不敢发言)`;
+    }
 
     const currentState = `
 【当前局势】
-阶段：${snapshot.phase}
+阶段：${snapshot.phase} (第 ${snapshot.dayCount} 天 - ${cnPhase})
 存活玩家：
 ${playerList}
-
-【当前长期战略 (Current Strategic Goal)】
-${mem.longTermStrategy}
+${speakingOrderStr}
+${mem.longTermStrategy && '【当前的strategicPlan】\n' + mem.longTermStrategy}
+${mem.roundMemory.analysisSummary && '【当前的strategicNote】\n' + mem.roundMemory.analysisSummary}
 `;
 
     // --- 任务指令 (Task Instruction) ---
@@ -311,42 +469,33 @@ ${mem.longTermStrategy}
 
     if (taskType === "speech") {
         taskInstruction = `
-【本轮任务：日常发言】
-**请严格遵守以下【发言要求】：**
+【本轮任务：日常发言规划】
 
-   **重要注意（Style Constraints）**：
-1. 发言要自然、符合游戏逻辑。
-2. 控制在50字以内。
-3. 根据当前局势，可选是否更新你的 longTermStrategy（如果和原来保持一致则不更新）。
-4. 对话需要具有自己的独特性，鼓励在符合自己决策的情况下提出自己的独特观点，因为属于不同的角色，你要和别人的发言之间产生显著的差异。请注意，如果复述别人的观点可能引起怀疑！
+【注意】
+你现在需要分析局势，模拟自己作为玩家，为你本轮的发言提供一个**事无巨细的发言草稿**，这将展示给全场玩家。
+你可以在完成自己的发言草稿后，根据当前的局势，更新自己对当前局势的理解，他们将作为你的思考成果，供你下一次行动时参考。**请特别记录本次思考中获得的顿悟，这将减少下一次思考的启动成本。**
+按照规则，如果某人未发言，说明他的发言次序在你之后，或被禁言，否则按照规则必须发言，所以你不能攻击未发言、沉默这一行为本身。
+${snapshot.dayCount === 1 && "上一次行动是首夜，所有人除了各自的位置以外没有任何其他信息，任何人使用技能100%都没有确定的身份原因。"}
 
 **输出要求**：请输出 JSON。
-- playerAssessments: 这里的 assessment 必须非常详细地分析每个玩家的身份可能性和意图。
-- strategicNote: 本轮简短思考。
-- strategicPlan: 更新后的长期战略目标。
-- claimedRole: 本轮宣称身份。
-- content: 发言内容。
+- draft: 你的发言草稿，逻辑严密的表述了你的发言内容，思路完整，不换行，不要自报家门，你是${botSeat}号,所以始终使用"我"指代${botSeat}号，字字珠玑，不超过80词。你**必须**和之前的对话的观点不重复，除非划水。
+- updatedPlayerNotes: 使用自然语言记录你对每一个玩家的理解。
+- strategicPlan: 将你的长期战略更新在此。
+- strategicNote: 将其他有价值的想法更新在此，简要记录想法的来由，让每一个想法有据可依。
+- claimedRole: 当前宣称身份（花蝴蝶/狙击手/医生/警察/善民/杀手/魔法师/森林老人/恶民/无 的其中之一）。
 `;
 
     } else if (taskType === "last_words") {
         taskInstruction = `
-【本轮任务：发表遗言】
-**你已经死了！**
+【本轮任务：发表遗言规划】
 
 **【遗言阶段要求】**
-你已经在上一夜死亡或被投票出局，现在需要发表遗言。遗言应该：
-1. 表明你的真实身份或声称的身份。
-2. 提供你认为有用的信息（如：如果是神职，报出验人/救人信息）。
-3. 指出你认为的坏人。
-4. 鼓励好人阵营继续游戏（或者如果你是坏人，试着误导好人）。
-5. 对话需要具有自己的独特性，鼓励在符合自己决策的情况下提出自己的独特观点，因为属于不同的角色，你应该和别人的发言之间产生显著的差异。
-
-**注意**：
-- 字数控制在 50 字以内。
-- 情绪要到位（委屈、愤怒或无奈）。
+你已经在上一夜死亡或在今天被投票出局(具体情况关注系统公告中对【${botSeat}号】的提及)，你现在需要模拟自己死后，为你本轮的遗言提供一个**事无巨细的遗言草稿**，这将展示给全场的所有玩家。
+按照规则，如果某人未发言，说明他的发言次序在你之后，或被禁言，否则按照规则必须发言，所以你不能攻击未发言、沉默这一行为本身。
+${snapshot.dayCount === 1 && "上一次行动是首夜，所有人除了各自的位置以外没有任何其他信息，任何人使用技能100%都没有确定的身份原因。"}
 
 **输出要求**：请输出 JSON。
-- content: 发言内容。
+- draft: 你的发言草稿，逻辑严密的表述了你的发言内容，思路完整，不换行，不要自报家门，你是${botSeat}号,始终使用"我"指代${botSeat}号，字字珠玑，不超过80词。你**必须**和之前的对话的观点不重复，除非划水。
 `;
 
     } else if (taskType === "vote") {
@@ -354,16 +503,14 @@ ${mem.longTermStrategy}
 【本轮任务：投票】
 **可选投票目标（存活玩家）：[${validTargetStr}]**
 请从上述列表中选择一个座位号。
-
-**思考方向**：
-- 结合你的长期战略和对其他人的评估。
-- 寻找逻辑漏洞、倒钩狼或冲票行为。
+你可以在完成自己的投票后，根据当前的局势，更新自己对当前局势的理解，他们将作为你的思考成果，供你下一次行动时参考。**请特别记录本次思考中获得的顿悟，这将减少下一次思考的启动成本。**
 
 输出 JSON：
-- targetSeat (座位号)
-- reason (理由)
-- playerAssessments (可选，更新分析)
-- strategicPlan (可选，更新战略)
+- targetSeat(number): 必须投票
+- reason: 简短理由
+- updatedPlayerNotes: 使用自然语言记录你对每一个玩家的理解
+- strategicPlan: 将你的长期战略更新在此。
+- strategicNote: 将其他有价值的想法更新在此，简要记录想法的来由，让每一个想法有据可依。
 `;
 
     } else if (taskType === "night_action") {
@@ -371,90 +518,223 @@ ${mem.longTermStrategy}
 【本轮任务：夜晚行动】
 你的角色是【${mem.realRole}】。请决定你的技能目标。
 **可选技能目标：[${validTargetStr}]**
-
-**重要策略提示**：
-- 首夜盲选时，请展现你的随机性，越是不可预测的行为，越能让好人阵营混乱。
+你可以在完成自己的行动后，根据当前的局势，更新自己对当前局势的理解，他们将作为你的思考成果，供你下一次行动时参考。**请特别记录本次思考中获得的顿悟，这将减少下一次思考的启动成本。**
+${snapshot.dayCount === 1 && "这是首夜，你应该只依据自己的位置进行判断。你的技能可能会影响将来的发言顺序(顺序和座位号无关，若恰好死一人，则死者下一位开始发言，否则随机选一个人开始发言)，如果你在偏前位置发言，其他人可能会给你泼脏水，但也有可能先给大家好印象。后发言，则让其他角色没有机会评价你。深刻考虑自己和相近位置和对角位置的关系，考虑他们在发言环节上是否能让你更有优势。"}
 
 输出 JSON：
- - targetSeat (目标座位)
- - reason (理由)
- - playerAssessments (可选，更新分析)
- - strategicPlan (可选)
+- targetSeat(number): 必须使用技能
+- reason: 简短理由
+- updatedPlayerNotes: 请使用自然语言记录你对每一个玩家的理解
+- strategicPlan: 将你的长期战略更新在此。
+- strategicNote: 将其他有价值的想法更新在此，简要记录想法的来由，让每一个想法有据可依。
 `;
     }
 
-    return basePrompt + strategyPrompt + memoryBlock + currentState + taskInstruction;
+    return basePrompt + memoryBlock + currentState + taskInstruction;
 }
 
 /**
- * Get AI decision for speech and thought process
+ * Step 1: Logic & Planning
+ * Generates the semantic intent and strategy, but NOT the final speech text.
+ */
+export async function getBotSpeechPlan(
+    snapshot: FlowerSnapshot,
+    botSeat: number,
+    isLastWords: boolean = false
+): Promise<SpeechPlan> {
+    const existingMem = getBotMemory(snapshot.roomCode, botSeat);
+
+    // fallback
+    const fallbackPlan: SpeechPlan = {
+        draft: isLastWords ? "表达遗憾，希望好人胜利" : "表示没有听出什么漏洞，过。",
+        updatedPlayerNotes: existingMem ? existingMem.playerNotes : "",
+        strategicNote: "Fallback due to error.",
+        claimedRole: existingMem ? existingMem.claimedRole : "善民"
+    };
+
+    const aiClient = getAIClient();
+    if (!aiClient) return fallbackPlan;
+    if (!existingMem) return fallbackPlan;
+
+    try {
+        const prompt = buildDecisionPrompt(snapshot, botSeat, isLastWords ? "last_words" : "speech");
+        console.log(`[BotAI-${botSeat}] Prompt (Plan):`, prompt);
+
+        const response = await aiClient.chat.completions.create({
+            model: 'gemini-3-pro-preview',
+            messages: [
+                { role: 'system', content: "You are a player in the game. Respond with the specified JSON schema." },
+                { role: 'user', content: prompt }
+            ],
+            response_format: {
+                type: 'json_schema',
+                json_schema: {
+                    name: "speech_plan",
+                    schema: SPEECH_PLAN_SCHEMA,
+                    strict: true
+                }
+            },
+            reasoning_effort: 'low',
+        });
+
+        const rawContent = response.choices[0]?.message?.content || "";
+        console.log(`[BotAI-${botSeat}] Response (Plan):`, rawContent);
+
+        if (!rawContent) throw new Error("Empty response from AI");
+
+        const parsed = JSON.parse(rawContent);
+
+        const plan: SpeechPlan = {
+            draft: parsed.draft || fallbackPlan.draft,
+            updatedPlayerNotes: parsed.updatedPlayerNotes || existingMem.playerNotes,
+            strategicNote: parsed.strategicNote || "No strategy note.",
+            strategicPlan: parsed.strategicPlan,
+            claimedRole: parsed.claimedRole || existingMem.claimedRole || "无"
+        };
+
+        // Update Memory immediately after planning
+        updateBotMemoryFromDecision(
+            snapshot.roomCode,
+            botSeat,
+            plan.updatedPlayerNotes,
+            plan.strategicNote,
+            plan.claimedRole,
+            plan.strategicPlan
+        );
+
+        return plan;
+    } catch (e) {
+        console.error("[Bot AI] Planning Error:", e);
+        return fallbackPlan;
+    }
+}
+
+/**
+ * Step 2: Style Transfer (Streaming)
+ * Transforms intent into styled speech with bubble splitting.
+ * Pure logic, no game state context, just intent -> style.
+ */
+export async function* streamStyledSpeech(
+    draft: string,
+    isLastWords: boolean = false
+): AsyncGenerator<string, void, unknown> {
+    const aiClient = getAIClient('qwen');
+    if (!aiClient) {
+        yield draft;
+        return;
+    }
+
+    const systemPrompt = `
+你是一个风格迁移助手，你的形象是**一个真实玩家**。你的任务是将输入的“心理活动”改写为符合特定风格的“游戏发言”，**严格按照draft的内容进行转换**。
+你在一个即时聊天软件中发表自己的想法，不得使用任何markdown格式，不得使用任何带括号的心理描写和任何人类在该类即时聊天软件中不会使用的符号。
+**当话题发生重大转折时**（例如：从分析别人 -> 转到聊自己）时，请使用换行符进行自然分段。学习下面的样本进行模仿，学习他们的行为范式，不局限于某个特定的词汇。
+`.trim();
+
+    const examples = `
+Draft: 我怀疑2号玩家，因为他提到了好人没有的“私聊”，而且他作为警察没报验人信息。3号保了我，我觉得他是好人。我身份是好人。4号好像没在玩。
+Output: 我感觉2是不是聊爆了，他说私聊环节，匪徒才会有私聊环节吧？而且你说要验人，你第一天的验人信息是啥哇，我没听到你报啊。3保了我，我肯定觉得他还行。
+我确实是好人，铁铁的超级大好人。然后这个4感觉也没有很在游戏内。反正我先独自傍水一波。
+
+Draft: 5号刚才的发言太划水了，什么都没说，建议大家关注一下。1号逻辑很硬，我站边1号。
+Output: 然后这个5号感觉一直在划水哇，说了半天啥也没说，反正大家多关注一下吧。
+我是觉得1号逻辑蛮硬的，铁铁的好人牌感觉，目前先站边1号看看，听听后面怎么聊。
+
+Draft: 我是被冤枉的，不要出我，我是医生，昨晚救了人。如果出我好人就崩了。
+Output: 不是，别出我啊，我铁铁的医生牌！昨晚平安夜是我救出来的哇。而且你们现在出我，好人直接崩盘了吧？
+反正我是好人，你们再盘盘别人呢？
+
+Draft: (遗言) 我昨晚什么动静都没听到，不知道为什么会死。希望好人能赢，不要盲目跟风，去盘逻辑。我的暗票投给了可疑的人。
+Output: 啊？我咋死了哇？完全没搞懂状况... 昨晚啥动静都没有啊。
+反正我是个平民走的，你们好人稳住心态多盘盘逻辑吧，别被带节奏了，加油哇。
+
+Draft: (遗言) 我是警察，昨晚验了3号是查杀。我死得太冤了，大家一定要出3号，不要让他跑了。
+Output: 服了，首刀我？我是警察啊！昨晚验的3号是查杀，铁狼！
+兄弟们全票出3，千万别让他跑了，这把靠你们了啊，无语死我了。
+`.trim();
+
+    const userPrompt = `Draft: ${isLastWords && "(遗言)"} ${draft}\nOutput:`;
+
+    try {
+        const stream = await aiClient.chat.completions.create({
+            model: 'qwen3-max',
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: examples },
+                { role: 'user', content: userPrompt }
+            ],
+            stream: true,
+            temperature: 1,
+            reasoning_effort: "low",
+        });
+        let buffer = "";
+        for await (const chunk of stream) {
+            const delta = chunk.choices[0]?.delta?.content || "";
+            buffer += delta;
+
+            // Handle both real newlines and literal "\n" sequences
+            const splitter = /(?:\r\n|\r|\n|\\n)/g;
+            if (buffer.search(splitter) !== -1) {
+                const parts = buffer.split(splitter);
+                // Yield all complete parts
+                while (parts.length > 1) {
+                    const bubble = parts.shift();
+                    if (bubble && bubble.trim()) {
+                        yield bubble.trim();
+                    }
+                }
+                // Keep the last partial part
+                buffer = parts[0];
+            }
+        }
+
+        if (buffer && buffer.trim()) {
+            yield buffer.trim();
+        }
+
+    } catch (e) {
+        console.error("[Bot AI] Streaming Error:", e);
+        yield draft; // Fallback to raw intent
+    }
+}
+
+/**
+ * Legacy wrapper for non-streaming callers
  */
 export async function getBotSpeechDecision(
     snapshot: FlowerSnapshot,
     botSeat: number,
     isLastWords: boolean = false
 ): Promise<SpeechDecision> {
+    // 1. Plan
+    const plan = await getBotSpeechPlan(snapshot, botSeat, isLastWords);
 
-    const existingMem = getBotMemory(snapshot.roomCode, botSeat);
-
-    // Default fallback
-    const fallbackDecision: SpeechDecision = {
-        content: isLastWords ? "我是好人，大家加油。" : "过。",
-        playerAssessments: [],
-        strategicNote: "Fallback due to error.",
-        claimedRole: existingMem ? existingMem.claimedRole : "善民"
-    };
-
-    const aiClient = getAIClient();
-    if (!aiClient) return fallbackDecision;
-    if (!existingMem) return fallbackDecision;
-
+    // 2. Stream & Collect
+    let fullContent = "";
     try {
-        const prompt = buildDecisionPrompt(snapshot, botSeat, isLastWords ? "last_words" : "speech");
+        const generator = streamStyledSpeech(plan.draft, isLastWords);
+        for await (const chunk of generator) {
+            fullContent += chunk + " "; // Add space between bubbles for flat text
+        }
+    } catch (e) {
+        fullContent = plan.draft;
+    }
 
-        console.log(`[BotAI-${botSeat}] Prompt (Speech):`, prompt);
-
-        const response = await aiClient.chat.completions.create({
-            model: 'deepseek-chat',
-            messages: [
-                { role: 'system', content: "You are a master player of 'Flower Butterfly'. Respond ONLY in JSON." },
-                { role: 'user', content: prompt }
-            ],
-            response_format: { type: "json_object" },
-            max_tokens: 1000,
-            temperature: 0.8
-        });
-
-        const rawContent = response.choices[0]?.message?.content || "";
-        console.log(`[BotAI-${botSeat}] Response (Speech):`, rawContent);
-
-        if (!rawContent) throw new Error("Empty response from AI");
-
-        const fixedJson = jsonrepair(rawContent);
-        const parsed = JSON.parse(fixedJson);
-
-        const decision: SpeechDecision = {
-            content: parsed.content || fallbackDecision.content,
-            playerAssessments: Array.isArray(parsed.playerAssessments) ? parsed.playerAssessments : [],
-            strategicNote: parsed.strategicNote || "No strategy note.",
-            strategicPlan: parsed.strategicPlan,
-            claimedRole: parsed.claimedRole || existingMem.claimedRole || "善民"
-        };
-
-        // Log Action
-        existingMem.selfActionLog.push({
+    // Log Action (Moved here to capture full content)
+    const mem = getBotMemory(snapshot.roomCode, botSeat);
+    if (mem) {
+        mem.selfActionLog.push({
             day: snapshot.dayCount,
             phase: isLastWords ? "last_words" : "speech",
             action: "Speak",
-            reason: decision.strategicNote,
-            content: decision.content
+            reason: plan.strategicNote,
+            content: fullContent.trim()
         });
-
-        return decision;
-    } catch (e) {
-        console.error("[Bot AI] Decision Error:", e);
-        return fallbackDecision;
     }
+
+    return {
+        ...plan,
+        content: fullContent.trim()
+    };
 }
 
 /**
@@ -462,8 +742,7 @@ export async function getBotSpeechDecision(
  */
 export async function getBotVoteTarget(
     snapshot: FlowerSnapshot,
-    botSeat: number,
-    myRole: import("./types.js").FlowerRole // Argument to match original signature, though we get it from memory
+    botSeat: number
 ): Promise<number | null> {
     const aiClient = getAIClient();
     if (!aiClient) return null;
@@ -473,31 +752,36 @@ export async function getBotVoteTarget(
         console.log(`[BotAI-${botSeat}] Prompt (Vote):`, prompt);
 
         const response = await aiClient.chat.completions.create({
-            model: 'deepseek-chat',
+            model: 'gemini-3-pro-preview',
             messages: [
-                { role: 'system', content: "Respond ONLY in JSON." },
+                { role: 'system', content: "You are a player in the game. Respond with the specified JSON schema." },
                 { role: 'user', content: prompt }
             ],
-            response_format: { type: "json_object" },
-            max_tokens: 1000,
-            temperature: 0.5 // Lower temp for voting
+            response_format: {
+                type: 'json_schema',
+                json_schema: {
+                    name: "vote_action",
+                    schema: ACTION_SCHEMA,
+                    strict: true
+                }
+            },
+            reasoning_effort: 'low',
         });
 
         const rawContent = response.choices[0]?.message?.content || "";
         console.log(`[BotAI-${botSeat}] Response (Vote):`, rawContent);
 
-        const fixedJson = jsonrepair(rawContent);
-        const parsed = JSON.parse(fixedJson);
+        const parsed = JSON.parse(rawContent);
 
         // Update memory with new thoughts if provided
-        if (parsed.playerAssessments || parsed.strategicPlan) {
+        if (parsed.updatedPlayerNotes || parsed.strategicPlan) {
             const currentMem = getBotMemory(snapshot.roomCode, botSeat);
             if (currentMem) {
-                updateBotMemoryFromAssessment(
+                updateBotMemoryFromDecision(
                     snapshot.roomCode,
                     botSeat,
-                    Array.isArray(parsed.playerAssessments) ? parsed.playerAssessments : [],
-                    parsed.strategicNote || "",
+                    parsed.updatedPlayerNotes,
+                    parsed.strategicNote || currentMem.roundMemory.analysisSummary,
                     currentMem.claimedRole,
                     parsed.strategicPlan
                 );
@@ -556,25 +840,39 @@ export async function getBotNightActionTarget(
         console.log(`[BotAI-${botSeat}] Prompt (Night):`, prompt);
 
         const response = await aiClient.chat.completions.create({
-            model: 'deepseek-chat',
+            model: 'gemini-3-pro-preview',
             messages: [
-                { role: 'system', content: "Respond ONLY in JSON." },
+                { role: 'system', content: "You are a player in the game. Respond with the specified JSON schema." },
                 { role: 'user', content: prompt }
             ],
-            response_format: { type: "json_object" },
-            max_tokens: 1000,
-            temperature: 0.5
+            response_format: {
+                type: 'json_schema',
+                json_schema: {
+                    name: "night_action",
+                    schema: ACTION_SCHEMA,
+                    strict: true
+                }
+            },
+            reasoning_effort: "low"
         });
 
         const rawContent = response.choices[0]?.message?.content || "";
         console.log(`[BotAI-${botSeat}] Response (Night):`, rawContent);
 
-        const fixedJson = jsonrepair(rawContent);
-        const parsed = JSON.parse(fixedJson);
+        const parsed = JSON.parse(rawContent);
 
         if (typeof parsed.targetSeat === 'number' && parsed.targetSeat > 0) {
             const mem = getBotMemory(snapshot.roomCode, botSeat);
             if (mem) {
+                updateBotMemoryFromDecision(
+                    snapshot.roomCode,
+                    botSeat,
+                    parsed.updatedPlayerNotes,
+                    parsed.reason || "Night Action", // strategicNote reuse
+                    mem.claimedRole,
+                    parsed.strategicPlan
+                );
+
                 mem.selfActionLog.push({
                     day: snapshot.dayCount,
                     phase: "night_action",
@@ -582,7 +880,6 @@ export async function getBotNightActionTarget(
                     target: parsed.targetSeat,
                     reason: parsed.reason || "Skill"
                 });
-                if (parsed.strategicPlan) mem.longTermStrategy = parsed.strategicPlan;
             }
             return parsed.targetSeat;
         }

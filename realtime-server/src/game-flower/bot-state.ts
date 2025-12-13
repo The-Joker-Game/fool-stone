@@ -1,14 +1,14 @@
 
 import type { FlowerRole, FlowerPlayerState } from "./types.js";
-import type { PlayerAssessment } from "./ai-protocol.js";
+
 
 export interface BotMemory {
     // The role this bot claims to be (publicly)
-    claimedRole: FlowerRole;
+    claimedRole: FlowerRole | "无";
     // The bot's actual role (for reference)
     realRole: FlowerRole;
-    // Detailed assessments of other players
-    assessments: Map<number, PlayerAssessment>;
+    // Key observations and notes about other players (Natural Language)
+    playerNotes: string;
 
     // known information (e.g. from Police checks or absolute logic)
     knownRoles: Map<number, { role: FlowerRole | "good" | "bad"; source: "police" | "witness" }>;
@@ -90,44 +90,10 @@ export function initBotMemory(
     }
     const roomMemories = globalBotMemories.get(roomCode)!;
 
-    const assessments = new Map<number, PlayerAssessment>();
-
-    // Initialize suspicion to Neutral (50) for everyone
-    allPlayers.forEach(p => {
-        if (p.seat === seat) return;
-        assessments.set(p.seat, {
-            seat: p.seat,
-            roleGuess: "Unknown",
-            intentGuess: "Initial state",
-            reasoning: "Game just started"
-        });
-    });
-
-    // Decide on a Claimed Role Strategy (Initial thought)
-    // This can still be random-ish or heuristic based, as it's "pre-game strategy"
-    let claimedRole = realRole;
-    if (isBadRole(realRole)) {
-        // Bad guys lie.
-        const roll = Math.random();
-        if (roll < 0.4) {
-            claimedRole = "善民";
-        } else if (roll < 0.7) {
-            const godRoles: FlowerRole[] = ["警察", "医生", "花蝴蝶"];
-            claimedRole = godRoles[Math.floor(Math.random() * godRoles.length)];
-        } else {
-            claimedRole = "善民";
-        }
-    } else {
-        // Good guys usually claim real, or hide as civilian
-        if (realRole !== "善民" && Math.random() < 0.2) {
-            claimedRole = "善民";
-        }
-    }
-
     const memory: BotMemory = {
-        claimedRole,
+        claimedRole: "无",
         realRole,
-        assessments,
+        playerNotes: "游戏刚开始。暂无其他玩家的详细记录。",
         knownRoles: new Map(),
         roundMemory: {
             planToAlly: [],
@@ -159,15 +125,14 @@ export function appendBotContext(roomCode: string, seat: number, contextLine: st
 }
 
 /**
- * Update memory based on AI's latest assessment.
- * This replaces the old "updateBotGuesses" cheat function.
+ * Update memory based on AI's latest decision output.
  */
-export function updateBotMemoryFromAssessment(
+export function updateBotMemoryFromDecision(
     roomCode: string,
     seat: number,
-    assessments: PlayerAssessment[],
+    updatedPlayerNotes: string | undefined, // New: natural language notes
     strategicNote: string,
-    claimedRole: FlowerRole, // New argument
+    claimedRole: FlowerRole | "无",
     strategicPlan?: string
 ) {
     const mem = getBotMemory(roomCode, seat);
@@ -178,14 +143,14 @@ export function updateBotMemoryFromAssessment(
 
     // Update Round Memory
     mem.roundMemory.analysisSummary = strategicNote;
-    mem.roundMemory.planToAlly = []; // Needs new logic if we want to determine allies from Reasoning, or just drop this field eventually.
+    mem.roundMemory.planToAlly = [];
 
     if (strategicPlan) {
         mem.longTermStrategy = strategicPlan;
     }
 
-    // Update Persistent Beliefs
-    assessments.forEach(a => {
-        mem.assessments.set(a.seat, a);
-    });
+    // Update Player Notes if provided
+    if (updatedPlayerNotes) {
+        mem.playerNotes = updatedPlayerNotes;
+    }
 }

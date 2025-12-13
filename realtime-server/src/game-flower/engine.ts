@@ -7,7 +7,7 @@ import type {
   FlowerNightState,
   FlowerDayState,
 } from "./types.js";
-// import { updateBotGuesses } from "./bot-state.js"; // Removed
+import { clearRoomBotMemories } from "./bot-state.js";
 
 
 export const FLOWER_ROLES: FlowerRole[] = [
@@ -645,14 +645,6 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
       }
     }
   }
-
-  // Good/Evil Citizen (Dark Votes) - usually not blocked by FB? 
-  // "若被施法则当晚无法投暗票" - handled by invalidActors check.
-  // "善恶民死亡当夜暗票仍有效" - handled by getActiveRolePlayer check (we need to allow dead if they died TONIGHT? No, "死亡当夜" means if they die tonight their vote counts. 
-  // But getActiveRolePlayer checks `alive(player.seat)`. 
-  // We need to allow them to vote even if they are about to die. 
-  // Actually `alive` checks `ctx.aliveSeats` which is current state. So they are alive now.
-
   const goodCitizenPlayer = getActiveRolePlayer("善民");
   const goodCitizenAction = goodCitizenPlayer && !invalidActors.has(goodCitizenPlayer.seat) ? ctx.actionsByRole.get("善民") : undefined;
   if (goodCitizenAction && goodCitizenAction.targetSeat) {
@@ -739,26 +731,7 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
 
   // Muted logs
   mutedSeats.forEach((seat) => {
-    // Already logged in registerEffect? 
-    // "森林老人禁言了座位 X"
-    // But we might want to deduplicate if multiple effects?
-    // Elder only acts once.
-    // But if transferred?
-    // registerEffect logs "X -> Y (Transferred)".
-    // We should add a simple log if it wasn't covered.
-    // Actually, let's rely on registerEffect for the transfer log, and here for the result log?
-    // Or just one log?
-    // The registerEffect logs the ACTION.
-    // Let's add a result log if it's not redundant.
-    // "森林老人让 [A] 陷入了沉默"
-    // If we already logged "Elder -> A", maybe that's enough?
-    // Let's check registerEffect for Elder again.
-    // It logs nothing currently in my new code (except transfer).
-    // So I should add a log here.
     if (!logs.some(l => l.includes(`森林老人`) && l.includes(`座位${seat}`))) {
-      // Note: formatPlayer(elderPlayer.seat) might not be available if elder is dead/null, but mutedSeats implies elder acted.
-      // But wait, mutedSeats could come from other sources? No, only Elder.
-      // So Elder must be the source.
       const elder = getActiveRolePlayer("森林老人");
       if (elder) {
         logs.push(`${formatPlayer(elder.seat)}禁言了${formatTarget(seat, elder.seat)}`);
@@ -1021,6 +994,9 @@ export function resetFlowerGame(snapshot: FlowerSnapshot): { ok: boolean; error?
   snapshot.history = [];
   snapshot.pendingAction = null;
   snapshot.gameResult = null;
+
+  // Clear bot memory
+  clearRoomBotMemories(snapshot.roomCode);
 
   // 清空游戏日志，重新开始时不保留上一局的游戏记录
   snapshot.logs = [{ at: now, text: "🔄 游戏已重置，等待开始" }];
