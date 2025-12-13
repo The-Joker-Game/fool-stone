@@ -478,11 +478,11 @@ ${mem.roundMemory.analysisSummary && '【当前的strategicNote】\n' + mem.roun
 ${snapshot.dayCount === 1 && "上一次行动是首夜，所有人除了各自的位置以外没有任何其他信息，任何人使用技能100%都没有确定的身份原因。"}
 
 **输出要求**：请输出 JSON。
-- draft: 你的发言草稿，逻辑严密的表述了你的发言内容，思路完整，不换行，不要自报家门，你是${botSeat}号,所以始终使用"我"指代${botSeat}号，字字珠玑，不超过80词。你**必须**和之前的对话的观点不重复，除非划水。
+- claimedRole: 当前宣称身份（花蝴蝶/狙击手/医生/警察/善民/杀手/魔法师/森林老人/恶民/无 的其中之一）。
+- draft: 你的发言草稿，逻辑严密的表述了你的发言内容，不换行，不要自报家门，你是${botSeat}号,所以始终使用"我"指代${botSeat}号，不超过80词。仔细考虑你是否伪装，是否欺骗他人，不要重复前面的观点。
 - updatedPlayerNotes: 使用自然语言记录你对每一个玩家的理解。
 - strategicPlan: 将你的长期战略更新在此。
 - strategicNote: 将其他有价值的想法更新在此，简要记录想法的来由，让每一个想法有据可依。
-- claimedRole: 当前宣称身份（花蝴蝶/狙击手/医生/警察/善民/杀手/魔法师/森林老人/恶民/无 的其中之一）。
 `;
 
     } else if (taskType === "last_words") {
@@ -495,7 +495,7 @@ ${snapshot.dayCount === 1 && "上一次行动是首夜，所有人除了各自�
 ${snapshot.dayCount === 1 && "上一次行动是首夜，所有人除了各自的位置以外没有任何其他信息，任何人使用技能100%都没有确定的身份原因。"}
 
 **输出要求**：请输出 JSON。
-- draft: 你的发言草稿，逻辑严密的表述了你的发言内容，思路完整，不换行，不要自报家门，你是${botSeat}号,始终使用"我"指代${botSeat}号，字字珠玑，不超过80词。你**必须**和之前的对话的观点不重复，除非划水。
+- draft: 你的发言草稿，逻辑严密的表述了你的发言内容，不换行，不要自报家门，你是${botSeat}号,始终使用"我"指代${botSeat}号，不超过80词。不要重复前面的观点，这是你最后一次发言，思考是否有任何后事需要交代。
 `;
 
     } else if (taskType === "vote") {
@@ -574,7 +574,7 @@ export async function getBotSpeechPlan(
                     strict: true
                 }
             },
-            reasoning_effort: 'high',
+            reasoning_effort: 'low',
         });
 
         const rawContent = response.choices[0]?.message?.content || "";
@@ -663,8 +663,7 @@ Output: 服了，首刀我？我是警察啊！昨晚验的3号是查杀，铁�
                 { role: 'user', content: userPrompt }
             ],
             stream: true,
-            temperature: 1,
-            reasoning_effort: "high",
+            temperature: 1
         });
         let buffer = "";
         for await (const chunk of stream) {
@@ -853,7 +852,7 @@ export async function getBotNightActionTarget(
                     strict: true
                 }
             },
-            reasoning_effort: "high"
+            reasoning_effort: "low"
         });
 
         const rawContent = response.choices[0]?.message?.content || "";
