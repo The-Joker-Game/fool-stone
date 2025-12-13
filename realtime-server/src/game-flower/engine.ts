@@ -122,6 +122,10 @@ export function flowerPlayerReady(state: FlowerSnapshot, seat: number): FlowerSn
 
 export function assignFlowerRoles(snapshot: FlowerSnapshot): AssignResult {
   if (!snapshot) return { ok: false, error: "没有可用的快照" };
+
+  // Clear previous game's bot memories
+  clearRoomBotMemories(snapshot.roomCode);
+
   const occupied = snapshot.players.filter((p) => p.sessionId);
   if (occupied.length !== FLOWER_ROLES.length) {
     return { ok: false, error: "需要 9 名玩家才能开始游戏" };
