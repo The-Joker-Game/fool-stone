@@ -561,7 +561,7 @@ export async function getBotSpeechPlan(
         console.log(`[BotAI-${botSeat}] Prompt (Plan):`, prompt);
 
         const response = await aiClient.chat.completions.create({
-            model: 'gemini-3-pro-preview',
+            model: 'gemini-2.5-pro',
             messages: [
                 { role: 'system', content: "You are a player in the game. Respond with the specified JSON schema." },
                 { role: 'user', content: prompt }
@@ -752,7 +752,7 @@ export async function getBotVoteTarget(
         console.log(`[BotAI-${botSeat}] Prompt (Vote):`, prompt);
 
         const response = await aiClient.chat.completions.create({
-            model: 'gemini-3-pro-preview',
+            model: 'gemini-2.5-pro',
             messages: [
                 { role: 'system', content: "You are a player in the game. Respond with the specified JSON schema." },
                 { role: 'user', content: prompt }
@@ -840,7 +840,7 @@ export async function getBotNightActionTarget(
         console.log(`[BotAI-${botSeat}] Prompt (Night):`, prompt);
 
         const response = await aiClient.chat.completions.create({
-            model: 'gemini-3-pro-preview',
+            model: 'gemini-2.5-pro',
             messages: [
                 { role: 'system', content: "You are a player in the game. Respond with the specified JSON schema." },
                 { role: 'user', content: prompt }
