@@ -14,43 +14,95 @@ let gemini_ai: OpenAI | null = null;
 let qwen_ai: OpenAI | null = null;
 let deepseek_ai: OpenAI | null = null;
 
+// Multi-key load balancing support
+interface AIClientPool {
+    clients: OpenAI[];
+    currentIndex: number;
+}
+
+const clientPools: Map<"gemini" | "qwen" | "deepseek", AIClientPool> = new Map();
+
+/**
+ * Parse comma-separated API keys from environment variable
+ */
+function parseApiKeys(envVar: string | undefined): string[] {
+    if (!envVar) return [];
+    return envVar.split(',').map(k => k.trim()).filter(k => k.length > 0);
+}
+
+/**
+ * Initialize client pool for a specific AI provider
+ */
+function initClientPool(type: "gemini" | "qwen" | "deepseek"): AIClientPool | null {
+    let envVarName: string;
+    let baseURL: string;
+    let defaultHeaders: Record<string, string> | undefined;
+
+    switch (type) {
+        case "gemini":
+            envVarName = "GEMINI_API_KEY";
+            baseURL = "https://api.aintornas.dpdns.org/v1";
+            defaultHeaders = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "Accept": "application/json",
+                "Connection": "keep-alive"
+            };
+            break;
+        case "qwen":
+            envVarName = "QWEN_API_KEY";
+            baseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+            break;
+        case "deepseek":
+            envVarName = "DEEPSEEK_API_KEY";
+            baseURL = "https://api.deepseek.com";
+            break;
+    }
+
+    const keys = parseApiKeys(process.env[envVarName]);
+    if (keys.length === 0) return null;
+
+    const clients = keys.map((apiKey, index) => {
+        console.log(`[AIClient] Initializing ${type} client #${index + 1} of ${keys.length}`);
+        return new OpenAI({
+            baseURL,
+            apiKey,
+            ...(defaultHeaders ? { defaultHeaders } : {})
+        });
+    });
+
+    return {
+        clients,
+        currentIndex: 0
+    };
+}
+
+/**
+ * Get next AI client using round-robin load balancing
+ * Supports comma-separated API keys in environment variables
+ * Example: GEMINI_API_KEY=key1,key2,key3
+ */
 function getAIClient(type: "gemini" | "qwen" | "deepseek" = "gemini"): OpenAI | null {
-    if (type === "gemini") {
-        if (!gemini_ai) {
-            if (!process.env.GEMINI_API_KEY) return null;
-            gemini_ai = new OpenAI({
-                baseURL: "https://api.aintornas.dpdns.org/v1",
-                apiKey: process.env.GEMINI_API_KEY,
-                defaultHeaders: {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                    "Accept": "application/json",
-                    "Connection": "keep-alive"
-                }
-            });
+    // Check if pool exists, initialize if not
+    if (!clientPools.has(type)) {
+        const pool = initClientPool(type);
+        if (pool) {
+            clientPools.set(type, pool);
+            console.log(`[AIClient] ${type} pool initialized with ${pool.clients.length} client(s)`);
         }
-        return gemini_ai;
     }
-    if (type === "qwen") {
-        if (!qwen_ai) {
-            if (!process.env.QWEN_API_KEY) return null;
-            qwen_ai = new OpenAI({
-                baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                apiKey: process.env.QWEN_API_KEY,
-            });
-        }
-        return qwen_ai;
+
+    const pool = clientPools.get(type);
+    if (!pool || pool.clients.length === 0) return null;
+
+    // Round-robin selection
+    const client = pool.clients[pool.currentIndex];
+    pool.currentIndex = (pool.currentIndex + 1) % pool.clients.length;
+
+    if (pool.clients.length > 1) {
+        console.log(`[AIClient] Using ${type} client #${pool.currentIndex === 0 ? pool.clients.length : pool.currentIndex} of ${pool.clients.length}`);
     }
-    if (type === "deepseek") {
-        if (!deepseek_ai) {
-            if (!process.env.DEEPSEEK_API_KEY) return null;
-            deepseek_ai = new OpenAI({
-                baseURL: "https://api.deepseek.com",
-                apiKey: process.env.DEEPSEEK_API_KEY,
-            });
-        }
-        return deepseek_ai;
-    }
-    return gemini_ai;
+
+    return client;
 }
 
 const SPEECH_PLAN_SCHEMA = {
@@ -307,82 +359,11 @@ function buildDecisionPrompt(
         .sort((a, b) => a - b);
     const validTargetStr = alivePlayers.join("、");
 
-    // --- Prompt 构建开始 ---
-    const ROLE_PROMPTS: Record<string, string> = {
-
-        "善民": `
-**【角色心态：隐秘的裁决者】**
-你是【善民】。你虽然没有查验技能，但你拥有**暗票**权。这让你成为了潜伏在暗处的关键战力。
-- **你的恐惧**：你没有任何信息，全靠听发言。你最怕的是**暗票投错好人**（助纣为虐），或者因为发言太招摇而被杀手提前刀掉，导致暗票没发挥作用。
-- **你的动机**：利用【暗票】在不暴露自己的情况下，把真正的坏人投出去。**你的嘴可以是软的，但你的暗票必须是硬的。**
-`,
-
-        "警察": `
-**【角色心态：焦虑的真相守护者】**
-你是【警察】，你拥有全场唯一的硬逻辑（查验信息）。
-- **你的恐惧**：你非常怕死，因为你死了线索就断了；但你更怕大家不信你，把你当成乱跳的悍跳狼。
-- **你的动机**：利用手中的查验信息（金水/查杀）带领好人走向胜利。
-`,
-
-        "医生": `
-**【角色心态：手握生死的纠结者】**
-你是【医生】，你的一针能救人也能杀人（如果规则允许）。
-- **你的恐惧**：你最怕发生“平安夜”是你救了狼人，或者你死的时候针还没用出去。
-- **你的动机**：保护场上的关键人物（如跳出来的警察），或者在绝境中自救。
-`,
-
-        "花蝴蝶": `
-**【角色心态：混乱的制造者与保护者】**
-你是【花蝴蝶】，你的技能可以护体或屏蔽他人。
-- **你的恐惧**：你的技能是一把双刃剑，屏蔽好人可能会干扰好人技能。
-- **你的动机**：利用技能去限制你认为的“坏人”，或者保护自己苟活到最后。
-`,
-
-        "狙击手": `
-**【角色心态：冷静的审判者】**
-你是【狙击手】，你拥有一击必杀的能力。
-- **你的恐惧**：开枪打死好人，但你当夜晚没有信息时，你必须做出抉择。
-- **你的动机**：寻找那个**百分之百**的坏人，然后一枪带走。
-`,
-
-        "恶民": `
-**【角色心态：阴影中的刺客】**
-你是【恶民】（坏人阵营）。你不知道队友是谁，但你拥有致命的**暗票**。
-- **你的恐惧**：由于互盲，你最怕**暗票误杀队友**，也怕太早暴露身份被投出局，导致这关键的一票没用出去。
-- **你的动机**：利用【暗票】在暗处削减好人数量。**你的伪装要像善民一样无辜，但你的暗票要像杀手一样狠毒。**
-`,
-
-        "杀手": `
-**【角色心态：潜伏的猎手】**
-你是【杀手】，每晚可以杀人。**你不知道谁是你的队友！**
-- **你的恐惧**：第一天就把队友刀了，或者白天被警察查杀。
-- **你的动机**：减少好人数量，尤其是神职。
-`,
-
-        "魔法师": `
-**【角色心态：天才但务实的操控者】**
-你是【魔法师】（特殊坏人）。**你不知道队友在哪。**
-- **你的恐惧**：技能放空，或者身份过早暴露。
-- **你的动机**：利用特殊技能来逆转局势。
-`,
-
-        "森林老人": `
-**【角色心态：诡异的诅咒者】**
-你是【森林老人】（特殊坏人）。**你不知道队友在哪。**
-- **你的恐惧**：死得太早，没有发挥出诅咒或干扰的作用。
-- **你的动机**：让大家都把你当成某种不好惹的角色，或者伪装成绝对的好人。
-`,
-    };
-
-    const role_prompt = ROLE_PROMPTS[mem.realRole] || ROLE_PROMPTS["善民"];
-
     const basePrompt = `
 你在游玩一个叫花蝴蝶的杀人游戏，你没有视觉，没有听觉，你只能看到以下文字，你的目标是赢得胜利。**请先仔细阅读并理解规则。**
 ---
 ${FLOWER_GAME_RULES}
 ---
-这是你的身份
-${role_prompt}
 `;
 
     // 记忆与历史 (Memory & History)
@@ -489,7 +470,7 @@ ${snapshot.dayCount === 1 && "上一次行动是首夜，所有人除了各自�
 
 **输出要求**：请输出 JSON。
 - claimedRole: 当前宣称身份（花蝴蝶/狙击手/医生/警察/善民/杀手/魔法师/森林老人/恶民/无 的其中之一）。仔细考虑你是否伪装，是否欺骗他人，让对立阵营迷惑很重要，但要小心不要被队友误伤。
-- draft: 你的发言草稿，逻辑严密的表述了你的发言内容，不换行。你是${botSeat}号,所以始终使用"我"指代${botSeat}号，30-80词。不要重复前面的观点，提出你自己基于宣称身份的建设性见解。${["杀手", "魔法师", "森林老人", "恶民"].includes(mem.realRole) && "你是坏人，如果猜到队友已经暴露，不要附和他们，不然你会在接下来被好人集火。"}
+- draft: 你的发言草稿，逻辑严密的表述了你的发言内容，不换行。你是${botSeat}号,所以始终使用"我"指代${botSeat}号，30-80词。不要重复前面的观点，提出你自己基于宣称身份的建设性见解。没有确切证据的情况下，不要cue任何人。${["杀手", "魔法师", "森林老人", "恶民"].includes(mem.realRole) && "你是坏人，如果猜到队友已经暴露，不要附和他们，不然你会在接下来被好人集火。"}
 - updatedPlayerNotes: 使用自然语言记录你对每一个玩家的理解。
 - strategicPlan: 将你的长期战略更新在此。
 - strategicNote: 将其他有价值的想法更新在此，简要记录想法的来由，让每一个想法有据可依。
@@ -511,7 +492,7 @@ ${snapshot.dayCount === 1 && "上一次行动是首夜，所有人除了各自�
 ${snapshot.dayCount === 1 && "上一次行动是首夜，所有人除了各自的位置以外没有任何其他信息，所以死亡也可能是死者队友所为，因为任何人使用技能都是随机的。"}
 
 **输出要求**：请输出 JSON。
-- draft: 你的发言草稿，逻辑严密的表述了你的发言内容，不换行，不要自报家门，你是${botSeat}号,始终使用"我"指代${botSeat}号，30-80词。不要重复前面的观点，这是你最后一次发言，思考是否有任何后事需要交代。
+- draft: 你的发言草稿，逻辑严密的表述了你的发言内容，不换行，不要自报家门，你是${botSeat}号,始终使用"我"指代${botSeat}号，30-80词。不要重复前面的观点，这是你最后一次发言，思考是否有任何后事需要交代(你的职业，每晚行动结果，你的洞察等)。没有确切证据的情况下，不要cue任何人。
 `;
 
     } else if (taskType === "vote") {
@@ -590,7 +571,7 @@ export async function getBotSpeechPlan(
                     strict: true
                 }
             },
-            temperature: 0.3,
+            temperature: 0,
             top_p: 0.85,
             reasoning_effort: 'medium'
         });
@@ -636,7 +617,7 @@ export async function* streamStyledSpeech(
     draft: string,
     isLastWords: boolean = false
 ): AsyncGenerator<string, void, unknown> {
-    const aiClient = getAIClient('qwen');
+    const aiClient = getAIClient();
     if (!aiClient) {
         yield draft;
         return;
@@ -674,14 +655,13 @@ Output: 服了，首刀我？我是警察啊！昨晚验的3号是查杀，铁�
 
     try {
         const stream = await aiClient.chat.completions.create({
-            model: 'qwen3-max',
+            model: 'gemini-3-flash-preview',
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: examples },
                 { role: 'user', content: userPrompt }
             ],
             stream: true,
-            temperature: 1
         });
         let buffer = "";
         for await (const chunk of stream) {
@@ -782,7 +762,7 @@ export async function getBotVoteTarget(
                     strict: true
                 }
             },
-            temperature: 0.3,
+            temperature: 0,
             top_p: 0.85,
             reasoning_effort: 'medium',
         });
@@ -872,7 +852,7 @@ export async function getBotNightActionTarget(
                     strict: true
                 }
             },
-            temperature: 0.3,
+            temperature: 0,
             top_p: 0.85,
             reasoning_effort: "medium"
         });

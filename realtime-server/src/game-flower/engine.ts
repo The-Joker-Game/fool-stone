@@ -626,8 +626,15 @@ function computeNightOutcome(ctx: NightContext): NightOutcome {
 
   // Police
   const policePlayer = getActiveRolePlayer("警察");
-  const policeAction = policePlayer && !invalidActors.has(policePlayer.seat) ? ctx.actionsByRole.get("警察") : undefined;
-  if (policeAction && policeAction.targetSeat && policePlayer) {
+  const policeActionRaw = policePlayer ? ctx.actionsByRole.get("警察") : undefined;
+  const policeIsSealed = policePlayer && invalidActors.has(policePlayer.seat);
+  const policeAction = policePlayer && !policeIsSealed ? policeActionRaw : undefined;
+
+  // If police is sealed but submitted an action, record it as "unknown" (sealed)
+  if (policeIsSealed && policeActionRaw && policeActionRaw.targetSeat && policePlayer) {
+    policeReports.push({ targetSeat: policeActionRaw.targetSeat, result: "unknown" });
+    logs.push(`${formatPlayer(policePlayer.seat)}被封印，无法查验${formatTarget(policeActionRaw.targetSeat, policePlayer.seat)}`);
+  } else if (policeAction && policeAction.targetSeat && policePlayer) {
     if (butterflyActive && policeAction.targetSeat === butterflyTarget) {
       policeReports.push({ targetSeat: policeAction.targetSeat, result: "unknown" });
       logs.push(`${formatPlayer(policePlayer.seat)}试图查验${formatTarget(policeAction.targetSeat, policePlayer.seat)}，但视线被${formatPlayer(butterflyPlayer!.seat)}遮挡（免疫）`);
