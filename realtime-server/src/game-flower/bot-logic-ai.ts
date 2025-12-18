@@ -13,15 +13,19 @@ import {
 let gemini_ai: OpenAI | null = null;
 let qwen_ai: OpenAI | null = null;
 let deepseek_ai: OpenAI | null = null;
-let kimi_ai: OpenAI | null = null;
 
-function getAIClient(type: "gemini" | "qwen" | "deepseek" | "kimi" = "gemini"): OpenAI | null {
+function getAIClient(type: "gemini" | "qwen" | "deepseek" = "gemini"): OpenAI | null {
     if (type === "gemini") {
         if (!gemini_ai) {
             if (!process.env.GEMINI_API_KEY) return null;
             gemini_ai = new OpenAI({
-                baseURL: "https://gemini.thejokergame.cn/v1beta/openai/",
+                baseURL: "https://api.aintornas.dpdns.org/v1",
                 apiKey: process.env.GEMINI_API_KEY,
+                defaultHeaders: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                    "Accept": "application/json",
+                    "Connection": "keep-alive"
+                }
             });
         }
         return gemini_ai;
@@ -46,16 +50,6 @@ function getAIClient(type: "gemini" | "qwen" | "deepseek" | "kimi" = "gemini"): 
         }
         return deepseek_ai;
     }
-    if (type === "kimi") {
-        if (!kimi_ai) {
-            if (!process.env.KIMI_API_KEY) return null;
-            kimi_ai = new OpenAI({
-                baseURL: "https://api.moonshot.cn/v1",
-                apiKey: process.env.KIMI_API_KEY,
-            });
-        }
-        return kimi_ai;
-    }
     return gemini_ai;
 }
 
@@ -73,6 +67,16 @@ const SPEECH_PLAN_SCHEMA = {
         }
     },
     required: ["draft", "updatedPlayerNotes", "strategicPlan", "strategicNote", "claimedRole"],
+    additionalProperties: false
+};
+
+// Simplified schema for last words - player is already dead, no need to update strategy
+const LAST_WORDS_SCHEMA = {
+    type: "object",
+    properties: {
+        draft: { type: "string", description: "The last words draft content." }
+    },
+    required: ["draft"],
     additionalProperties: false
 };
 
@@ -356,10 +360,10 @@ function buildDecisionPrompt(
 `,
 
         "魔法师": `
-**【角色心态：高傲的操控者】**
+**【角色心态：天才但务实的操控者】**
 你是【魔法师】（特殊坏人）。**你不知道队友在哪。**
 - **你的恐惧**：技能放空，或者身份过早暴露。
-- **你的动机**：利用特殊技能（如交换/封印）来逆转局势。
+- **你的动机**：利用特殊技能来逆转局势。
 `,
 
         "森林老人": `
@@ -471,15 +475,21 @@ ${mem.roundMemory.analysisSummary && '【当前的strategicNote】\n' + mem.roun
         taskInstruction = `
 【本轮任务：日常发言规划】
 
+**【战略推演与自我审查】**
+在你最终确定发言稿之前，必须进行以下思考：
+1. **谎言可行性分析**：我声称的身份和行为，在游戏规则下是否可能发生？是否存在唯一解？
+2. **对手视角分析**：如果一个聪明的好人听到我的发言，他会根据规则推导出什么结论？
+3. **利弊权衡**：这个结论对我的阵营（坏人）是有利还是有害？如果弊大于利，则必须放弃或修改这个发言策略。
+
 【注意】
 你现在需要分析局势，模拟自己作为玩家，为你本轮的发言提供一个**事无巨细的发言草稿**，这将展示给全场玩家。
 你可以在完成自己的发言草稿后，根据当前的局势，更新自己对当前局势的理解，他们将作为你的思考成果，供你下一次行动时参考。**请特别记录本次思考中获得的顿悟，这将减少下一次思考的启动成本。**
 按照规则，如果某人未发言，说明他的发言次序在你之后，或被禁言，否则按照规则必须发言，所以你不能攻击未发言、沉默这一行为本身。
-${snapshot.dayCount === 1 && "上一次行动是首夜，所有人除了各自的位置以外没有任何其他信息，任何人使用技能100%都没有确定的身份原因。"}
+${snapshot.dayCount === 1 && "上一次行动是首夜，所有人除了各自的位置以外没有任何其他信息，所以死亡也可能是死者队友所为，因为任何人使用技能都是随机的。"}
 
 **输出要求**：请输出 JSON。
 - claimedRole: 当前宣称身份（花蝴蝶/狙击手/医生/警察/善民/杀手/魔法师/森林老人/恶民/无 的其中之一）。仔细考虑你是否伪装，是否欺骗他人，让对立阵营迷惑很重要，但要小心不要被队友误伤。
-- draft: 你的发言草稿，逻辑严密的表述了你的发言内容，不换行，不要自报家门，你是${botSeat}号,所以始终使用"我"指代${botSeat}号，30-80词。不要重复前面的观点，提出你自己基于宣称身份的建设性见解。${["杀手","魔法师","森林老人","恶民"].includes(mem.realRole) && "你是坏人，如果猜到队友已经暴露，不要附和他们，不然你会在接下来被好人集火。"}
+- draft: 你的发言草稿，逻辑严密的表述了你的发言内容，不换行。你是${botSeat}号,所以始终使用"我"指代${botSeat}号，30-80词。不要重复前面的观点，提出你自己基于宣称身份的建设性见解。${["杀手", "魔法师", "森林老人", "恶民"].includes(mem.realRole) && "你是坏人，如果猜到队友已经暴露，不要附和他们，不然你会在接下来被好人集火。"}
 - updatedPlayerNotes: 使用自然语言记录你对每一个玩家的理解。
 - strategicPlan: 将你的长期战略更新在此。
 - strategicNote: 将其他有价值的想法更新在此，简要记录想法的来由，让每一个想法有据可依。
@@ -489,10 +499,16 @@ ${snapshot.dayCount === 1 && "上一次行动是首夜，所有人除了各自�
         taskInstruction = `
 【本轮任务：发表遗言规划】
 
+**【战略推演与自我审查】**
+在你最终确定发言稿之前，必须进行以下思考：
+1. **谎言可行性分析**：我声称的身份和行为，在游戏规则下是否可能发生？是否存在唯一解？
+2. **对手视角分析**：如果一个聪明的好人听到我的发言，他会根据规则推导出什么结论？
+3. **利弊权衡**：这个结论对我的阵营（坏人）是有利还是有害？如果弊大于利，则必须放弃或修改这个发言策略。
+
 **【遗言阶段要求】**
 你已经在上一夜死亡或在今天被投票出局(具体情况关注系统公告中对【${botSeat}号】的提及)，你现在需要模拟自己死后，为你本轮的遗言提供一个**事无巨细的遗言草稿**，这将展示给全场的所有玩家。
 按照规则，如果某人未发言，说明他的发言次序在你之后，或被禁言，否则按照规则必须发言，所以你不能攻击未发言、沉默这一行为本身。
-${snapshot.dayCount === 1 && "上一次行动是首夜，所有人除了各自的位置以外没有任何其他信息，任何人使用技能100%都没有确定的身份原因。"}
+${snapshot.dayCount === 1 && "上一次行动是首夜，所有人除了各自的位置以外没有任何其他信息，所以死亡也可能是死者队友所为，因为任何人使用技能都是随机的。"}
 
 **输出要求**：请输出 JSON。
 - draft: 你的发言草稿，逻辑严密的表述了你的发言内容，不换行，不要自报家门，你是${botSeat}号,始终使用"我"指代${botSeat}号，30-80词。不要重复前面的观点，这是你最后一次发言，思考是否有任何后事需要交代。
@@ -561,7 +577,7 @@ export async function getBotSpeechPlan(
         console.log(`[BotAI-${botSeat}] Prompt (Plan):`, prompt);
 
         const response = await aiClient.chat.completions.create({
-            model: 'gemini-2.5-pro',
+            model: 'gemini-3-flash-preview',
             messages: [
                 { role: 'system', content: "You are a player in the game. Respond with the specified JSON schema." },
                 { role: 'user', content: prompt }
@@ -569,12 +585,14 @@ export async function getBotSpeechPlan(
             response_format: {
                 type: 'json_schema',
                 json_schema: {
-                    name: "speech_plan",
-                    schema: SPEECH_PLAN_SCHEMA,
+                    name: isLastWords ? "last_words" : "speech_plan",
+                    schema: isLastWords ? LAST_WORDS_SCHEMA : SPEECH_PLAN_SCHEMA,
                     strict: true
                 }
             },
-            reasoning_effort: 'low',
+            temperature: 0.3,
+            top_p: 0.85,
+            reasoning_effort: 'medium'
         });
 
         const rawContent = response.choices[0]?.message?.content || "";
@@ -751,7 +769,7 @@ export async function getBotVoteTarget(
         console.log(`[BotAI-${botSeat}] Prompt (Vote):`, prompt);
 
         const response = await aiClient.chat.completions.create({
-            model: 'gemini-2.5-pro',
+            model: 'gemini-3-flash-preview',
             messages: [
                 { role: 'system', content: "You are a player in the game. Respond with the specified JSON schema." },
                 { role: 'user', content: prompt }
@@ -764,7 +782,9 @@ export async function getBotVoteTarget(
                     strict: true
                 }
             },
-            reasoning_effort: 'low',
+            temperature: 0.3,
+            top_p: 0.85,
+            reasoning_effort: 'medium',
         });
 
         const rawContent = response.choices[0]?.message?.content || "";
@@ -839,7 +859,7 @@ export async function getBotNightActionTarget(
         console.log(`[BotAI-${botSeat}] Prompt (Night):`, prompt);
 
         const response = await aiClient.chat.completions.create({
-            model: 'gemini-2.5-pro',
+            model: 'gemini-3-flash-preview',
             messages: [
                 { role: 'system', content: "You are a player in the game. Respond with the specified JSON schema." },
                 { role: 'user', content: prompt }
@@ -852,7 +872,9 @@ export async function getBotNightActionTarget(
                     strict: true
                 }
             },
-            reasoning_effort: "low"
+            temperature: 0.3,
+            top_p: 0.85,
+            reasoning_effort: "medium"
         });
 
         const rawContent = response.choices[0]?.message?.content || "";
