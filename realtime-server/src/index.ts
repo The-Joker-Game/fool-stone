@@ -35,6 +35,7 @@ import {
   resetToLobby as jokerResetToLobby,
   checkWinCondition as jokerCheckWin,
   finalizeGame as jokerFinalizeGame,
+  completeTask as jokerCompleteTask,
 } from "./game-joker/engine.js";
 import type { JokerPlayerState, JokerSnapshot } from "./game-joker/types.js";
 import { checkAndScheduleActions as jokerScheduleActions, clearRoomTimeouts as jokerClearTimeouts, checkAllVoted } from "./game-joker/scheduler.js";
@@ -924,6 +925,18 @@ io.on("connection", (socket: Socket) => {
             }
             break;
           }
+
+          case "joker:complete_task":
+            res = jokerCompleteTask(jokerSnapshot);
+            shouldBroadcast = true;
+            // Check win condition after task completion
+            if (res.ok) {
+              const winResult = jokerCheckWin(jokerSnapshot);
+              if (winResult) {
+                jokerFinalizeGame(jokerSnapshot, winResult);
+              }
+            }
+            break;
 
           case "joker:reset_game":
             if (socket.data.sessionId !== r.hostSessionId) {

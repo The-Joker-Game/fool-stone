@@ -16,16 +16,16 @@ import type {
 } from "./types.js";
 
 const MAX_SEATS = 10;
-const INITIAL_OXYGEN = 240;
-const OXYGEN_REFILL = 120;
-const DUCK_EMERGENCY_OXYGEN = 120;
+const INITIAL_OXYGEN = 270;
+const OXYGEN_REFILL = 180;
+const DUCK_EMERGENCY_OXYGEN = 180;
 
 // Phase durations in milliseconds
 export const PHASE_DURATIONS = {
     role_reveal: 10_000,
-    green_light: 10_000,
+    green_light: 20_000,
     yellow_light: 10_000,
-    red_light: 40_000,
+    red_light: 60_000,
     meeting: 60_000,
     voting: 30_000,
     execution: 5_000,
@@ -110,6 +110,7 @@ export function initJokerRoom(roomCode: string, players: InitPlayer[]): JokerSna
         round: createEmptyRoundState(),
         logs: [],
         chatMessages: [],
+        taskProgress: 0,
         updatedAt: Date.now(),
     };
 }
@@ -338,10 +339,10 @@ export function submitLifeCodeAction(
         return { ok: false, error: "Invalid actor" };
     }
 
-    // Determine if old codes are valid (first 20s of red light)
+    // Determine if old codes are valid (first 30s of red light)
     const now = Date.now();
     const phaseElapsed = now - snapshot.round.phaseStartAt;
-    const includeOldCodes = phaseElapsed < 20_000;
+    const includeOldCodes = phaseElapsed < 30_000;
 
     // Find target by life code
     const target = findPlayerByLifeCode(snapshot, payload.code, includeOldCodes);
@@ -644,6 +645,11 @@ export function resolveVotes(snapshot: JokerSnapshot): ActionResult {
 // ============ Win Condition ============
 
 export function checkWinCondition(snapshot: JokerSnapshot): JokerGameResult | null {
+    // Goose win: task progress reaches 100%
+    if (snapshot.taskProgress >= 100) {
+        return { winner: "goose", reason: "任务完成度达到100%" };
+    }
+
     const alivePlayers = snapshot.players.filter(p => p.isAlive && p.sessionId);
     const aliveDucks = alivePlayers.filter(p => p.role === "duck");
     const aliveGeese = alivePlayers.filter(p => p.role === "goose");
@@ -659,6 +665,21 @@ export function checkWinCondition(snapshot: JokerSnapshot): JokerGameResult | nu
     }
 
     return null;
+}
+
+// ============ Task System ============
+
+const TASK_PROGRESS_PER_COMPLETION = 2; // +2% per task
+
+export function completeTask(snapshot: JokerSnapshot): ActionResult {
+    if (snapshot.phase !== "red_light") {
+        return { ok: false, error: "Tasks can only be completed during red light" };
+    }
+
+    snapshot.taskProgress = Math.min(100, snapshot.taskProgress + TASK_PROGRESS_PER_COMPLETION);
+    snapshot.updatedAt = Date.now();
+
+    return { ok: true, message: `Task completed! Progress: ${snapshot.taskProgress}%` };
 }
 
 export function finalizeGame(snapshot: JokerSnapshot, result: JokerGameResult): void {
@@ -739,6 +760,7 @@ export function resetToLobby(snapshot: JokerSnapshot): void {
     snapshot.lifeCodes = createEmptyLifeCodeState();
     snapshot.round = createEmptyRoundState();
     snapshot.logs = [];
+    snapshot.taskProgress = 0;
 
     for (const player of snapshot.players) {
         player.role = null;

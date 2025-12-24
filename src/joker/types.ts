@@ -112,6 +112,7 @@ export interface JokerSnapshot {
     gameResult?: JokerGameResult | null;
     logs: JokerLogEntry[];
     chatMessages: JokerChatMessage[];
+    taskProgress: number;
     deadline?: number;
     updatedAt: number;
 }

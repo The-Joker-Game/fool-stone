@@ -9,6 +9,7 @@ import type {
 } from "./joker/types";
 import { useJokerStore } from "./joker/store";
 import type { JokerStore } from "./joker/store";
+import { MiniGame, getRandomGame, type MiniGameType } from "./joker/mini-games";
 import {
     Card,
     CardContent,
@@ -42,6 +43,7 @@ import {
     UserX,
     DoorOpen,
     SkipForward,
+    ClipboardList,
 } from "lucide-react";
 import Avvvatars from "avvvatars-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -104,9 +106,57 @@ export default function JokerRoom() {
     });
     const autoJoinAttempted = useRef(false);
 
+    // —— 屏幕常亮功能 —— //
+    useEffect(() => {
+        let wakeLock: WakeLockSentinel | null = null;
+
+        const requestWakeLock = async () => {
+            try {
+                // 检查浏览器是否支持 Screen Wake Lock API
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    console.log('Screen Wake Lock is active');
+
+                    // 监听页面可见性变化，当页面变为可见时重新请求唤醒锁
+                    const handleVisibilityChange = () => {
+                        if (wakeLock !== null && document.visibilityState === 'visible') {
+                            requestWakeLock();
+                        }
+                    };
+
+                    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+                    // 当唤醒锁释放时记录日志
+                    wakeLock.addEventListener('release', () => {
+                        console.log('Screen Wake Lock was released');
+                    });
+                } else {
+                    console.warn('Screen Wake Lock API is not supported in this browser');
+                }
+            } catch (err) {
+                console.error('Failed to acquire screen wake lock:', err);
+            }
+        };
+
+        // 请求屏幕常亮
+        requestWakeLock();
+
+        // 组件卸载时释放唤醒锁
+        return () => {
+            if (wakeLock !== null) {
+                wakeLock.release();
+                wakeLock = null;
+            }
+        };
+    }, []);
+
     // Life code input state
     const [lifeCodeInput, setLifeCodeInput] = useState("");
     const [actionCooldown, setActionCooldown] = useState(false);
+
+    // Mini-game state
+    const [showMiniGame, setShowMiniGame] = useState(false);
+    const [currentGameType, setCurrentGameType] = useState<MiniGameType | null>(null);
 
     // Join room input
     const [joinCodeInput, setJoinCodeInput] = useState("");
@@ -151,8 +201,8 @@ export default function JokerRoom() {
     }, [jokerSnapshot?.deadline]);
 
     // Local oxygen display (interpolates between server updates)
-    const [displayOxygen, setDisplayOxygen] = useState(me?.oxygen ?? 240);
-    const lastServerOxygenRef = useRef(me?.oxygen ?? 240);
+    const [displayOxygen, setDisplayOxygen] = useState(me?.oxygen ?? 270);
+    const lastServerOxygenRef = useRef(me?.oxygen ?? 270);
     const lastServerOxygenTimeRef = useRef(Date.now());
 
     // Update references when server sends new oxygen value
@@ -342,6 +392,24 @@ export default function JokerRoom() {
     const handleResetGame = useCallback(async () => {
         await resetGame();
     }, [resetGame]);
+
+    // Task handlers
+    const handleStartTask = useCallback(() => {
+        setCurrentGameType(getRandomGame());
+        setShowMiniGame(true);
+    }, []);
+
+    const handleCompleteTask = useCallback(async () => {
+        if (!roomCode) return;
+        setShowMiniGame(false);
+        setCurrentGameType(null);
+        await rt.emitAck("intent", { room: roomCode, action: "joker:complete_task" });
+    }, [roomCode]);
+
+    const handleCloseTask = useCallback(() => {
+        setShowMiniGame(false);
+        setCurrentGameType(null);
+    }, []);
 
     // Render: No room
     if (!roomCode) {
@@ -546,7 +614,7 @@ export default function JokerRoom() {
                                                         }`}
                                                 >
                                                     <div className="flex items-center gap-3">
-                                                        <Avvvatars value={u.name || "User"} style="shape" size={32} />
+                                                        <Avvvatars value={u.name || "User"} style="character" size={32} />
                                                         <div className="flex flex-col min-w-0">
                                                             <span className="font-medium text-sm flex items-center gap-1.5 truncate max-w-[120px] text-white">
                                                                 <span className="truncate">{u.name}</span>
@@ -716,6 +784,35 @@ export default function JokerRoom() {
                                                     <p className="text-yellow-400 text-sm font-medium">冷却中</p>
                                                 </motion.div>
                                             )}
+
+                                            {/* Task Progress & Button */}
+                                            <div className="space-y-3 pt-2 border-t border-white/10">
+                                                <div className="space-y-2">
+                                                    <div className="flex items-center justify-between text-xs text-white/50">
+                                                        <span className="flex items-center gap-1">
+                                                            <ClipboardList className="w-3 h-3" />
+                                                            任务进度
+                                                        </span>
+                                                        <span className="font-mono">{jokerSnapshot?.taskProgress ?? 0}%</span>
+                                                    </div>
+                                                    <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                                                        <motion.div
+                                                            className="h-full bg-gradient-to-r from-blue-500 to-cyan-500"
+                                                            initial={{ width: 0 }}
+                                                            animate={{ width: `${jokerSnapshot?.taskProgress ?? 0}%` }}
+                                                            transition={{ duration: 0.5 }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <Button
+                                                    onClick={handleStartTask}
+                                                    disabled={showMiniGame}
+                                                    className="w-full h-14 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-lg font-bold"
+                                                >
+                                                    <ClipboardList className="w-5 h-5 mr-2" />
+                                                    做任务 (+2%)
+                                                </Button>
+                                            </div>
                                         </CardContent>
                                     </Card>
 
@@ -921,6 +1018,26 @@ export default function JokerRoom() {
                     </AnimatePresence>
                 </ScrollArea>
             </div>
+
+            {/* Mini-Game Overlay */}
+            <AnimatePresence>
+                {showMiniGame && currentGameType && (
+                    <motion.div
+                        initial={{ opacity: 0, y: 100 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 100 }}
+                        className="fixed inset-x-0 bottom-0 z-50 p-4 pb-8"
+                    >
+                        <div className="max-w-md mx-auto">
+                            <MiniGame
+                                type={currentGameType}
+                                onComplete={handleCompleteTask}
+                                onClose={handleCloseTask}
+                            />
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

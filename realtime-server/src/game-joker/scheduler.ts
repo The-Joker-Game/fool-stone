@@ -174,10 +174,10 @@ function scheduleRedLightActions(
     if (!snapshot.deadline) return;
 
     const phaseStart = snapshot.round.phaseStartAt;
-    const halfDelay = 20_000; // 20 seconds into red light
+    const halfDelay = 30_000; // 30 seconds into red light
     const fullDelay = Math.max(0, snapshot.deadline - Date.now());
 
-    // Schedule life code rotation at 20s mark
+    // Schedule life code rotation at 30s mark
     if (snapshot.round.redLightHalf === "first") {
         const rotationDelay = Math.max(0, phaseStart + halfDelay - Date.now());
 

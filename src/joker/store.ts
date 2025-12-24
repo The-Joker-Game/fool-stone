@@ -192,7 +192,7 @@ function createEmptyPlayer(seat: number): JokerPlayerState {
         targetLocation: null,
         lifeCode: "",
         lifeCodeVersion: 0,
-        oxygen: 240,
+        oxygen: 270,
         oxygenReceivedThisRound: false,
         duckEmergencyUsed: false,
         hasVoted: false,
@@ -274,8 +274,9 @@ function mergeIncomingSnapshot(target: JokerSnapshot, incoming: JokerSnapshotInp
     if (incoming.execution !== undefined) target.execution = incoming.execution;
     if (incoming.gameResult !== undefined) target.gameResult = incoming.gameResult;
     if (incoming.logs !== undefined) target.logs = incoming.logs;
-    if (incoming.deadline !== undefined) target.deadline = incoming.deadline;
+    if ('deadline' in incoming) target.deadline = incoming.deadline;
     if (incoming.hostSessionId !== undefined) target.hostSessionId = incoming.hostSessionId;
+    if (incoming.taskProgress !== undefined) target.taskProgress = incoming.taskProgress;
 
     // Merge chat messages
     if (incoming.chatMessages) {

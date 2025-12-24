@@ -131,6 +131,9 @@ export interface JokerSnapshot {
     logs: JokerLogEntry[];
     chatMessages: JokerChatMessage[];
 
+    // Task progress (0-100, goose wins at 100)
+    taskProgress: number;
+
     // Timing
     deadline?: number;
     updatedAt: number;
