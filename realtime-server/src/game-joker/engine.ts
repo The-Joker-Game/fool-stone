@@ -17,7 +17,7 @@ import type {
 
 const MAX_SEATS = 10;
 const INITIAL_OXYGEN = 270;
-const OXYGEN_REFILL = 180;
+const OXYGEN_REFILL = 150;
 const DUCK_EMERGENCY_OXYGEN = 180;
 
 // Phase durations in milliseconds
@@ -156,14 +156,12 @@ export function assignJokerRoles(snapshot: JokerSnapshot): ActionResult {
 
 // ============ Location System ============
 
+const ALL_LOCATIONS: JokerLocation[] = ["厨房", "医务室", "发电室", "监控室", "仓库"];
+
 export function computeLocations(aliveCount: number): JokerLocation[] {
     // Location count = ceil(alive / 2), max 5
     const count = Math.min(5, Math.ceil(aliveCount / 2));
-    const locations: JokerLocation[] = [];
-    for (let i = 1; i <= count; i++) {
-        locations.push(`L${i}` as JokerLocation);
-    }
-    return locations;
+    return ALL_LOCATIONS.slice(0, count);
 }
 
 export function selectLocation(

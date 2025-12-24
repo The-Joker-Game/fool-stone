@@ -13,7 +13,7 @@ export type JokerPhase =
     | "execution"
     | "game_over";
 
-export type JokerLocation = "L1" | "L2" | "L3" | "L4" | "L5";
+export type JokerLocation = "厨房" | "医务室" | "发电室" | "监控室" | "仓库";
 
 export interface JokerPlayerState {
     seat: number;

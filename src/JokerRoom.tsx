@@ -26,7 +26,6 @@ import {
     Bot,
     Play,
     MapPin,
-    Heart,
     Skull,
     AlertTriangle,
     Vote,
@@ -180,6 +179,14 @@ export default function JokerRoom() {
         [jokerPlayers]
     );
     const myAlive = me?.isAlive ?? false;
+
+    // Auto-close mini-game when phase changes away from red_light
+    useEffect(() => {
+        if (phase !== "red_light") {
+            setShowMiniGame(false);
+            setCurrentGameType(null);
+        }
+    }, [phase]);
 
     // Timer
     const [timeLeft, setTimeLeft] = useState(0);
@@ -511,6 +518,62 @@ export default function JokerRoom() {
 
                 {/* Main Content Area - Scrollable */}
                 <ScrollArea className="flex-1 px-4 pb-20">
+
+                    {/* Sticky Status Card - stays visible */}
+                    {phase !== "lobby" && me && (
+                        <div className="sticky top-0 z-20 pb-4 -mx-4 px-4 pt-2">
+                            <Card className="bg-black/40 backdrop-blur-xl border-white/10 overflow-hidden relative">
+                                <CardContent className="p-4 flex items-center justify-between">
+                                    <div className="flex items-center gap-4">
+                                        <div className="relative">
+                                            <Avvvatars value={me.name || "Player"} size={48} />
+                                            {!myAlive && (
+                                                <div className="absolute -bottom-1 -right-1 bg-red-500 rounded-full p-0.5 border-2 border-black">
+                                                    <Skull className="w-3 h-3" />
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-medium text-white">{me.name}</span>
+                                            </div>
+                                            <div className="text-xs text-white/50 mt-0.5">
+                                                {me.location && (
+                                                    <span className="flex items-center gap-1">
+                                                        <MapPin className="w-3 h-3" />{me.location}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Life Code & Oxygen - Always Visible */}
+                                    <div className="flex items-center gap-4">
+                                        {/* Life Code */}
+                                        <div className="text-center">
+                                            <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1 flex items-center gap-1">
+                                                <Fingerprint className="w-3 h-3" />生命码
+                                            </div>
+                                            <div className="text-3xl font-mono font-black tracking-widest text-white">
+                                                {me.lifeCode ?? "??"}
+                                            </div>
+                                        </div>
+
+                                        {/* Oxygen */}
+                                        <div className="text-center">
+                                            <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1 flex items-center gap-1">
+                                                <Wind className="w-3 h-3" />氧气
+                                            </div>
+                                            <div className={`text-2xl font-mono font-bold tabular-nums ${displayOxygen < 60 ? 'text-red-400' : displayOxygen < 120 ? 'text-yellow-400' : 'text-emerald-400'}`}>
+                                                {displayOxygen}s
+                                            </div>
+                                        </div>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        </div>
+                    )}
+
                     <AnimatePresence mode="wait">
                         <motion.div
                             key={phase}
@@ -523,7 +586,7 @@ export default function JokerRoom() {
                         >
                             {/* Phase Indicator */}
                             <motion.div
-                                className="text-center space-y-2 py-6"
+                                className="text-center space-y-2 py-4"
                                 initial={{ opacity: 0, y: -10 }}
                                 animate={{ opacity: 1, y: 0 }}
                             >
@@ -537,64 +600,6 @@ export default function JokerRoom() {
                                     </div>
                                 )}
                             </motion.div>
-
-                            {/* My Status Card */}
-                            {phase !== "lobby" && me && (
-                                <motion.div variants={cardVariants} initial="hidden" animate="visible">
-                                    <Card className="bg-black/20 backdrop-blur-xl border-white/10 overflow-hidden relative">
-                                        <CardContent className="p-5 flex items-center justify-between">
-                                            <div className="flex items-center gap-4">
-                                                <div className="relative">
-                                                    <Avvvatars value={me.name} size={48} />
-                                                    {me.isAlive ? (
-                                                        <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-green-500 border-2 border-slate-900 rounded-full flex items-center justify-center">
-                                                            <Heart className="w-2.5 h-2.5 text-slate-900 fill-current" />
-                                                        </div>
-                                                    ) : (
-                                                        <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-red-500 border-2 border-slate-900 rounded-full flex items-center justify-center">
-                                                            <Skull className="w-3 h-3 text-white" />
-                                                        </div>
-                                                    )}
-                                                </div>
-                                                <div>
-                                                    <div className="text-xs text-white/50 font-medium uppercase tracking-wider mb-0.5 flex items-center gap-1">
-                                                        <Fingerprint className="w-3 h-3" />
-                                                        生命码
-                                                    </div>
-                                                    <div className="text-3xl font-mono font-bold tracking-widest text-white drop-shadow-md">
-                                                        {me.lifeCode}
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            <div className="flex items-center gap-4">
-                                                {/* Oxygen Display */}
-                                                <div className="text-center">
-                                                    <div className="text-xs text-white/50 font-medium uppercase tracking-wider mb-1">氧气</div>
-                                                    <div className={`text-2xl font-mono font-bold tabular-nums ${displayOxygen < 60 ? 'text-red-400' : displayOxygen < 120 ? 'text-yellow-400' : 'text-emerald-400'}`}>
-                                                        {displayOxygen}s
-                                                    </div>
-                                                </div>
-
-                                                {/* Location Display */}
-                                                <div className="text-right">
-                                                    <div className="text-xs text-white/50 font-medium uppercase tracking-wider mb-1">位置</div>
-                                                    <div className="flex items-center justify-end gap-2 text-sm font-medium">
-                                                        {me.location ? (
-                                                            <span className="flex items-center gap-1.5 px-2 py-1 bg-white/5 rounded-md border border-white/5 text-white/90">
-                                                                <MapPin className="w-3.5 h-3.5 text-blue-400" />
-                                                                {me.location}
-                                                            </span>
-                                                        ) : (
-                                                            <span className="text-white/30 italic">未知</span>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </CardContent>
-                                    </Card>
-                                </motion.div>
-                            )}
 
                             {/* Lobby UI */}
                             {phase === "lobby" && (

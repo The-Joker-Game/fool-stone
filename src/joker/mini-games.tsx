@@ -335,72 +335,80 @@ export function ColorSequenceGame({ onComplete, onClose }: MiniGameProps) {
     );
 }
 
-// ============ 4. Shape Sort Game ============
-const SHAPES = [
-    { name: "circle", path: "M12 2a10 10 0 100 20 10 10 0 000-20z" },
-    { name: "square", path: "M3 3h18v18H3z" },
-    { name: "triangle", path: "M12 2L2 22h20L12 2z" },
-];
+// ============ 4. Math Calculation Game ============
+function generateMathProblem() {
+    const operators = ['+', '-', '×'];
+    const op = operators[Math.floor(Math.random() * operators.length)];
+    let a: number, b: number, answer: number;
 
-export function ShapeSortGame({ onComplete, onClose }: MiniGameProps) {
-    const [placed, setPlaced] = useState<Record<string, boolean>>({});
-    const [dragging, setDragging] = useState<string | null>(null);
+    switch (op) {
+        case '+':
+            a = Math.floor(Math.random() * 50) + 10;
+            b = Math.floor(Math.random() * 50) + 10;
+            answer = a + b;
+            break;
+        case '-':
+            a = Math.floor(Math.random() * 50) + 30;
+            b = Math.floor(Math.random() * 30) + 1;
+            answer = a - b;
+            break;
+        case '×':
+            a = Math.floor(Math.random() * 9) + 2;
+            b = Math.floor(Math.random() * 9) + 2;
+            answer = a * b;
+            break;
+        default:
+            a = 10; b = 10; answer = 20;
+    }
+
+    return { question: `${a} ${op} ${b} = ?`, answer };
+}
+
+export function MathCalculationGame({ onComplete, onClose }: MiniGameProps) {
+    const [problem] = useState(generateMathProblem);
+    const [inputValue, setInputValue] = useState("");
     const timeLeft = useCountdown(12, onClose);
 
-    const handleDragStart = (shape: string) => {
-        setDragging(shape);
-    };
-
-    const handleDrop = (targetShape: string) => {
-        if (dragging === targetShape) {
-            const newPlaced = { ...placed, [targetShape]: true };
-            setPlaced(newPlaced);
-            if (Object.keys(newPlaced).length === 3) {
+    const handleKeyPress = (key: string) => {
+        if (inputValue.length < 3) {
+            const newValue = inputValue + key;
+            setInputValue(newValue);
+            if (Number(newValue) === problem.answer) {
                 onComplete();
             }
         }
-        setDragging(null);
+    };
+
+    const handleBackspace = () => {
+        setInputValue(v => v.slice(0, -1));
     };
 
     return (
-        <GameContainer title="图形排序" timeLeft={timeLeft} onClose={onClose}>
-            {/* Drop zones */}
-            <div className="flex justify-center gap-4 mb-6">
-                {SHAPES.map(shape => (
-                    <div
-                        key={`zone-${shape.name}`}
-                        onClick={() => handleDrop(shape.name)}
-                        className={`w-16 h-16 border-2 border-dashed rounded-lg flex items-center justify-center transition-colors ${placed[shape.name] ? 'border-green-500 bg-green-500/20' : 'border-white/30'
-                            }`}
+        <GameContainer title="简单计算" timeLeft={timeLeft} onClose={onClose}>
+            <div className="text-center mb-4">
+                <div className="text-4xl font-bold text-white tracking-wider mb-2">
+                    {problem.question}
+                </div>
+                <div className="text-3xl font-mono font-bold h-12 text-white">
+                    {inputValue || "_"}
+                </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, "⌫", 0, "C"].map((key, idx) => (
+                    <Button
+                        key={idx}
+                        variant="outline"
+                        className={`h-12 text-xl font-bold ${key === "C" ? "text-red-400" : ""}`}
+                        onClick={() => {
+                            if (key === "⌫") handleBackspace();
+                            else if (key === "C") setInputValue("");
+                            else handleKeyPress(String(key));
+                        }}
                     >
-                        {placed[shape.name] && (
-                            <svg viewBox="0 0 24 24" className="w-10 h-10 fill-green-500">
-                                <path d={shape.path} />
-                            </svg>
-                        )}
-                    </div>
+                        {key}
+                    </Button>
                 ))}
             </div>
-
-            {/* Draggable shapes */}
-            <div className="flex justify-center gap-4">
-                {SHAPES.filter(s => !placed[s.name]).map(shape => (
-                    <motion.button
-                        key={`shape-${shape.name}`}
-                        whileTap={{ scale: 0.9 }}
-                        onClick={() => handleDragStart(shape.name)}
-                        className={`w-14 h-14 bg-white/10 rounded-lg flex items-center justify-center ${dragging === shape.name ? 'ring-2 ring-white' : ''
-                            }`}
-                    >
-                        <svg viewBox="0 0 24 24" className="w-8 h-8 fill-white">
-                            <path d={shape.path} />
-                        </svg>
-                    </motion.button>
-                ))}
-            </div>
-            {dragging && (
-                <p className="text-center text-white/50 text-sm mt-2">点击上方对应的框</p>
-            )}
         </GameContainer>
     );
 }
@@ -494,7 +502,7 @@ export function MiniGame({ type, onComplete, onClose }: MiniGameProps & { type: 
         case "wire": return <WireConnectGame onComplete={onComplete} onClose={onClose} />;
         case "memory": return <NumberMemoryGame onComplete={onComplete} onClose={onClose} />;
         case "cardSwipe": return <ColorSequenceGame onComplete={onComplete} onClose={onClose} />;
-        case "shapeSort": return <ShapeSortGame onComplete={onComplete} onClose={onClose} />;
+        case "shapeSort": return <MathCalculationGame onComplete={onComplete} onClose={onClose} />;
         case "reaction": return <ReactionTestGame onComplete={onComplete} onClose={onClose} />;
     }
 }
