@@ -10,20 +10,38 @@ import {
     canAutoAdvance
 } from "./engine.js";
 import {
+    getBotSpeechDecision,
     getBotNightActionTarget,
-    getBotVoteTarget
-} from "./bot-logic.js";
-import {
-    generateBotSpeech,
-    generateBotLastWords
+    getBotVoteTarget,
+    getBotSpeechPlan,
+    streamStyledSpeech
 } from "./bot-logic-ai.js";
-import { initBotMemory, getBotMemory } from "./bot-state.js";
+import {
+    initBotMemory,
+    getBotMemory,
+    clearRoomBotMemories
+} from "./bot-state.js";
 import type { FlowerSnapshot } from "./types.js";
 
 // Keep track of scheduled timeouts to avoid duplicates or memory leaks if room closes
 // Map<RoomCode, Set<TimeoutId>>
 const roomTimeouts = new Map<string, Set<NodeJS.Timeout>>();
 const speakerConfirmTimers = new Map<string, { key: string; timeout: NodeJS.Timeout }>();
+
+// Lock mechanism to prevent double-scheduling actions for bots
+const pendingActions = new Set<string>();
+
+function acquireLock(roomCode: string, type: string, id: string | number): boolean {
+    const key = `${roomCode}:${type}:${id}`;
+    if (pendingActions.has(key)) return false;
+    pendingActions.add(key);
+    return true;
+}
+
+function releaseLock(roomCode: string, type: string, id: string | number) {
+    const key = `${roomCode}:${type}:${id}`;
+    pendingActions.delete(key);
+}
 
 function logPendingActionables(snapshot: FlowerSnapshot) {
     if (snapshot.phase === "day_vote") {
@@ -89,6 +107,14 @@ export function clearRoomTimeouts(roomCode: string) {
         speakerConfirmTimers.delete(roomCode);
     }
     scheduledDeadlines.delete(roomCode);
+    clearRoomBotMemories(roomCode);
+
+    // Clear any pending locks for this room
+    for (const key of pendingActions) {
+        if (key.startsWith(`${roomCode}:`)) {
+            pendingActions.delete(key);
+        }
+    }
 }
 
 export function checkAndScheduleActions(room: { code: string; snapshot: any }, io: Server) {
@@ -117,40 +143,45 @@ export function checkAndScheduleActions(room: { code: string; snapshot: any }, i
     if (snapshot.phase === "night_actions") {
         snapshot.players.forEach(p => {
             if (p.isBot && p.isAlive && p.role && !p.nightAction) {
-                // Check if already scheduled? 
-                // Simple approach: Random delay, then check again if action still needed.
-                const delay = Math.random() * 5000 + 2000; // 2-7s
-                const t = setTimeout(() => {
-                    // Re-fetch room/snapshot to ensure valid state
-                    if (!room.snapshot || room.snapshot.engine !== "flower") return;
-                    const currentSnap = room.snapshot as FlowerSnapshot;
-                    if (currentSnap.phase !== "night_actions") return;
+                const lockId = `${snapshot.dayCount}-${p.seat}`;
+                if (!acquireLock(roomCode, "night", lockId)) return;
 
-                    const currentPlayer = currentSnap.players.find(cp => cp.seat === p.seat);
-                    if (!currentPlayer || !currentPlayer.isAlive || currentPlayer.nightAction) return;
+                // Check if already scheduled?
+                const t = setTimeout(async () => {
+                    try {
+                        // Re-fetch room/snapshot to ensure valid state
+                        if (!room.snapshot || room.snapshot.engine !== "flower") return;
+                        const currentSnap = room.snapshot as FlowerSnapshot;
+                        if (currentSnap.phase !== "night_actions") return;
 
-                    const target = getBotNightActionTarget(currentSnap, p.seat, p.role!);
-                    // Even if target is null (e.g. no valid target), we might want to "skip" or do nothing.
-                    // But engine.ts submitNightAction handles logic.
-                    // If target is null, maybe we don't submit? Or submit empty?
-                    // For now, only submit if target found.
-                    if (target !== null) {
-                        const res = submitNightAction(currentSnap, {
-                            role: p.role!,
-                            actorSeat: p.seat,
-                            targetSeat: target
-                        });
-                        if (res.ok) {
-                            console.log(`[Bot] Seat ${p.seat} (${p.role}) acted on ${target}`);
-                            io.to(roomCode).emit("state:full", { snapshot: currentSnap, from: "server", at: Date.now() });
+                        const currentPlayer = currentSnap.players.find(cp => cp.seat === p.seat);
+                        if (!currentPlayer || !currentPlayer.isAlive || currentPlayer.nightAction) return;
 
-                            // Check if all actions done? Maybe auto-resolve?
-                            // For now, let host resolve manually as per original design, 
-                            // OR we could auto-resolve if all bots acted? 
-                            // Let's stick to manual resolve for now to avoid confusion.
+                        const target = await getBotNightActionTarget(currentSnap, p.seat, p.role!);
+                        // Even if target is null (e.g. no valid target), we might want to "skip" or do nothing.
+                        // But engine.ts submitNightAction handles logic.
+                        // If target is null, maybe we don't submit? Or submit empty?
+                        // For now, only submit if target found.
+                        if (target !== null) {
+                            const res = submitNightAction(currentSnap, {
+                                role: p.role!,
+                                actorSeat: p.seat,
+                                targetSeat: target
+                            });
+                            if (res.ok) {
+                                console.log(`[Bot] Seat ${p.seat} (${p.role}) acted on ${target}`);
+                                io.to(roomCode).emit("state:full", { snapshot: currentSnap, from: "server", at: Date.now() });
+
+                                // Check if all actions done? Maybe auto-resolve?
+                                // For now, let host resolve manually as per original design, 
+                                // OR we could auto-resolve if all bots acted? 
+                                // Let's stick to manual resolve for now to avoid confusion.
+                            }
                         }
+                    } finally {
+                        releaseLock(roomCode, "night", lockId);
                     }
-                }, delay);
+                });
                 addTimeout(roomCode, t);
             }
         });
@@ -162,56 +193,80 @@ export function checkAndScheduleActions(room: { code: string; snapshot: any }, i
         const currentSpeaker = snapshot.players.find(p => p.seat === currentSpeakerSeat);
 
         if (currentSpeaker && currentSpeaker.isBot && currentSpeaker.isAlive) {
-            // Schedule speech
-            const delay = Math.random() * 3000 + 2000; // 2-5s
-            const t = setTimeout(async () => {
-                if (!room.snapshot || room.snapshot.engine !== "flower") return;
-                const currentSnap = room.snapshot as FlowerSnapshot;
-                if (currentSnap.phase !== "day_discussion") return;
+            const lockId = `${snapshot.dayCount}-${snapshot.day.currentSpeakerIndex}`;
+            if (acquireLock(roomCode, "speech", lockId)) {
+                // Schedule speech
+                const delay = Math.random() * 3000 + 2000; // 2-5s
+                const t = setTimeout(async () => {
+                    try {
+                        if (!room.snapshot || room.snapshot.engine !== "flower") return;
+                        const currentSnap = room.snapshot as FlowerSnapshot;
+                        if (currentSnap.phase !== "day_discussion") return;
 
-                // Verify it's still this bot's turn
-                const freshSpeakerSeat = currentSnap.day.speechOrder[currentSnap.day.currentSpeakerIndex];
-                if (freshSpeakerSeat !== currentSpeakerSeat) return;
+                        // Verify it's still this bot's turn
+                        const freshSpeakerSeat = currentSnap.day.speechOrder[currentSnap.day.currentSpeakerIndex];
+                        if (freshSpeakerSeat !== currentSpeakerSeat) return;
 
-                // Generate speech (async AI call)
-                const speech = await generateBotSpeech(currentSnap, currentSpeakerSeat);
+                        // Generate speech plan (Logic)
+                        const plan = await getBotSpeechPlan(currentSnap, currentSpeakerSeat, false);
+                        // Note: Memory is updated inside getBotSpeechPlan
 
-                // Add chat message
-                const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-                currentSnap.chatMessages.push({
-                    id: msgId,
-                    sessionId: "bot",
-                    senderSeat: currentSpeakerSeat,
-                    senderName: currentSpeaker.name,
-                    content: speech,
-                    mentions: [],
-                    timestamp: Date.now()
-                });
+                        // Stream styled speech (Execution)
+                        const generator = streamStyledSpeech(plan.draft);
 
-                // Broadcast speech immediately
-                io.to(roomCode).emit("state:full", { snapshot: currentSnap, from: "server", at: Date.now() });
+                        try {
+                            for await (const bubble of generator) {
+                                // Re-validate state before each bubble
+                                if (!room.snapshot || room.snapshot.engine !== "flower") break;
+                                const validSnap = room.snapshot as FlowerSnapshot;
+                                if (validSnap.phase !== "day_discussion") break;
 
-                // Schedule pass turn after a short reading delay
-                const passDelay = 2000;
-                const t2 = setTimeout(() => {
-                    if (!room.snapshot || room.snapshot.engine !== "flower") return;
-                    const snapAfterSpeech = room.snapshot as FlowerSnapshot;
-                    if (snapAfterSpeech.phase !== "day_discussion") return;
-                    // Verify turn again
-                    if (snapAfterSpeech.day.speechOrder[snapAfterSpeech.day.currentSpeakerIndex] !== currentSpeakerSeat) return;
+                                // Add chat message for this bubble
+                                const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+                                validSnap.chatMessages.push({
+                                    id: msgId,
+                                    sessionId: "bot",
+                                    senderSeat: currentSpeakerSeat,
+                                    senderName: currentSpeaker.name,
+                                    content: bubble,
+                                    mentions: [],
+                                    timestamp: Date.now()
+                                });
 
-                    const res = passTurn(snapAfterSpeech);
-                    if (res.ok) {
-                        console.log(`[Bot] Seat ${currentSpeakerSeat} passed turn`);
-                        io.to(roomCode).emit("state:full", { snapshot: snapAfterSpeech, from: "server", at: Date.now() });
-                        // Recursive check for next bot
-                        checkAndScheduleActions(room, io);
+                                // Emit immediately
+                                io.to(roomCode).emit("state:full", { snapshot: validSnap, from: "server", at: Date.now() });
+
+                                // Small "typing/reading" delay between bubbles
+                                await new Promise(resolve => setTimeout(resolve, 1500));
+                            }
+                        } catch (e) {
+                            console.error(`[Scheduler] Bot streaming error:`, e);
+                        }
+
+                        // Schedule pass turn after speech is done
+                        const passDelay = 2000;
+                        const t2 = setTimeout(() => {
+                            if (!room.snapshot || room.snapshot.engine !== "flower") return;
+                            const snapAfterSpeech = room.snapshot as FlowerSnapshot;
+                            if (snapAfterSpeech.phase !== "day_discussion") return;
+                            // Verify turn again
+                            if (snapAfterSpeech.day.speechOrder[snapAfterSpeech.day.currentSpeakerIndex] !== currentSpeakerSeat) return;
+
+                            const res = passTurn(snapAfterSpeech);
+                            if (res.ok) {
+                                console.log(`[Bot] Seat ${currentSpeakerSeat} passed turn`);
+                                io.to(roomCode).emit("state:full", { snapshot: snapAfterSpeech, from: "server", at: Date.now() });
+                                // Recursive check for next bot
+                                checkAndScheduleActions(room, io);
+                            }
+                        }, passDelay);
+                        addTimeout(roomCode, t2);
+                    } finally {
+                        releaseLock(roomCode, "speech", lockId);
                     }
-                }, passDelay);
-                addTimeout(roomCode, t2);
-
-            }, delay);
-            addTimeout(roomCode, t);
+                }, delay);
+                addTimeout(roomCode, t);
+            }
         }
     }
 
@@ -223,56 +278,74 @@ export function checkAndScheduleActions(room: { code: string; snapshot: any }, i
             const currentSpeaker = snapshot.players.find(p => p.seat === currentSpeakerSeat);
 
             if (currentSpeaker && currentSpeaker.isBot) { // Removed isAlive check as they are dead
-                // Schedule speech
-                const delay = Math.random() * 3000 + 2000; // 2-5s
-                const t = setTimeout(async () => {
-                    if (!room.snapshot || room.snapshot.engine !== "flower") return;
-                    const currentSnap = room.snapshot as FlowerSnapshot;
-                    if (currentSnap.phase !== "day_last_words") return;
+                const lockId = `${snapshot.dayCount}-${snapshot.day.currentSpeakerIndex}`;
+                if (acquireLock(roomCode, "last_words", lockId)) {
+                    // Schedule speech
+                    const delay = Math.random() * 3000 + 2000; // 2-5s
+                    const t = setTimeout(async () => {
+                        try {
+                            if (!room.snapshot || room.snapshot.engine !== "flower") return;
+                            const currentSnap = room.snapshot as FlowerSnapshot;
+                            if (currentSnap.phase !== "day_last_words") return;
 
-                    // Verify it's still this bot's turn
-                    const freshLastWords = currentSnap.day.lastWords;
-                    if (!freshLastWords || freshLastWords.queue[currentSnap.day.currentSpeakerIndex] !== currentSpeakerSeat) return;
+                            // Verify it's still this bot's turn
+                            const freshLastWords = currentSnap.day.lastWords;
+                            if (!freshLastWords || freshLastWords.queue[currentSnap.day.currentSpeakerIndex] !== currentSpeakerSeat) return;
 
-                    // Generate speech (async AI call)
-                    const speech = await generateBotLastWords(currentSnap, currentSpeakerSeat);
+                            // Generate speech plan
+                            const plan = await getBotSpeechPlan(currentSnap, currentSpeakerSeat, true);
 
-                    // Add chat message
-                    const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-                    currentSnap.chatMessages.push({
-                        id: msgId,
-                        sessionId: "bot",
-                        senderSeat: currentSpeakerSeat,
-                        senderName: currentSpeaker.name,
-                        content: speech,
-                        mentions: [],
-                        timestamp: Date.now()
-                    });
+                            // Stream styled speech
+                            const generator = streamStyledSpeech(plan.draft);
 
-                    // Broadcast speech immediately
-                    io.to(roomCode).emit("state:full", { snapshot: currentSnap, from: "server", at: Date.now() });
+                            try {
+                                for await (const bubble of generator) {
+                                    if (!room.snapshot || room.snapshot.engine !== "flower") break;
+                                    const validSnap = room.snapshot as FlowerSnapshot;
+                                    if (validSnap.phase !== "day_last_words") break;
 
-                    // Schedule pass turn after a short reading delay
-                    const passDelay = 2000;
-                    const t2 = setTimeout(() => {
-                        if (!room.snapshot || room.snapshot.engine !== "flower") return;
-                        const snapAfterSpeech = room.snapshot as FlowerSnapshot;
-                        if (snapAfterSpeech.phase !== "day_last_words") return;
-                        // Verify turn again
-                        if (snapAfterSpeech.day.lastWords?.queue[snapAfterSpeech.day.currentSpeakerIndex] !== currentSpeakerSeat) return;
+                                    const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+                                    validSnap.chatMessages.push({
+                                        id: msgId,
+                                        sessionId: "bot",
+                                        senderSeat: currentSpeakerSeat,
+                                        senderName: currentSpeaker.name,
+                                        content: bubble,
+                                        mentions: [],
+                                        timestamp: Date.now()
+                                    });
 
-                        const res = passTurn(snapAfterSpeech);
-                        if (res.ok) {
-                            console.log(`[Bot] Seat ${currentSpeakerSeat} passed last words`);
-                            io.to(roomCode).emit("state:full", { snapshot: snapAfterSpeech, from: "server", at: Date.now() });
-                            // Recursive check for next bot
-                            checkAndScheduleActions(room, io);
+                                    io.to(roomCode).emit("state:full", { snapshot: validSnap, from: "server", at: Date.now() });
+                                    await new Promise(resolve => setTimeout(resolve, 1500));
+                                }
+                            } catch (e) {
+                                console.error(`[Scheduler] Bot LastWords streaming error:`, e);
+                            }
+
+                            // Schedule pass turn
+                            const passDelay = 2000;
+                            const t2 = setTimeout(() => {
+                                if (!room.snapshot || room.snapshot.engine !== "flower") return;
+                                const snapAfterSpeech = room.snapshot as FlowerSnapshot;
+                                if (snapAfterSpeech.phase !== "day_last_words") return;
+                                // Verify turn again
+                                if (snapAfterSpeech.day.lastWords?.queue[snapAfterSpeech.day.currentSpeakerIndex] !== currentSpeakerSeat) return;
+
+                                const res = passTurn(snapAfterSpeech);
+                                if (res.ok) {
+                                    console.log(`[Bot] Seat ${currentSpeakerSeat} passed last words`);
+                                    io.to(roomCode).emit("state:full", { snapshot: snapAfterSpeech, from: "server", at: Date.now() });
+                                    // Recursive check for next bot
+                                    checkAndScheduleActions(room, io);
+                                }
+                            }, passDelay);
+                            addTimeout(roomCode, t2);
+                        } finally {
+                            releaseLock(roomCode, "last_words", lockId);
                         }
-                    }, passDelay);
-                    addTimeout(roomCode, t2);
-
-                }, delay);
-                addTimeout(roomCode, t);
+                    }, delay);
+                    addTimeout(roomCode, t);
+                }
             }
         }
     }
@@ -281,28 +354,35 @@ export function checkAndScheduleActions(room: { code: string; snapshot: any }, i
     if (snapshot.phase === "day_vote") {
         snapshot.players.forEach(p => {
             if (p.isBot && p.isAlive && !p.hasVotedToday) {
-                const delay = Math.random() * 4000 + 1000; // 1-5s
-                const t = setTimeout(() => {
-                    if (!room.snapshot || room.snapshot.engine !== "flower") return;
-                    const currentSnap = room.snapshot as FlowerSnapshot;
-                    if (currentSnap.phase !== "day_vote") return;
+                const lockId = `${snapshot.dayCount}-${p.seat}`;
+                if (acquireLock(roomCode, "vote", lockId)) {
+                    const delay = Math.random() * 4000 + 1000; // 1-5s
+                    const t = setTimeout(async () => {
+                        try {
+                            if (!room.snapshot || room.snapshot.engine !== "flower") return;
+                            const currentSnap = room.snapshot as FlowerSnapshot;
+                            if (currentSnap.phase !== "day_vote") return;
 
-                    const currentPlayer = currentSnap.players.find(cp => cp.seat === p.seat);
-                    if (!currentPlayer || !currentPlayer.isAlive || currentPlayer.hasVotedToday) return;
+                            const currentPlayer = currentSnap.players.find(cp => cp.seat === p.seat);
+                            if (!currentPlayer || !currentPlayer.isAlive || currentPlayer.hasVotedToday) return;
 
-                    const target = getBotVoteTarget(currentSnap, p.seat, p.role!);
-                    if (target !== null) {
-                        const res = submitDayVote(currentSnap, {
-                            voterSeat: p.seat,
-                            targetSeat: target
-                        });
-                        if (res.ok) {
-                            console.log(`[Bot] Seat ${p.seat} voted for ${target}`);
-                            io.to(roomCode).emit("state:full", { snapshot: currentSnap, from: "server", at: Date.now() });
+                            const target = await getBotVoteTarget(currentSnap, p.seat);
+                            if (target !== null) {
+                                const res = submitDayVote(currentSnap, {
+                                    voterSeat: p.seat,
+                                    targetSeat: target
+                                });
+                                if (res.ok) {
+                                    console.log(`[Bot] Seat ${p.seat} voted for ${target}`);
+                                    io.to(roomCode).emit("state:full", { snapshot: currentSnap, from: "server", at: Date.now() });
+                                }
+                            }
+                        } finally {
+                            releaseLock(roomCode, "vote", lockId);
                         }
-                    }
-                }, delay);
-                addTimeout(roomCode, t);
+                    }, delay);
+                    addTimeout(roomCode, t);
+                }
             }
         });
     }
