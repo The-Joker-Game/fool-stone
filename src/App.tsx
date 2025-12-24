@@ -5,6 +5,7 @@ import { useGame, exportSnapshot as exportGameSnapshot, applySnapshot as applyGa
 import { rt, getSessionId, type PresenceState } from './realtime/socket';
 import './index.css';
 import FlowerRoom from './FlowerRoom';
+import JokerRoom from './JokerRoom';
 import type { WakeLockSentinel } from './types';
 
 
@@ -1070,6 +1071,10 @@ function MainApp() {
 }
 
 export default function App() {
+  if (typeof window !== 'undefined' && window.location.search.includes('joker')) {
+    // URL 带 ?joker 就进入 Duck & Goose 页面
+    return <JokerRoom />;
+  }
   if (typeof window !== 'undefined' && window.location.search.includes('flower')) {
     // URL 带 ?flower 就进入花蝴蝶调试页面
     return <FlowerRoom />;

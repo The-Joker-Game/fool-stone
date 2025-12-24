@@ -22,6 +22,23 @@ import {
 import type { FlowerPlayerState } from "./game-flower/types.js";
 import { checkAndScheduleActions } from "./game-flower/scheduler.js";
 
+// Joker Game imports
+import {
+  initJokerRoom,
+  assignJokerRoles,
+  selectLocation,
+  submitLifeCodeAction,
+  submitVote as jokerSubmitVote,
+  startMeeting as jokerStartMeeting,
+  transitionToRoleReveal,
+  transitionToGreenLight,
+  resetToLobby as jokerResetToLobby,
+  checkWinCondition as jokerCheckWin,
+  finalizeGame as jokerFinalizeGame,
+} from "./game-joker/engine.js";
+import type { JokerPlayerState, JokerSnapshot } from "./game-joker/types.js";
+import { checkAndScheduleActions as jokerScheduleActions, clearRoomTimeouts as jokerClearTimeouts, checkAllVoted } from "./game-joker/scheduler.js";
+
 // Load env vars (allow .env.local to override)
 loadEnv();
 loadEnv({ path: ".env.local", override: true });
@@ -803,6 +820,129 @@ io.on("connection", (socket: Socket) => {
             }
 
             checkAndScheduleActions(r, io);
+          }
+          cb({ ok: true });
+        } else {
+          cb({ ok: false, msg: res.error });
+        }
+        return;
+      }
+
+      // Check if it's a joker game action
+      if (action.startsWith("joker:")) {
+        // Initialize joker snapshot if needed
+        if (!r.snapshot || r.snapshot.engine !== "joker") {
+          // Only allow creating joker room if no snapshot exists
+          if (action === "joker:create_room") {
+            const players = Array.from(r.users.values()).map((u, i) => ({
+              name: u.name,
+              seat: u.seat,
+              sessionId: u.sessionId,
+              isBot: u.isBot,
+              isHost: u.sessionId === r.hostSessionId,
+            }));
+            r.snapshot = initJokerRoom(roomCode, players);
+            io.to(roomCode).emit("state:full", { snapshot: r.snapshot, from: "server", at: Date.now() });
+            return cb({ ok: true });
+          }
+          return cb({ ok: false, msg: "Joker game not initialized" });
+        }
+
+        let res: { ok: boolean; error?: string; message?: string } = { ok: false, error: "Unknown action" };
+        let shouldBroadcast = false;
+        const jokerSnapshot = r.snapshot as JokerSnapshot;
+
+        switch (action) {
+          case "joker:start_game":
+            if (socket.data.sessionId !== r.hostSessionId) {
+              return cb({ ok: false, msg: "Only host can start game" });
+            }
+            // Sync users to snapshot before starting
+            for (const u of r.users.values()) {
+              if (u.seat >= 1 && u.seat <= 10) {
+                const p = jokerSnapshot.players[u.seat - 1];
+                if (p) {
+                  p.sessionId = u.sessionId;
+                  p.name = u.name;
+                  p.isHost = u.sessionId === r.hostSessionId;
+                  p.isBot = u.isBot ?? false;
+                }
+              }
+            }
+            res = assignJokerRoles(jokerSnapshot);
+            if (res.ok) {
+              transitionToRoleReveal(jokerSnapshot);
+            }
+            shouldBroadcast = true;
+            break;
+
+          case "joker:select_location":
+            res = selectLocation(jokerSnapshot, data);
+            shouldBroadcast = true;
+            break;
+
+          case "joker:submit_action":
+            res = submitLifeCodeAction(jokerSnapshot, data);
+            shouldBroadcast = true;
+            // Check for deaths and trigger meeting if needed
+            if (res.ok) {
+              const winResult = jokerCheckWin(jokerSnapshot);
+              if (winResult) {
+                jokerFinalizeGame(jokerSnapshot, winResult);
+              }
+            }
+            break;
+
+          case "joker:report": {
+            const reporter = jokerSnapshot.players.find(
+              (p: JokerPlayerState) => p.sessionId === socket.data.sessionId
+            );
+            if (reporter && reporter.isAlive && reporter.sessionId) {
+              res = jokerStartMeeting(jokerSnapshot, reporter.sessionId);
+              shouldBroadcast = true;
+            } else {
+              res = { ok: false, error: "Invalid reporter" };
+            }
+            break;
+          }
+
+          case "joker:vote": {
+            const voter = jokerSnapshot.players.find(
+              (p: JokerPlayerState) => p.sessionId === socket.data.sessionId
+            );
+            if (!voter) {
+              return cb({ ok: false, msg: "Player not found" });
+            }
+            res = jokerSubmitVote(jokerSnapshot, {
+              voterSeat: voter.seat,
+              targetSessionId: data?.targetSessionId ?? null,
+            });
+            shouldBroadcast = true;
+            // Check if all voted
+            if (res.ok) {
+              checkAllVoted(r, io);
+            }
+            break;
+          }
+
+          case "joker:reset_game":
+            if (socket.data.sessionId !== r.hostSessionId) {
+              return cb({ ok: false, msg: "Only host can reset game" });
+            }
+            jokerResetToLobby(jokerSnapshot);
+            jokerClearTimeouts(roomCode);
+            shouldBroadcast = true;
+            res = { ok: true };
+            break;
+
+          default:
+            return cb({ ok: false, msg: "Unknown joker action" });
+        }
+
+        if (res.ok) {
+          if (shouldBroadcast) {
+            io.to(roomCode).emit("state:full", { snapshot: r.snapshot, from: "server", at: Date.now() });
+            jokerScheduleActions(r, io);
           }
           cb({ ok: true });
         } else {

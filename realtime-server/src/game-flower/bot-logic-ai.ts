@@ -105,6 +105,71 @@ function getAIClient(type: "gemini" | "qwen" | "deepseek" = "gemini"): OpenAI | 
     return client;
 }
 
+/**
+ * Wrapper for API calls with racing retry logic.
+ * If the request takes longer than `timeoutMs`, a new request will be started.
+ * The first response to return wins (previous requests are NOT cancelled).
+ * @param fn - The async function to execute (should return a Promise)
+ * @param timeoutMs - Timeout before starting a new racing request (default: 20000)
+ * @param maxAttempts - Maximum number of concurrent attempts (default: 2)
+ * @param label - Label for logging
+ */
+async function withRaceRetry<T>(
+    fn: () => Promise<T>,
+    timeoutMs: number = 20000,
+    maxAttempts: number = 2,
+    label: string = "API"
+): Promise<T> {
+    return new Promise((resolve, reject) => {
+        let resolved = false;
+        let attemptCount = 0;
+        let errorCount = 0;
+        const errors: Error[] = [];
+
+        const startAttempt = (attemptNum: number) => {
+            attemptCount++;
+            console.log(`[${label}] Starting attempt ${attemptNum}`);
+
+            fn()
+                .then((result) => {
+                    if (!resolved) {
+                        resolved = true;
+                        if (attemptNum > 1) {
+                            console.log(`[${label}] Attempt ${attemptNum} won the race`);
+                        }
+                        resolve(result);
+                    } else {
+                        console.log(`[${label}] Attempt ${attemptNum} finished but another attempt already won`);
+                    }
+                })
+                .catch((e) => {
+                    errors.push(e);
+                    errorCount++;
+                    console.log(`[${label}] Attempt ${attemptNum} failed:`, e.message);
+
+                    // If all attempts have failed, reject
+                    if (errorCount >= attemptCount && attemptCount >= maxAttempts) {
+                        reject(errors[0]);
+                    }
+                });
+        };
+
+        // Start first attempt immediately
+        startAttempt(1);
+
+        // Schedule additional attempts after timeout
+        for (let i = 2; i <= maxAttempts; i++) {
+            const attemptNum = i;
+            setTimeout(() => {
+                if (!resolved) {
+                    console.log(`[${label}] Attempt 1 still pending after ${timeoutMs}ms, starting racing attempt ${attemptNum}`);
+                    startAttempt(attemptNum);
+                }
+            }, timeoutMs * (i - 1));
+        }
+    });
+}
+
 const SPEECH_PLAN_SCHEMA = {
     type: "object",
     properties: {
@@ -838,24 +903,29 @@ export async function getBotNightActionTarget(
         const prompt = buildDecisionPrompt(snapshot, botSeat, "night_action");
         console.log(`[BotAI-${botSeat}] Prompt (Night):`, prompt);
 
-        const response = await aiClient.chat.completions.create({
-            model: 'gemini-3-flash-preview',
-            messages: [
-                { role: 'system', content: "You are a player in the game. Respond with the specified JSON schema." },
-                { role: 'user', content: prompt }
-            ],
-            response_format: {
-                type: 'json_schema',
-                json_schema: {
-                    name: "night_action",
-                    schema: ACTION_SCHEMA,
-                    strict: true
-                }
-            },
-            temperature: 0,
-            top_p: 0.85,
-            reasoning_effort: "medium"
-        });
+        const response = await withRaceRetry(
+            () => aiClient.chat.completions.create({
+                model: 'gemini-3-flash-preview',
+                messages: [
+                    { role: 'system', content: "You are a player in the game. Respond with the specified JSON schema." },
+                    { role: 'user', content: prompt }
+                ],
+                response_format: {
+                    type: 'json_schema',
+                    json_schema: {
+                        name: "night_action",
+                        schema: ACTION_SCHEMA,
+                        strict: true
+                    }
+                },
+                temperature: 0,
+                top_p: 0.85,
+                reasoning_effort: "medium"
+            }),
+            20000,  // 20 second timeout before racing
+            2,      // max 2 concurrent attempts
+            `BotAI-${botSeat}-Night`
+        );
 
         const rawContent = response.choices[0]?.message?.content || "";
         console.log(`[BotAI-${botSeat}] Response (Night):`, rawContent);
