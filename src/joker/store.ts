@@ -193,6 +193,7 @@ function createEmptyPlayer(seat: number): JokerPlayerState {
         lifeCode: "",
         lifeCodeVersion: 0,
         oxygen: 270,
+        oxygenUpdatedAt: Date.now(),
         oxygenReceivedThisRound: false,
         duckEmergencyUsed: false,
         hasVoted: false,
