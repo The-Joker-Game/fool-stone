@@ -35,6 +35,7 @@ import {
   resetToLobby as jokerResetToLobby,
   checkWinCondition as jokerCheckWin,
   finalizeGame as jokerFinalizeGame,
+  startTask as jokerStartTask,
   completeTask as jokerCompleteTask,
 } from "./game-joker/engine.js";
 import type { JokerPlayerState, JokerSnapshot } from "./game-joker/types.js";
@@ -890,6 +891,7 @@ io.on("connection", (socket: Socket) => {
               const winResult = jokerCheckWin(jokerSnapshot);
               if (winResult) {
                 jokerFinalizeGame(jokerSnapshot, winResult);
+                jokerClearTimeouts(roomCode);
               }
             }
             break;
@@ -926,6 +928,11 @@ io.on("connection", (socket: Socket) => {
             break;
           }
 
+          case "joker:start_task":
+            res = jokerStartTask(jokerSnapshot, socket.data.sessionId);
+            shouldBroadcast = true;
+            break;
+
           case "joker:complete_task":
             res = jokerCompleteTask(jokerSnapshot);
             shouldBroadcast = true;
@@ -934,6 +941,7 @@ io.on("connection", (socket: Socket) => {
               const winResult = jokerCheckWin(jokerSnapshot);
               if (winResult) {
                 jokerFinalizeGame(jokerSnapshot, winResult);
+                jokerClearTimeouts(roomCode);
               }
             }
             break;

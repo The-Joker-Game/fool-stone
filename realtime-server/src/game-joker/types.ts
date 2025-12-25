@@ -36,6 +36,7 @@ export interface JokerPlayerState {
 
     // Oxygen system
     oxygen: number; // seconds remaining (default 240)
+    oxygenUpdatedAt: number; // server timestamp when oxygen was last updated
     oxygenReceivedThisRound: boolean;
     duckEmergencyUsed: boolean; // duck one-time +120 on first death
 

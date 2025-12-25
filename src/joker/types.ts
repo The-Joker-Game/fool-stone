@@ -33,6 +33,7 @@ export interface JokerPlayerState {
     lifeCodeVersion: number;
 
     oxygen: number;
+    oxygenUpdatedAt: number;
     oxygenReceivedThisRound: boolean;
     duckEmergencyUsed: boolean;
 

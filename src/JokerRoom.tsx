@@ -10,6 +10,7 @@ import type {
 import { useJokerStore } from "./joker/store";
 import type { JokerStore } from "./joker/store";
 import { MiniGame, getRandomGame, type MiniGameType } from "./joker/mini-games";
+import { GiKitchenKnives, GiMedicalPack, GiElectric, GiCctvCamera, GiCardboardBox } from "react-icons/gi";
 import {
     Card,
     CardContent,
@@ -19,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import {
     Users,
     LogOut,
@@ -67,6 +69,15 @@ const PHASE_LABELS: Record<JokerPhase, string> = {
     game_over: "游戏结束",
 };
 
+// Location icons mapping
+const LOCATION_ICONS: Record<JokerLocation, React.ElementType> = {
+    "厨房": GiKitchenKnives,
+    "医务室": GiMedicalPack,
+    "发电室": GiElectric,
+    "监控室": GiCctvCamera,
+    "仓库": GiCardboardBox,
+};
+
 const PHASE_GRADIENTS: Record<JokerPhase, string> = {
     lobby: "from-slate-900 to-slate-800",
     role_reveal: "from-indigo-900 to-slate-900",
@@ -79,16 +90,16 @@ const PHASE_GRADIENTS: Record<JokerPhase, string> = {
     game_over: "from-gray-900 to-black",
 };
 
-// Animation Variants
+// Animation Variants - optimized for performance
 const pageVariants = {
-    initial: { opacity: 0, y: 20 },
-    in: { opacity: 1, y: 0 },
-    out: { opacity: 0, y: -20 }
+    initial: { opacity: 0 },
+    in: { opacity: 1 },
+    out: { opacity: 0 }
 };
 
 const cardVariants = {
-    hidden: { opacity: 0, scale: 0.95 },
-    visible: { opacity: 1, scale: 1 }
+    hidden: { opacity: 0 },
+    visible: { opacity: 1 }
 };
 
 export default function JokerRoom() {
@@ -98,7 +109,7 @@ export default function JokerRoom() {
     const [presence, setPresence] = useState<PresenceState | null>(null);
     const [name, setName] = useState<string>(() => {
         if (typeof window !== "undefined") {
-            const saved = localStorage.getItem("joker_name");
+            const saved = localStorage.getItem("name");
             if (saved && saved.trim().length > 0) return saved.trim();
         }
         return randName();
@@ -210,21 +221,25 @@ export default function JokerRoom() {
     // Local oxygen display (interpolates between server updates)
     const [displayOxygen, setDisplayOxygen] = useState(me?.oxygen ?? 270);
     const lastServerOxygenRef = useRef(me?.oxygen ?? 270);
-    const lastServerOxygenTimeRef = useRef(Date.now());
+    const lastServerOxygenTimeRef = useRef(me?.oxygenUpdatedAt ?? Date.now());
 
     // Update references when server sends new oxygen value
     useEffect(() => {
-        if (me?.oxygen !== undefined) {
+        if (me?.oxygen !== undefined && me?.oxygenUpdatedAt !== undefined) {
             lastServerOxygenRef.current = me.oxygen;
-            lastServerOxygenTimeRef.current = Date.now();
+            lastServerOxygenTimeRef.current = me.oxygenUpdatedAt;
             setDisplayOxygen(me.oxygen);
         }
-    }, [me?.oxygen]);
+    }, [me?.oxygen, me?.oxygenUpdatedAt]);
 
     // Local oxygen tick during active phases
     useEffect(() => {
         const isActivePhase = ["green_light", "yellow_light", "red_light"].includes(phase);
         if (!isActivePhase || !myAlive) {
+            // Non-active phase: just show server value directly
+            if (me?.oxygen !== undefined) {
+                setDisplayOxygen(me.oxygen);
+            }
             return;
         }
 
@@ -235,7 +250,60 @@ export default function JokerRoom() {
         }, 1000);
 
         return () => clearInterval(interval);
-    }, [phase, myAlive]);
+    }, [phase, myAlive, me?.oxygen]);
+
+    // Watermark randomization with responsive grid
+    const WATERMARK_ROWS = 3;
+    const [watermarkCols, setWatermarkCols] = useState(() => {
+        if (typeof window !== 'undefined') {
+            return window.innerWidth < 500 ? 2 : 3;
+        }
+        return 2;
+    });
+    const [watermarkIndices, setWatermarkIndices] = useState<string[]>(() => {
+        // Initialize with 5 random positions immediately
+        const cols = typeof window !== 'undefined' && window.innerWidth >= 500 ? 3 : 2;
+        const indices = new Set<string>();
+        const totalPositions = WATERMARK_ROWS * cols;
+        const count = Math.min(5, totalPositions);
+        while (indices.size < count) {
+            const r = Math.floor(Math.random() * WATERMARK_ROWS);
+            const c = Math.floor(Math.random() * cols);
+            indices.add(`${r}-${c}`);
+        }
+        return Array.from(indices);
+    });
+
+    useEffect(() => {
+        const handleResize = () => {
+            const newCols = window.innerWidth < 500 ? 2 : 3;
+            setWatermarkCols(newCols);
+        };
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
+    useEffect(() => {
+        if (phase !== "red_light") {
+            return;
+        }
+
+        const tick = () => {
+            const indices = new Set<string>();
+            const totalPositions = WATERMARK_ROWS * watermarkCols;
+            const count = Math.min(5, totalPositions);
+            while (indices.size < count) {
+                const r = Math.floor(Math.random() * WATERMARK_ROWS);
+                const c = Math.floor(Math.random() * watermarkCols);
+                indices.add(`${r}-${c}`);
+            }
+            setWatermarkIndices(Array.from(indices));
+        };
+
+        tick();
+        const interval = setInterval(tick, 1000);
+        return () => clearInterval(interval);
+    }, [phase, watermarkCols]);
 
     // Socket initialization
     useEffect(() => {
@@ -312,7 +380,7 @@ export default function JokerRoom() {
             if (resp?.ok && resp.code) {
                 setRoomCode(resp.code);
                 setIsHost(true);
-                localStorage.setItem("joker_name", nick);
+                localStorage.setItem("name", nick);
                 localStorage.setItem("joker_lastRoomCode", resp.code);
                 // Initialize joker snapshot
                 await rt.emitAck("intent", {
@@ -334,7 +402,7 @@ export default function JokerRoom() {
             if (resp?.ok) {
                 setRoomCode(joinCodeInput.trim());
                 setIsHost(false);
-                localStorage.setItem("joker_name", nick);
+                localStorage.setItem("name", nick);
                 localStorage.setItem("joker_lastRoomCode", joinCodeInput.trim());
             }
         } catch (e) {
@@ -401,10 +469,14 @@ export default function JokerRoom() {
     }, [resetGame]);
 
     // Task handlers
-    const handleStartTask = useCallback(() => {
-        setCurrentGameType(getRandomGame());
-        setShowMiniGame(true);
-    }, []);
+    const handleStartTask = useCallback(async () => {
+        if (!roomCode) return;
+        const result = await rt.emitAck("intent", { room: roomCode, action: "joker:start_task" });
+        if ((result as any)?.ok) {
+            setCurrentGameType(getRandomGame());
+            setShowMiniGame(true);
+        }
+    }, [roomCode]);
 
     const handleCompleteTask = useCallback(async () => {
         if (!roomCode) return;
@@ -488,14 +560,100 @@ export default function JokerRoom() {
         );
     }
 
+    // Render: Dead player - exclusive screen
+    if (roomCode && phase !== "lobby" && phase !== "game_over" && me && !me.isAlive) {
+        return (
+            <div className="min-h-screen relative flex flex-col items-center justify-center text-white p-6 bg-gradient-to-br from-red-950 via-red-900 to-black">
+                {/* Dark overlay that pulses */}
+                <div
+                    className="absolute inset-0 bg-black"
+                    style={{
+                        animation: 'deadFade 4s ease-in-out infinite',
+                    }}
+                />
+                <style>{`
+                    @keyframes deadFade {
+                        0%, 100% { opacity: 0; }
+                        50% { opacity: 0.5; }
+                    }
+                `}</style>
+                <div className="relative z-10 text-center space-y-8">
+                    <div className="w-32 h-32 mx-auto rounded-full bg-red-800/50 flex items-center justify-center border-4 border-red-600/50 shadow-2xl shadow-red-900/50">
+                        <Skull className="w-16 h-16 text-red-400" />
+                    </div>
+                    <div className="space-y-3">
+                        <h1 className="text-5xl font-black tracking-tight text-red-200">你已死亡</h1>
+                        <p className="text-2xl text-red-100 font-bold mt-6">请原地蹲下或坐下</p>
+                        <p className="text-lg text-red-300/70">安静等待游戏结束</p>
+                    </div>
+                    <div className="pt-8 space-y-4">
+                        <div className="text-sm text-red-400/50 uppercase tracking-widest">当前阶段</div>
+                        <div className="text-2xl font-bold text-red-300">{PHASE_LABELS[phase]}</div>
+                    </div>
+                    <Button
+                        variant="ghost"
+                        onClick={leaveRoom}
+                        className="mt-12 text-red-400 hover:text-red-300 hover:bg-red-900/30"
+                    >
+                        <LogOut className="w-4 h-4 mr-2" />
+                        离开房间
+                    </Button>
+                </div>
+            </div>
+        );
+    }
+
     // Render: In room
     return (
-        <div className={`min-h-screen bg-gradient-to-br ${PHASE_GRADIENTS[phase]} transition-all duration-1000 text-white selection:bg-orange-500/30`}>
-            {/* Ambient Background Elements */}
+        <div className={`min-h-screen bg-gradient-to-br ${PHASE_GRADIENTS[phase]} transition-colors duration-500 text-white selection:bg-orange-500/30`}>
+            {/* Ambient Background - simplified for performance */}
             <div className="fixed inset-0 overflow-hidden pointer-events-none">
-                <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-purple-600/10 rounded-full blur-[100px]" />
-                <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-[100px]" />
+                <div className="absolute top-0 left-0 w-full h-1/2 bg-gradient-to-b from-white/5 to-transparent" />
             </div>
+
+            {/* Low Oxygen Vignette Effect */}
+            {myAlive && displayOxygen < 60 && phase !== "game_over" && (
+                <div
+                    className="fixed inset-0 z-[9998] pointer-events-none"
+                    style={{
+                        background: 'radial-gradient(ellipse at center, transparent 10%, rgba(0,0,0,0.4) 50%, rgba(0,0,0,0.9) 100%)',
+                        animation: 'oxygenPulse 4s ease-in-out infinite',
+                    }}
+                >
+                    <style>{`
+                        @keyframes oxygenPulse {
+                            0%, 100% { opacity: 0.5; }
+                            50% { opacity: 1; }
+                        }
+                    `}</style>
+                </div>
+            )}
+
+            {/* Life Code Watermark Overlay - Only in Red Light */}
+            {phase === "red_light" && me?.lifeCode && watermarkIndices.length > 0 && (
+                <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden grid grid-rows-3 gap-1 select-none">
+                    {/* Three rows */}
+                    {Array.from({ length: WATERMARK_ROWS }).map((_, row) => (
+                        <div key={row} className="flex items-center justify-around gap-1 overflow-hidden">
+                            {Array.from({ length: watermarkCols }).map((_, col) => {
+                                const isVisible = watermarkIndices.includes(`${row}-${col}`);
+                                return (
+                                    <div
+                                        key={col}
+                                        className={`transform -rotate-12 font-black whitespace-nowrap transition-opacity duration-300 ${isVisible ? "opacity-100" : "opacity-0"}`}
+                                        style={{
+                                            fontSize: watermarkCols === 2 ? 'min(28vh, 45vw)' : 'min(28vh, 30vw)',
+                                            color: 'rgba(255, 255, 255, 0.12)',
+                                        }}
+                                    >
+                                        {me.lifeCode}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    ))}
+                </div>
+            )}
 
             <div className="relative z-10 max-w-md mx-auto flex flex-col h-screen">
 
@@ -522,7 +680,7 @@ export default function JokerRoom() {
                     {/* Sticky Status Card - stays visible */}
                     {phase !== "lobby" && me && (
                         <div className="sticky top-0 z-20 pb-4 -mx-4 px-4 pt-2">
-                            <Card className="bg-black/40 backdrop-blur-xl border-white/10 overflow-hidden relative">
+                            <Card className="bg-black/10 backdrop-blur-[2px] border-white/10 overflow-hidden relative">
                                 <CardContent className="p-4 flex items-center justify-between">
                                     <div className="flex items-center gap-4">
                                         <div className="relative">
@@ -593,7 +751,7 @@ export default function JokerRoom() {
                                 <h1 className="text-4xl font-black italic tracking-tighter uppercase text-transparent bg-clip-text bg-gradient-to-b from-white to-white/60 drop-shadow-[0_2px_10px_rgba(255,255,255,0.2)]">
                                     {PHASE_LABELS[phase]}
                                 </h1>
-                                {timeLeft > 0 && (
+                                {timeLeft > 0 && phase !== "game_over" && phase !== "lobby" && (
                                     <div className="inline-flex items-center gap-2 bg-black/30 px-4 py-1.5 rounded-full border border-white/10 backdrop-blur-md">
                                         <RotateCcw className="w-3 h-3 text-orange-400 animate-spin-reverse" style={{ animationDuration: '3s' }} />
                                         <span className="font-mono text-xl text-orange-400 tabular-nums">{timeLeft}s</span>
@@ -702,24 +860,18 @@ export default function JokerRoom() {
                             {phase === "green_light" && myAlive && (
                                 <motion.div variants={cardVariants} initial="hidden" animate="visible">
                                     <div className="grid grid-cols-2 gap-3">
-                                        {jokerSnapshot?.activeLocations.map((loc, idx) => (
-                                            <motion.button
+                                        {jokerSnapshot?.activeLocations.map((loc) => (
+                                            <button
                                                 key={loc}
-                                                initial={{ opacity: 0, scale: 0.8 }}
-                                                animate={{ opacity: 1, scale: 1 }}
-                                                transition={{ delay: idx * 0.05 }}
                                                 onClick={() => handleSelectLocation(loc)}
                                                 className={`relative h-24 rounded-2xl border-2 flex flex-col items-center justify-center gap-2 transition-all active:scale-95 ${me?.targetLocation === loc
-                                                    ? "bg-white text-black border-white shadow-[0_0_20px_rgba(255,255,255,0.3)]"
+                                                    ? "bg-green-500/20 text-green-400 border-green-500/50 shadow-[0_0_20px_rgba(34,197,94,0.3)]"
                                                     : "bg-white/5 text-white/70 border-white/10 hover:bg-white/10 hover:text-white hover:border-white/30"
                                                     }`}
                                             >
-                                                <MapPin className={`w-6 h-6 ${me?.targetLocation === loc ? "fill-black" : "fill-none"}`} />
+                                                <MapPin className={`w-6 h-6 ${me?.targetLocation === loc ? "text-green-400" : "text-white/70"}`} />
                                                 <span className="font-bold text-lg">{loc}</span>
-                                                {me?.targetLocation === loc && (
-                                                    <motion.div layoutId="selection-ring" className="absolute inset-0 rounded-2xl border-2 border-white pointer-events-none" />
-                                                )}
-                                            </motion.button>
+                                            </button>
                                         ))}
                                     </div>
                                     <p className="text-center text-white/50 mt-6 text-sm">点击位置前往</p>
@@ -730,7 +882,14 @@ export default function JokerRoom() {
                             {phase === "yellow_light" && myAlive && (
                                 <motion.div variants={cardVariants} className="flex flex-col items-center justify-center py-10 space-y-6">
                                     <div className="w-24 h-24 rounded-full bg-yellow-500/20 flex items-center justify-center border-4 border-yellow-500/30 shadow-[0_0_30px_rgba(234,179,8,0.3)]">
-                                        <Wind className="w-12 h-12 text-yellow-400" />
+                                        {me?.location && LOCATION_ICONS[me.location] ? (
+                                            (() => {
+                                                const LocationIcon = LOCATION_ICONS[me.location];
+                                                return <LocationIcon className="w-12 h-12 text-yellow-400" />;
+                                            })()
+                                        ) : (
+                                            <Wind className="w-12 h-12 text-yellow-400" />
+                                        )}
                                     </div>
                                     <div className="text-center space-y-2">
                                         <p className="text-white/50 uppercase tracking-widest text-sm">目的地已分配</p>
@@ -742,23 +901,32 @@ export default function JokerRoom() {
                             {/* Red Light: Actions */}
                             {phase === "red_light" && myAlive && (
                                 <motion.div variants={cardVariants} className="space-y-6">
-                                    <Card className="bg-black/40 backdrop-blur-xl border-white/10 shadow-2xl">
+                                    <Card className="bg-black/10 backdrop-blur-[2px] border-white/10 shadow-2xl">
                                         <CardContent className="p-6 space-y-6">
                                             <div className="space-y-4">
                                                 <label className="text-center flex items-center justify-center gap-2 text-xs font-bold text-white/40 uppercase tracking-widest">
                                                     <Target className="w-4 h-4" />
                                                     目标生命码
                                                 </label>
-                                                <Input
-                                                    placeholder="_ _"
-                                                    value={lifeCodeInput}
-                                                    onChange={e => setLifeCodeInput(e.target.value.replace(/\D/g, "").slice(0, 2))}
-                                                    className="h-24 text-center text-6xl font-mono tracking-[0.5em] bg-black/20 border-white/10 rounded-2xl focus-visible:ring-0 focus-visible:border-white/40 placeholder:text-white/10"
-                                                    maxLength={2}
-                                                    disabled={actionCooldown}
-                                                    inputMode="numeric"
-                                                    autoFocus
-                                                />
+                                                <div className="flex justify-center">
+                                                    <InputOTP
+                                                        maxLength={2}
+                                                        value={lifeCodeInput}
+                                                        onChange={(value) => setLifeCodeInput(value)}
+                                                        disabled={actionCooldown}
+                                                    >
+                                                        <InputOTPGroup className="gap-4">
+                                                            <InputOTPSlot
+                                                                index={0}
+                                                                className="w-20 h-24 text-5xl font-mono bg-black/20 border-white/20 rounded-xl text-white"
+                                                            />
+                                                            <InputOTPSlot
+                                                                index={1}
+                                                                className="w-20 h-24 text-5xl font-mono bg-black/20 border-white/20 rounded-xl text-white"
+                                                            />
+                                                        </InputOTPGroup>
+                                                    </InputOTP>
+                                                </div>
                                             </div>
 
                                             <div className="grid grid-cols-2 gap-4">
@@ -815,7 +983,7 @@ export default function JokerRoom() {
                                                     className="w-full h-14 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-lg font-bold"
                                                 >
                                                     <ClipboardList className="w-5 h-5 mr-2" />
-                                                    做任务 (+2%)
+                                                    完成任务[-10s氧气 +2%进度]
                                                 </Button>
                                             </div>
                                         </CardContent>
@@ -981,7 +1149,7 @@ export default function JokerRoom() {
 
                                     <Card className="bg-black/20 backdrop-blur-xl border-white/10 text-left">
                                         <CardHeader>
-                                            <CardTitle className="text-sm uppercase tracking-widest text-white/50">最终角色</CardTitle>
+                                            <CardTitle className="text-sm uppercase tracking-widest text-white/50">角色揭晓</CardTitle>
                                         </CardHeader>
                                         <CardContent>
                                             <ScrollArea className="h-[300px] pr-4">

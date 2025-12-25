@@ -57,6 +57,7 @@ function createEmptyPlayer(seat: number): JokerPlayerState {
         lifeCode: generateLifeCode(),
         lifeCodeVersion: 1,
         oxygen: INITIAL_OXYGEN,
+        oxygenUpdatedAt: Date.now(),
         oxygenReceivedThisRound: false,
         duckEmergencyUsed: false,
         hasVoted: false,
@@ -138,6 +139,7 @@ export function assignJokerRoles(snapshot: JokerSnapshot): ActionResult {
             player.role = i < duckCount ? "duck" : "goose";
             player.isAlive = true;
             player.oxygen = INITIAL_OXYGEN;
+            player.oxygenUpdatedAt = Date.now();
             player.oxygenReceivedThisRound = false;
             player.duckEmergencyUsed = false;
         }
@@ -415,6 +417,7 @@ function handleOxygenAction(
 
     // Apply oxygen
     target.oxygen += OXYGEN_REFILL;
+    target.oxygenUpdatedAt = Date.now();
     target.oxygenReceivedThisRound = true;
 
     snapshot.logs.push({
@@ -431,12 +434,14 @@ function handleOxygenAction(
 // ============ Oxygen Tick ============
 
 export function tickOxygen(snapshot: JokerSnapshot): void {
+    const now = Date.now();
     for (const player of snapshot.players) {
         if (player.isAlive && player.sessionId) {
             player.oxygen -= 1;
+            player.oxygenUpdatedAt = now;
         }
     }
-    snapshot.updatedAt = Date.now();
+    snapshot.updatedAt = now;
 }
 
 export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
@@ -449,6 +454,7 @@ export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
             if (player.role === "duck" && !player.duckEmergencyUsed) {
                 // Duck gets emergency oxygen (one-time)
                 player.oxygen = DUCK_EMERGENCY_OXYGEN;
+                player.oxygenUpdatedAt = Date.now();
                 player.duckEmergencyUsed = true;
 
                 snapshot.logs.push({
@@ -668,6 +674,29 @@ export function checkWinCondition(snapshot: JokerSnapshot): JokerGameResult | nu
 // ============ Task System ============
 
 const TASK_PROGRESS_PER_COMPLETION = 2; // +2% per task
+const TASK_OXYGEN_COST = 10; // -10s oxygen per task attempt
+
+export function startTask(snapshot: JokerSnapshot, sessionId: string): ActionResult {
+    if (snapshot.phase !== "red_light") {
+        return { ok: false, error: "Tasks can only be started during red light" };
+    }
+
+    const player = snapshot.players.find(p => p.sessionId === sessionId);
+    if (!player) {
+        return { ok: false, error: "Player not found" };
+    }
+
+    if (!player.isAlive) {
+        return { ok: false, error: "Dead players cannot do tasks" };
+    }
+
+    // Deduct oxygen
+    player.oxygen = Math.max(0, player.oxygen - TASK_OXYGEN_COST);
+    player.oxygenUpdatedAt = Date.now();
+    snapshot.updatedAt = Date.now();
+
+    return { ok: true, message: `Started task, -${TASK_OXYGEN_COST}s oxygen` };
+}
 
 export function completeTask(snapshot: JokerSnapshot): ActionResult {
     if (snapshot.phase !== "red_light") {
@@ -707,10 +736,13 @@ export function transitionToGreenLight(snapshot: JokerSnapshot): void {
     snapshot.activeLocations = computeLocations(aliveCount);
 
     // Reset round-specific player state
+    const now = Date.now();
     for (const player of snapshot.players) {
         player.targetLocation = null;
         player.location = null;
         player.oxygenReceivedThisRound = false;
+        // Reset oxygen timestamp so frontend calculates from green light start
+        player.oxygenUpdatedAt = now;
     }
 
     snapshot.deadline = Date.now() + PHASE_DURATIONS.green_light;
@@ -767,6 +799,7 @@ export function resetToLobby(snapshot: JokerSnapshot): void {
         player.location = null;
         player.targetLocation = null;
         player.oxygen = INITIAL_OXYGEN;
+        player.oxygenUpdatedAt = Date.now();
         player.oxygenReceivedThisRound = false;
         player.duckEmergencyUsed = false;
         player.hasVoted = false;

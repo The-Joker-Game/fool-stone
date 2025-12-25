@@ -268,14 +268,22 @@ export function ColorSequenceGame({ onComplete, onClose }: MiniGameProps) {
     const [sequence] = useState(() =>
         Array.from({ length: 4 }, () => Math.floor(Math.random() * 4))
     );
-    const [showIndex, setShowIndex] = useState(0);
+    const [showIndex, setShowIndex] = useState(-1); // Start at -1 to allow initial delay
     const [inputIndex, setInputIndex] = useState(0);
     const [activeColor, setActiveColor] = useState<number | null>(null);
     const timeLeft = useCountdown(15, onClose);
 
+    // Initial delay before showing sequence
+    useEffect(() => {
+        if (phase === "show" && showIndex === -1) {
+            const timer = setTimeout(() => setShowIndex(0), 500);
+            return () => clearTimeout(timer);
+        }
+    }, [phase, showIndex]);
+
     // Show sequence phase
     useEffect(() => {
-        if (phase !== "show") return;
+        if (phase !== "show" || showIndex < 0) return;
 
         if (showIndex >= sequence.length) {
             setPhase("input");
@@ -305,10 +313,11 @@ export function ColorSequenceGame({ onComplete, onClose }: MiniGameProps) {
                 setInputIndex(i => i + 1);
             }
         } else {
-            // Wrong color, reset
+            // Wrong color, reset with delay
             setInputIndex(0);
+            setActiveColor(null);
+            setShowIndex(-1); // Reset to -1 for initial delay
             setPhase("show");
-            setShowIndex(0);
         }
     };
 
@@ -316,7 +325,7 @@ export function ColorSequenceGame({ onComplete, onClose }: MiniGameProps) {
         <GameContainer title="颜色序列" timeLeft={timeLeft} onClose={onClose}>
             <div className="text-center mb-4">
                 <p className="text-white/50 text-sm">
-                    {phase === "show" ? "记住颜色顺序..." : `点击颜色 (${inputIndex + 1}/${sequence.length})`}
+                    {phase === "show" ? "记住颜色顺序..." : `点击颜色 (${inputIndex}/${sequence.length})`}
                 </p>
             </div>
             <div className="grid grid-cols-2 gap-3">
