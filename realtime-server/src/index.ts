@@ -43,6 +43,8 @@ import {
   joinSharedTask as jokerJoinSharedTask,
   resolveSharedTask as jokerResolveSharedTask,
   submitSharedTaskChoice as jokerSubmitSharedTaskChoice,
+  joinGoldenRabbitTask as jokerJoinGoldenRabbitTask,
+  submitGoldenRabbitChoice as jokerSubmitGoldenRabbitChoice,
 } from "./game-joker/engine.js";
 import type { JokerPlayerState, JokerSnapshot } from "./game-joker/types.js";
 import { checkAndScheduleActions as jokerScheduleActions, clearRoomTimeouts as jokerClearTimeouts, checkAllVoted } from "./game-joker/scheduler.js";
@@ -1059,6 +1061,23 @@ io.on("connection", (socket: Socket) => {
 
           case "joker:shared_task_submit":
             res = jokerSubmitSharedTaskChoice(jokerSnapshot, socket.data.sessionId, data?.index);
+            shouldBroadcast = true;
+            if (res.ok) {
+              const winResult = jokerCheckWin(jokerSnapshot);
+              if (winResult) {
+                jokerFinalizeGame(jokerSnapshot, winResult);
+                jokerClearTimeouts(roomCode);
+              }
+            }
+            break;
+
+          case "joker:golden_rabbit_join":
+            res = jokerJoinGoldenRabbitTask(jokerSnapshot, socket.data.sessionId);
+            shouldBroadcast = true;
+            break;
+
+          case "joker:golden_rabbit_submit":
+            res = jokerSubmitGoldenRabbitChoice(jokerSnapshot, socket.data.sessionId, data?.index);
             shouldBroadcast = true;
             if (res.ok) {
               const winResult = jokerCheckWin(jokerSnapshot);

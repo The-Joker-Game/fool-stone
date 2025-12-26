@@ -1,6 +1,6 @@
 // src/joker/types.ts
 
-export type JokerRole = "duck" | "goose";
+export type JokerRole = "duck" | "goose" | "dodo" | "hawk";
 
 export type JokerPhase =
     | "lobby"
@@ -35,6 +35,11 @@ export interface JokerPlayerState {
     oxygen: number;
     oxygenUpdatedAt: number;
     duckEmergencyUsed: boolean;
+    hawkEmergencyUsed: boolean;
+    oxygenLeakActive: boolean;
+    oxygenLeakStartedAt?: number;
+    oxygenLeakResolvedAt?: number;
+    oxygenLeakRound?: number;
 
     hasVoted: boolean;
     voteTarget: string | null;
@@ -75,6 +80,7 @@ export interface JokerRoundState {
     phaseStartAt: number;
     redLightHalf: "first" | "second";
     oxygenGivenThisRound: Record<string, Record<string, boolean>>;
+    goldenRabbitTriggeredLocations: JokerLocation[];
 }
 
 export type JokerTaskKind = "personal" | "shared" | "emergency";
@@ -110,18 +116,23 @@ export interface JokerEmergencyTaskState {
     status: JokerTaskStatus;
     participants: string[];
     startedAt?: number;
+    joinDeadlineAt?: number;
     deadlineAt?: number;
+    rabbitIndex?: number;
+    xBySession?: Record<string, number[]>;
+    selections?: Record<string, number>;
     result?: "success" | "fail";
+    resolvedAt?: number;
 }
 
 export interface JokerTaskSystemState {
     sharedByLocation?: Record<JokerLocation, JokerSharedTaskState>;
-    emergency?: JokerEmergencyTaskState;
+    emergencyByLocation?: Record<JokerLocation, JokerEmergencyTaskState>;
     lastEmergencyAt?: number;
 }
 
 export interface JokerGameResult {
-    winner: "duck" | "goose";
+    winner: "duck" | "goose" | "dodo" | "hawk";
     reason: string;
 }
 

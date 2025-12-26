@@ -7,6 +7,7 @@ import type {
     JokerLocation,
     JokerPhase,
     JokerSnapshot,
+    JokerRole,
 } from "./joker/types";
 import { useJokerStore } from "./joker/store";
 import type { JokerStore } from "./joker/store";
@@ -71,6 +72,59 @@ const PHASE_LABELS: Record<JokerPhase, string> = {
     voting: "投票",
     execution: "处决",
     game_over: "游戏结束",
+};
+
+const ROLE_LABELS: Record<JokerRole, string> = {
+    duck: "鸭子",
+    goose: "鹅",
+    dodo: "呆呆鸟",
+    hawk: "猎鹰",
+};
+
+const ROLE_REVEAL_STYLES: Record<JokerRole, { ring: string; text: string; emoji: string; desc: string }> = {
+    duck: {
+        ring: "bg-orange-500/20 border-orange-500/50 shadow-orange-500/30",
+        text: "text-orange-400",
+        emoji: "🦆",
+        desc: "你的目标是消灭鹅，不要被发现！",
+    },
+    goose: {
+        ring: "bg-white/20 border-white/50 shadow-white/30",
+        text: "text-white",
+        emoji: "🪿",
+        desc: "你的目标是找出鸭子并投票淘汰他们！",
+    },
+    dodo: {
+        ring: "bg-amber-500/20 border-amber-400/50 shadow-amber-500/30",
+        text: "text-amber-200",
+        emoji: "🦤",
+        desc: "你的目标是在会议投票中被投出去！",
+    },
+    hawk: {
+        ring: "bg-sky-500/20 border-sky-400/50 shadow-sky-500/30",
+        text: "text-sky-200",
+        emoji: "🦅",
+        desc: "你可以击杀任何玩家，活到最后获胜！",
+    },
+};
+
+const ROLE_CARD_STYLES: Record<JokerRole, { card: string; badge: string }> = {
+    duck: {
+        card: "bg-orange-500/10 border-orange-500/20",
+        badge: "text-orange-300 border-orange-500/30",
+    },
+    goose: {
+        card: "bg-blue-500/10 border-blue-500/20",
+        badge: "text-blue-300 border-blue-500/30",
+    },
+    dodo: {
+        card: "bg-amber-500/10 border-amber-500/20",
+        badge: "text-amber-200 border-amber-400/30",
+    },
+    hawk: {
+        card: "bg-sky-500/10 border-sky-500/20",
+        badge: "text-sky-200 border-sky-400/30",
+    },
 };
 
 // Location icons mapping
@@ -269,6 +323,11 @@ export default function JokerRoom() {
     const [lifeCodeInput, setLifeCodeInput] = useState("");
     const [cooldownSeconds, setCooldownSeconds] = useState(0);
     const actionCooldown = cooldownSeconds > 0;
+    const [taskCooldownSeconds, setTaskCooldownSeconds] = useState(0);
+    const taskCooldown = taskCooldownSeconds > 0;
+    const [taskResultFlash, setTaskResultFlash] = useState<null | { result: "success" | "fail"; until: number }>(null);
+    const [goldenRabbitResultFlash, setGoldenRabbitResultFlash] = useState<null | { result: "success" | "fail"; until: number; rabbitIndex?: number }>(null);
+    const [oxygenLeakFlash, setOxygenLeakFlash] = useState<null | { message: string; until: number }>(null);
 
     // Mini-game state
     const [showMiniGame, setShowMiniGame] = useState(false);
@@ -295,19 +354,28 @@ export default function JokerRoom() {
         () => jokerPlayers.find(p => p.sessionId === getSessionId()) ?? null,
         [jokerPlayers]
     );
+    const myRole = (me?.role ?? "goose") as JokerRole;
     const myAlive = me?.isAlive ?? false;
     const isPaused = jokerSnapshot?.paused ?? false;
     const isInteractionDisabled = isPaused;
     const sharedTask = me?.location ? jokerSnapshot?.tasks?.sharedByLocation?.[me.location] : undefined;
     const mySessionId = getSessionId();
+    const goldenRabbitTask = me?.location ? jokerSnapshot?.tasks?.emergencyByLocation?.[me.location] : undefined;
     const isSharedParticipant = !!sharedTask?.participants?.includes(mySessionId);
     const mySharedSelection = sharedTask?.selections?.[mySessionId];
     const mySharedGrid = sharedTask?.gridBySession?.[mySessionId] ?? [];
     const myDigitSegments = sharedTask?.digitSegmentsBySession?.[mySessionId] ?? [];
     const myDigitSelection = sharedTask?.digitSelections?.[mySessionId];
+    const isGoldenRabbitParticipant = !!goldenRabbitTask?.participants?.includes(mySessionId);
+    const myGoldenRabbitSelection = goldenRabbitTask?.selections?.[mySessionId];
+    const myGoldenRabbitX = goldenRabbitTask?.xBySession?.[mySessionId] ?? [];
     const [sharedTimeLeft, setSharedTimeLeft] = useState(0);
+    const [goldenRabbitJoinLeft, setGoldenRabbitJoinLeft] = useState(0);
     const [sharedResultFlash, setSharedResultFlash] = useState<null | { result: "success" | "fail"; until: number }>(null);
     const lastSharedResolvedAtRef = useRef<number | null>(null);
+    const lastGoldenRabbitResolvedAtRef = useRef<number | null>(null);
+    const lastOxygenLeakStartedAtRef = useRef<number | null>(null);
+    const lastOxygenLeakResolvedAtRef = useRef<number | null>(null);
     const sameLocationCount = useMemo(() => {
         if (!me?.location) return 0;
         return jokerPlayers.filter(p => p.isAlive && p.location === me.location).length;
@@ -338,6 +406,35 @@ export default function JokerRoom() {
         }, 1000);
         return () => clearInterval(interval);
     }, [cooldownSeconds]);
+
+    useEffect(() => {
+        if (taskCooldownSeconds <= 0) return;
+        const interval = setInterval(() => {
+            setTaskCooldownSeconds(prev => Math.max(0, prev - 1));
+        }, 1000);
+        return () => clearInterval(interval);
+    }, [taskCooldownSeconds]);
+
+    useEffect(() => {
+        if (!taskResultFlash) return;
+        const delay = Math.max(0, taskResultFlash.until - Date.now());
+        const timer = setTimeout(() => setTaskResultFlash(null), delay);
+        return () => clearTimeout(timer);
+    }, [taskResultFlash?.until]);
+
+    useEffect(() => {
+        if (!goldenRabbitResultFlash) return;
+        const delay = Math.max(0, goldenRabbitResultFlash.until - Date.now());
+        const timer = setTimeout(() => setGoldenRabbitResultFlash(null), delay);
+        return () => clearTimeout(timer);
+    }, [goldenRabbitResultFlash?.until]);
+
+    useEffect(() => {
+        if (!oxygenLeakFlash) return;
+        const delay = Math.max(0, oxygenLeakFlash.until - Date.now());
+        const timer = setTimeout(() => setOxygenLeakFlash(null), delay);
+        return () => clearTimeout(timer);
+    }, [oxygenLeakFlash?.until]);
 
     useEffect(() => {
         if (jokerSnapshot?.paused && typeof jokerSnapshot?.pauseRemainingMs === "number") {
@@ -401,14 +498,15 @@ export default function JokerRoom() {
             return;
         }
 
+        const drainRate = me?.oxygenLeakActive ? 3 : 1;
         const interval = setInterval(() => {
             const elapsed = Math.floor((Date.now() - lastServerOxygenTimeRef.current) / 1000);
-            const interpolatedOxygen = Math.max(0, lastServerOxygenRef.current - elapsed);
+            const interpolatedOxygen = Math.max(0, lastServerOxygenRef.current - elapsed * drainRate);
             setDisplayOxygen(interpolatedOxygen);
         }, 1000);
 
         return () => clearInterval(interval);
-    }, [phase, myAlive, me?.oxygen, isPaused]);
+    }, [phase, myAlive, me?.oxygen, me?.oxygenLeakActive, isPaused]);
 
     // Watermark randomization with responsive grid
     const WATERMARK_ROWS = 3;
@@ -688,16 +786,16 @@ export default function JokerRoom() {
 
     // Task handlers
     const handleStartTask = useCallback(async () => {
-        if (!roomCode || isInteractionDisabled) return;
+        if (!roomCode || isInteractionDisabled || taskCooldown) return;
         const result = await rt.emitAck("intent", { room: roomCode, action: "joker:start_task" });
         if ((result as any)?.ok) {
             setCurrentGameType(getRandomGame());
             setShowMiniGame(true);
         }
-    }, [roomCode, isInteractionDisabled]);
+    }, [roomCode, isInteractionDisabled, taskCooldown]);
 
     const handleJoinSharedTask = useCallback(async () => {
-        if (!roomCode || isInteractionDisabled) return;
+        if (!roomCode || isInteractionDisabled || taskCooldown) return;
         const types: Array<"nine_grid" | "digit_puzzle"> = ["nine_grid", "digit_puzzle"];
         const type = types[Math.floor(Math.random() * types.length)];
         const resp = await rt.emitAck("intent", {
@@ -721,13 +819,30 @@ export default function JokerRoom() {
                                     : "无法发起共同任务";
             await alert(msg);
         }
-    }, [roomCode, isInteractionDisabled]);
+    }, [roomCode, isInteractionDisabled, taskCooldown]);
 
     const handleSharedTaskSubmit = useCallback(async (index: number) => {
         if (!roomCode || isInteractionDisabled) return;
         await rt.emitAck("intent", {
             room: roomCode,
             action: "joker:shared_task_submit",
+            data: { index },
+        });
+    }, [roomCode, isInteractionDisabled]);
+
+    const handleJoinGoldenRabbit = useCallback(async () => {
+        if (!roomCode || isInteractionDisabled) return;
+        await rt.emitAck("intent", {
+            room: roomCode,
+            action: "joker:golden_rabbit_join",
+        });
+    }, [roomCode, isInteractionDisabled]);
+
+    const handleGoldenRabbitSubmit = useCallback(async (index: number) => {
+        if (!roomCode || isInteractionDisabled) return;
+        await rt.emitAck("intent", {
+            room: roomCode,
+            action: "joker:golden_rabbit_submit",
             data: { index },
         });
     }, [roomCode, isInteractionDisabled]);
@@ -747,11 +862,61 @@ export default function JokerRoom() {
     }, [sharedTask?.deadlineAt, sharedTask?.status]);
 
     useEffect(() => {
+        if (!goldenRabbitTask?.joinDeadlineAt || goldenRabbitTask.status !== "waiting") {
+            setGoldenRabbitJoinLeft(0);
+            return;
+        }
+        const tick = () => {
+            const remaining = Math.max(0, Math.ceil((goldenRabbitTask.joinDeadlineAt! - Date.now()) / 1000));
+            setGoldenRabbitJoinLeft(remaining);
+        };
+        tick();
+        const interval = setInterval(tick, 200);
+        return () => clearInterval(interval);
+    }, [goldenRabbitTask?.joinDeadlineAt, goldenRabbitTask?.status]);
+
+    useEffect(() => {
         if (sharedTask?.status !== "resolved" || !sharedTask.result || !sharedTask.resolvedAt) return;
         if (lastSharedResolvedAtRef.current === sharedTask.resolvedAt) return;
         lastSharedResolvedAtRef.current = sharedTask.resolvedAt;
         setSharedResultFlash({ result: sharedTask.result, until: Date.now() + 2000 });
-    }, [sharedTask?.status, sharedTask?.result, sharedTask?.resolvedAt]);
+        if (isSharedParticipant) {
+            setTaskCooldownSeconds(10);
+        }
+    }, [sharedTask?.status, sharedTask?.result, sharedTask?.resolvedAt, isSharedParticipant]);
+
+    useEffect(() => {
+        if (goldenRabbitTask?.status !== "resolved" || !goldenRabbitTask.result || !goldenRabbitTask.resolvedAt) return;
+        if (lastGoldenRabbitResolvedAtRef.current === goldenRabbitTask.resolvedAt) return;
+        lastGoldenRabbitResolvedAtRef.current = goldenRabbitTask.resolvedAt;
+        if (isGoldenRabbitParticipant) {
+            setGoldenRabbitResultFlash({
+                result: goldenRabbitTask.result,
+                until: Date.now() + 2000,
+                rabbitIndex: goldenRabbitTask.rabbitIndex,
+            });
+        }
+    }, [goldenRabbitTask?.status, goldenRabbitTask?.result, goldenRabbitTask?.resolvedAt, isGoldenRabbitParticipant]);
+
+    useEffect(() => {
+        if (!me?.oxygenLeakActive || !me.oxygenLeakStartedAt) return;
+        if (lastOxygenLeakStartedAtRef.current === me.oxygenLeakStartedAt) return;
+        lastOxygenLeakStartedAtRef.current = me.oxygenLeakStartedAt;
+        setOxygenLeakFlash({
+            message: "氧气瓶泄漏！立刻找身边玩家进行补氧，协助维修！",
+            until: Date.now() + 2500,
+        });
+    }, [me?.oxygenLeakActive, me?.oxygenLeakStartedAt]);
+
+    useEffect(() => {
+        if (!me?.oxygenLeakResolvedAt) return;
+        if (lastOxygenLeakResolvedAtRef.current === me.oxygenLeakResolvedAt) return;
+        lastOxygenLeakResolvedAtRef.current = me.oxygenLeakResolvedAt;
+        setOxygenLeakFlash({
+            message: "氧气瓶修复完毕！",
+            until: Date.now() + 2000,
+        });
+    }, [me?.oxygenLeakResolvedAt]);
 
     useEffect(() => {
         if (!sharedResultFlash) return;
@@ -765,11 +930,15 @@ export default function JokerRoom() {
         setShowMiniGame(false);
         setCurrentGameType(null);
         await rt.emitAck("intent", { room: roomCode, action: "joker:complete_task" });
+        setTaskResultFlash({ result: "success", until: Date.now() + 2000 });
+        setTaskCooldownSeconds(10);
     }, [roomCode]);
 
     const handleCloseTask = useCallback(() => {
         setShowMiniGame(false);
         setCurrentGameType(null);
+        setTaskResultFlash({ result: "fail", until: Date.now() + 2000 });
+        setTaskCooldownSeconds(10);
     }, []);
 
     // Render: No room
@@ -987,6 +1156,51 @@ export default function JokerRoom() {
                         : "bg-red-500/20 text-red-200 border-red-500/30"
                         }`}>
                         共同任务{sharedResultFlash.result === "success" ? "成功" : "失败"}
+                    </div>
+                </div>
+            )}
+            {goldenRabbitResultFlash && (
+                <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
+                    <div className={`px-6 py-4 rounded-2xl border text-lg font-semibold ${goldenRabbitResultFlash.result === "success"
+                        ? "bg-amber-400/20 text-amber-100 border-amber-400/40"
+                        : "bg-red-500/20 text-red-200 border-red-500/30"
+                        }`}>
+                        <div className="text-center">
+                            捕兔{goldenRabbitResultFlash.result === "success" ? "成功" : "失败"}
+                        </div>
+                        {goldenRabbitResultFlash.rabbitIndex !== undefined && (
+                            <div className="mt-3 grid grid-cols-3 gap-1">
+                                {Array.from({ length: 9 }, (_, idx) => {
+                                    const isRabbit = idx === goldenRabbitResultFlash.rabbitIndex;
+                                    return (
+                                        <div
+                                            key={idx}
+                                            className={`w-7 h-7 rounded-md border ${isRabbit
+                                                ? "bg-amber-300/80 border-amber-200"
+                                                : "bg-white/5 border-white/20"
+                                                }`}
+                                        />
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+            {oxygenLeakFlash && (
+                <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
+                    <div className="px-6 py-3 rounded-full border text-lg font-semibold bg-red-500/20 text-red-100 border-red-500/30">
+                        {oxygenLeakFlash.message}
+                    </div>
+                </div>
+            )}
+            {taskResultFlash && (
+                <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
+                    <div className={`px-6 py-3 rounded-full border text-lg font-semibold ${taskResultFlash.result === "success"
+                        ? "bg-emerald-500/20 text-emerald-200 border-emerald-500/30"
+                        : "bg-red-500/20 text-red-200 border-red-500/30"
+                        }`}>
+                        个人任务{taskResultFlash.result === "success" ? "成功" : "失败"}
                     </div>
                 </div>
             )}
@@ -1229,26 +1443,21 @@ export default function JokerRoom() {
                                     animate="visible"
                                     className="flex flex-col items-center justify-center py-10 space-y-8"
                                 >
-                                    <div className={`w-32 h-32 rounded-full flex items-center justify-center border-4 shadow-2xl ${me.role === "duck"
-                                        ? "bg-orange-500/20 border-orange-500/50 shadow-orange-500/30"
-                                        : "bg-white/20 border-white/50 shadow-white/30"
-                                        }`}>
+                                    <div className={`w-32 h-32 rounded-full flex items-center justify-center border-4 shadow-2xl ${ROLE_REVEAL_STYLES[myRole].ring}`}>
                                         <span className="text-6xl">
-                                            {me.role === "duck" ? "🦆" : "🪿"}
+                                            {ROLE_REVEAL_STYLES[myRole].emoji}
                                         </span>
                                     </div>
                                     <div className="text-center space-y-3">
                                         <h2 className="text-4xl font-black tracking-tight">
-                                            你是 <span className={me.role === "duck" ? "text-orange-400" : "text-white"}>
-                                                {me.role === "duck" ? "鸭子" : "鹅"}
+                                            你是 <span className={ROLE_REVEAL_STYLES[myRole].text}>
+                                                {ROLE_LABELS[myRole]}
                                             </span>
                                         </h2>
                                         <p className="text-white/60 text-lg max-w-xs mx-auto">
-                                            {me.role === "duck"
-                                                ? "你的目标是消灭鹅，不要被发现！"
-                                                : "你的目标是找出鸭子并投票淘汰他们！"}
+                                            {ROLE_REVEAL_STYLES[myRole].desc}
                                         </p>
-                                        {me.role === "duck" && (
+                                        {myRole === "duck" && (
                                             <div className="pt-3 space-y-2">
                                                 <p className="text-xs uppercase tracking-widest text-orange-200/70">你的同伴</p>
                                                 <div className="flex flex-wrap items-center justify-center gap-2">
@@ -1381,6 +1590,85 @@ export default function JokerRoom() {
                                                 </motion.div>
                                             )}
 
+                                            {/* Emergency Tasks */}
+                                            {(me?.oxygenLeakActive || (goldenRabbitTask && goldenRabbitTask.status !== "resolved")) && (
+                                                <div className="space-y-3 pt-2 border-t border-white/10">
+                                                    <div className="flex items-center gap-2 text-xs text-white/50 uppercase tracking-widest">
+                                                        <Siren className="w-3 h-3" />
+                                                        突发任务
+                                                    </div>
+                                                    {me?.oxygenLeakActive && (
+                                                        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
+                                                            <div className="font-semibold">氧气瓶泄漏！立刻找身边玩家进行补氧，协助维修！</div>
+                                                            <div className="mt-1 text-xs text-red-200/70">耗氧速度提升至每秒-3</div>
+                                                        </div>
+                                                    )}
+                                                    {goldenRabbitTask && me?.location === goldenRabbitTask.location && goldenRabbitTask.status !== "resolved" && (
+                                                        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-100 space-y-2">
+                                                            {goldenRabbitTask.status === "waiting" && (
+                                                                <>
+                                                                    <div className="font-semibold">黄金兔子出没！立刻组队围捕！</div>
+                                                                    <div className="space-y-2">
+                                                                        <Button
+                                                                            onClick={handleJoinGoldenRabbit}
+                                                                            disabled={isInteractionDisabled || isGoldenRabbitParticipant || goldenRabbitJoinLeft <= 0}
+                                                                            className="w-full h-10 rounded-lg bg-amber-500/80 hover:bg-amber-500 text-sm font-bold text-black disabled:opacity-50"
+                                                                        >
+                                                                            {isGoldenRabbitParticipant ? "已加入捕兔队" : "加入捕兔队"}
+                                                                        </Button>
+                                                                        <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                                                                            <div
+                                                                                className="h-full bg-amber-400"
+                                                                                style={{
+                                                                                    width: `${Math.min(100, (goldenRabbitJoinLeft / 8) * 100)}%`,
+                                                                                }}
+                                                                            />
+                                                                        </div>
+                                                                        <div className="text-xs text-white/70">倒计时 {goldenRabbitJoinLeft}s</div>
+                                                                    </div>
+                                                                </>
+                                                            )}
+                                                            {goldenRabbitTask.status === "active" && (
+                                                                <>
+                                                                    {isGoldenRabbitParticipant ? (
+                                                                        <div className="space-y-2">
+                                                                            <div className="text-xs text-white/70">九宫格围捕：排除 X 后选择一格</div>
+                                                                            <div className="grid grid-cols-3 gap-2">
+                                                                                {Array.from({ length: 9 }, (_, idx) => {
+                                                                                    const blocked = myGoldenRabbitX.includes(idx);
+                                                                                    const selected = myGoldenRabbitSelection === idx;
+                                                                                    const disabled = blocked || myGoldenRabbitSelection !== undefined || isInteractionDisabled;
+                                                                                    return (
+                                                                                        <Button
+                                                                                            key={idx}
+                                                                                            onClick={() => handleGoldenRabbitSubmit(idx)}
+                                                                                            disabled={disabled}
+                                                                                            className={`h-12 text-lg font-bold ${blocked
+                                                                                                ? "bg-white/5 text-red-300/80"
+                                                                                                : selected
+                                                                                                    ? "bg-emerald-500/70 hover:bg-emerald-500/70 text-white"
+                                                                                                    : "bg-white/10 hover:bg-white/20 text-white"
+                                                                                                }`}
+                                                                                        >
+                                                                                            {blocked ? "X" : ""}
+                                                                                        </Button>
+                                                                                    );
+                                                                                })}
+                                                                            </div>
+                                                                            {myGoldenRabbitSelection !== undefined && (
+                                                                                <div className="text-xs text-white/70">已选择，等待其他玩家</div>
+                                                                            )}
+                                                                        </div>
+                                                                    ) : (
+                                                                        <div className="text-xs text-white/70">捕兔队进行中...</div>
+                                                                    )}
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+
                                             {/* Task Progress & Button */}
                                             <div className="space-y-3 pt-2 border-t border-white/10">
                                                 <div className="space-y-2">
@@ -1403,7 +1691,7 @@ export default function JokerRoom() {
                                                 <div className="grid grid-cols-2 gap-3">
                                                     <Button
                                                         onClick={handleStartTask}
-                                                        disabled={showMiniGame || isInteractionDisabled}
+                                                        disabled={showMiniGame || isInteractionDisabled || taskCooldown}
                                                         className="h-14 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-sm font-bold flex flex-col gap-1"
                                                     >
                                                         <div className="flex items-center gap-2">
@@ -1414,7 +1702,7 @@ export default function JokerRoom() {
                                                     </Button>
                                                     <Button
                                                         onClick={handleJoinSharedTask}
-                                                        disabled={isInteractionDisabled || !myAlive || !me?.location || sameLocationCount < 2}
+                                                        disabled={isInteractionDisabled || !myAlive || !me?.location || sameLocationCount < 2 || taskCooldown}
                                                         className="h-14 rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-700 to-amber-600 hover:from-amber-600 hover:to-amber-500 text-sm font-bold flex flex-col gap-1 text-white"
                                                     >
                                                         <div className="flex items-center gap-2">
@@ -1424,6 +1712,11 @@ export default function JokerRoom() {
                                                         <span className="text-[11px] text-white/80">+2%进度</span>
                                                     </Button>
                                                 </div>
+                                                {taskCooldown && (
+                                                    <div className="text-center text-xs text-amber-200/80">
+                                                        任务冷却中 {taskCooldownSeconds}s
+                                                    </div>
+                                                )}
                                                 {sharedTask && isSharedParticipant && (
                                                     <div className="mt-2 rounded-lg border border-white/10 bg-white/5 p-3 text-center text-sm text-white/70">
                                                         {sharedTask.status === "waiting" && (
@@ -1669,7 +1962,9 @@ export default function JokerRoom() {
                                                     {jokerPlayers.find(p => p.sessionId === jokerSnapshot.execution?.executedSessionId)?.name}
                                                 </h3>
                                                 <p className="text-red-400 font-mono uppercase tracking-widest text-lg">
-                                                    身份是 {jokerSnapshot.execution.executedRole === "duck" ? "鸭子" : "鹅"}
+                                                    身份是 {jokerSnapshot.execution.executedRole
+                                                        ? ROLE_LABELS[jokerSnapshot.execution.executedRole]
+                                                        : "未知"}
                                                 </p>
                                             </div>
                                         </div>
@@ -1738,7 +2033,7 @@ export default function JokerRoom() {
                                             transition={{ type: "spring", bounce: 0.5 }}
                                         >
                                             <h1 className="text-6xl font-black uppercase italic tracking-tighter text-transparent bg-clip-text bg-gradient-to-b from-yellow-300 to-yellow-600 drop-shadow-[0_4px_0_rgba(0,0,0,0.5)]">
-                                                {jokerSnapshot.gameResult.winner === "duck" ? "鸭子获胜！" : "鹅获胜！"}
+                                                {ROLE_LABELS[jokerSnapshot.gameResult.winner]}获胜！
                                             </h1>
                                         </motion.div>
                                         <p className="text-white/60 text-lg">{jokerSnapshot.gameResult.reason}</p>
@@ -1757,18 +2052,15 @@ export default function JokerRoom() {
                                                             initial={{ opacity: 0, x: -10 }}
                                                             animate={{ opacity: 1, x: 0 }}
                                                             transition={{ delay: i * 0.1 }}
-                                                            className={`flex justify-between items-center p-3 rounded-lg border ${p.role === "duck"
-                                                                ? "bg-orange-500/10 border-orange-500/20"
-                                                                : "bg-blue-500/10 border-blue-500/20"
-                                                                }`}
+                                                            className={`flex justify-between items-center p-3 rounded-lg border ${ROLE_CARD_STYLES[p.role ?? "goose"].card}`}
                                                         >
                                                             <div className="flex items-center gap-3">
                                                                 <Avvvatars value={String(p.seat)} size={32} />
                                                                 <span className="font-medium text-white">{p.name}</span>
                                                             </div>
                                                             <div className="flex items-center gap-2">
-                                                                <Badge variant="outline" className={p.role === "duck" ? "text-orange-300 border-orange-500/30" : "text-blue-300 border-blue-500/30"}>
-                                                                    {p.role === "duck" ? "鸭子" : "鹅"}
+                                                                <Badge variant="outline" className={ROLE_CARD_STYLES[p.role ?? "goose"].badge}>
+                                                                    {ROLE_LABELS[p.role ?? "goose"]}
                                                                 </Badge>
                                                                 <Badge className={p.isAlive ? "bg-emerald-500/20 text-emerald-200 border-emerald-500/30 hover:bg-emerald-500/30" : "bg-red-500/20 text-red-200 border-red-500/30 hover:bg-red-500/30"}>
                                                                     {p.isAlive ? "存活" : "死亡"}

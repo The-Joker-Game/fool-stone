@@ -11,6 +11,7 @@ import type {
     JokerGameResult,
     JokerSharedTaskType,
     JokerSharedTaskState,
+    JokerEmergencyTaskState,
     JokerTaskSystemState,
     SelectLocationPayload,
     SubmitLifeCodeActionPayload,
@@ -19,9 +20,14 @@ import type {
 } from "./types.js";
 
 const MAX_SEATS = 16;
-const INITIAL_OXYGEN = 240;
-const OXYGEN_REFILL = 80;
-const DUCK_EMERGENCY_OXYGEN = 160;
+const INITIAL_OXYGEN = 270;
+const OXYGEN_REFILL = 90;
+const DUCK_EMERGENCY_OXYGEN = 180;
+const HAWK_EMERGENCY_OXYGEN = 180;
+const OXYGEN_DRAIN_NORMAL = 1;
+const OXYGEN_DRAIN_LEAK = 3;
+const GOLDEN_RABBIT_PROGRESS_REWARD = 8;
+export const GOLDEN_RABBIT_JOIN_MS = 8_000;
 
 // Phase durations in milliseconds
 export const PHASE_DURATIONS = {
@@ -62,6 +68,11 @@ function createEmptyPlayer(seat: number): JokerPlayerState {
         oxygen: INITIAL_OXYGEN,
         oxygenUpdatedAt: Date.now(),
         duckEmergencyUsed: false,
+        hawkEmergencyUsed: false,
+        oxygenLeakActive: false,
+        oxygenLeakStartedAt: undefined,
+        oxygenLeakResolvedAt: undefined,
+        oxygenLeakRound: undefined,
         hasVoted: false,
         voteTarget: null,
     };
@@ -81,6 +92,7 @@ function createEmptyRoundState(): JokerRoundState {
         phaseStartAt: Date.now(),
         redLightHalf: "first",
         oxygenGivenThisRound: {},
+        goldenRabbitTriggeredLocations: [],
     };
 }
 
@@ -127,6 +139,21 @@ export function initJokerRoom(roomCode: string, players: InitPlayer[]): JokerSna
 
 // ============ Role Assignment ============
 
+const ROLE_COUNTS_BY_PLAYERS: Record<number, { goose: number; duck: number; dodo: number; hawk: number }> = {
+    5: { goose: 4, duck: 1, dodo: 0, hawk: 0 },
+    6: { goose: 4, duck: 1, dodo: 1, hawk: 0 },
+    7: { goose: 4, duck: 2, dodo: 1, hawk: 0 },
+    8: { goose: 4, duck: 2, dodo: 1, hawk: 1 },
+    9: { goose: 5, duck: 2, dodo: 1, hawk: 1 },
+    10: { goose: 6, duck: 2, dodo: 1, hawk: 1 },
+    11: { goose: 7, duck: 2, dodo: 1, hawk: 1 },
+    12: { goose: 8, duck: 3, dodo: 1, hawk: 1 },
+    13: { goose: 9, duck: 3, dodo: 1, hawk: 1 },
+    14: { goose: 10, duck: 3, dodo: 1, hawk: 1 },
+    15: { goose: 11, duck: 4, dodo: 1, hawk: 1 },
+    16: { goose: 12, duck: 4, dodo: 1, hawk: 1 },
+};
+
 export function assignJokerRoles(snapshot: JokerSnapshot): ActionResult {
     const alivePlayers = snapshot.players.filter(p => p.sessionId);
     const playerCount = alivePlayers.length;
@@ -135,21 +162,33 @@ export function assignJokerRoles(snapshot: JokerSnapshot): ActionResult {
         return { ok: false, error: "Need at least 5 players to start" };
     }
 
-    // Duck count = floor(players / 3)
-    const duckCount = Math.floor(playerCount / 3);
-    const gooseCount = playerCount - duckCount;
+    const roleConfig = ROLE_COUNTS_BY_PLAYERS[playerCount];
+    if (!roleConfig) {
+        return { ok: false, error: "Unsupported player count" };
+    }
 
-    // Shuffle and assign roles
-    const shuffled = [...alivePlayers].sort(() => Math.random() - 0.5);
+    const roles: JokerRole[] = [
+        ...Array(roleConfig.duck).fill("duck"),
+        ...Array(roleConfig.goose).fill("goose"),
+        ...Array(roleConfig.hawk).fill("hawk"),
+        ...Array(roleConfig.dodo).fill("dodo"),
+    ];
+    if (roles.length !== playerCount) {
+        return { ok: false, error: "Role count mismatch" };
+    }
 
-    for (let i = 0; i < shuffled.length; i++) {
-        const player = snapshot.players.find(p => p.seat === shuffled[i].seat);
+    const shuffledPlayers = [...alivePlayers].sort(() => Math.random() - 0.5);
+    const shuffledRoles = shuffleArray(roles);
+
+    for (let i = 0; i < shuffledPlayers.length; i++) {
+        const player = snapshot.players.find(p => p.seat === shuffledPlayers[i].seat);
         if (player) {
-            player.role = i < duckCount ? "duck" : "goose";
+            player.role = shuffledRoles[i] ?? "goose";
             player.isAlive = true;
             player.oxygen = INITIAL_OXYGEN;
             player.oxygenUpdatedAt = Date.now();
             player.duckEmergencyUsed = false;
+            player.hawkEmergencyUsed = false;
         }
     }
 
@@ -386,8 +425,8 @@ function handleKillAction(
     actor: JokerPlayerState,
     target: JokerPlayerState
 ): ActionResult {
-    // Goose trying to kill = foul
-    if (actor.role === "goose") {
+    // Goose or dodo trying to kill = foul
+    if (actor.role === "goose" || actor.role === "dodo") {
         actor.isAlive = false;
 
         snapshot.logs.push({
@@ -404,7 +443,7 @@ function handleKillAction(
         };
     }
 
-    // Duck kills target (no location check, no same-round check per rules)
+    // Duck or hawk kills target (no location check, no same-round check per rules)
     target.isAlive = false;
 
     snapshot.logs.push({
@@ -451,6 +490,10 @@ function handleOxygenAction(
         snapshot.round.oxygenGivenThisRound[actorSessionId] = {};
     }
     snapshot.round.oxygenGivenThisRound[actorSessionId][targetSessionId] = true;
+    if (target.oxygenLeakActive) {
+        target.oxygenLeakActive = false;
+        target.oxygenLeakResolvedAt = Date.now();
+    }
 
     snapshot.logs.push({
         at: Date.now(),
@@ -469,7 +512,8 @@ export function tickOxygen(snapshot: JokerSnapshot): void {
     const now = Date.now();
     for (const player of snapshot.players) {
         if (player.isAlive && player.sessionId) {
-            player.oxygen -= 1;
+            const drain = player.oxygenLeakActive ? OXYGEN_DRAIN_LEAK : OXYGEN_DRAIN_NORMAL;
+            player.oxygen = Math.max(0, player.oxygen - drain);
             player.oxygenUpdatedAt = now;
         }
     }
@@ -494,9 +538,21 @@ export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
                     text: `Player ${player.name} used emergency oxygen`,
                     type: "oxygen",
                 });
+            } else if (player.role === "hawk" && !player.hawkEmergencyUsed) {
+                // Hawk gets emergency oxygen (one-time)
+                player.oxygen = HAWK_EMERGENCY_OXYGEN;
+                player.oxygenUpdatedAt = Date.now();
+                player.hawkEmergencyUsed = true;
+
+                snapshot.logs.push({
+                    at: Date.now(),
+                    text: `Player ${player.name} used emergency oxygen`,
+                    type: "oxygen",
+                });
             } else {
                 // Player dies
                 player.isAlive = false;
+                player.oxygenLeakActive = false;
                 deaths.push(player);
 
                 snapshot.logs.push({
@@ -539,7 +595,7 @@ export function startMeeting(
     };
     if (snapshot.tasks) {
         snapshot.tasks.sharedByLocation = undefined;
-        snapshot.tasks.emergency = undefined;
+        snapshot.tasks.emergencyByLocation = undefined;
     }
 
     // Reset player vote state
@@ -710,23 +766,49 @@ export function resolveVotes(snapshot: JokerSnapshot): ActionResult {
 // ============ Win Condition ============
 
 export function checkWinCondition(snapshot: JokerSnapshot): JokerGameResult | null {
-    // Goose win: task progress reaches 100%
-    if (snapshot.taskProgress >= 100) {
-        return { winner: "goose", reason: "任务完成度达到100%" };
+    if (snapshot.execution?.executedRole === "dodo" && snapshot.execution.reason === "vote") {
+        return { winner: "dodo", reason: "呆呆鸟被投票淘汰" };
     }
 
     const alivePlayers = snapshot.players.filter(p => p.isAlive && p.sessionId);
     const aliveDucks = alivePlayers.filter(p => p.role === "duck");
     const aliveGeese = alivePlayers.filter(p => p.role === "goose");
+    const aliveHawks = alivePlayers.filter(p => p.role === "hawk");
+    const aliveDodos = alivePlayers.filter(p => p.role === "dodo");
+
+    if (aliveHawks.length === 1) {
+        if (alivePlayers.length === 1) {
+            return { winner: "hawk", reason: "猎鹰存活到最后" };
+        }
+        if (
+            alivePlayers.length === 2 &&
+            aliveGeese.length === 1 &&
+            aliveDucks.length === 0 &&
+            aliveDodos.length === 0
+        ) {
+            return { winner: "hawk", reason: "猎鹰存活到最后" };
+        }
+    }
+
+    // Goose win: task progress reaches 100%
+    if (snapshot.taskProgress >= 100 && aliveGeese.length > 0) {
+        return { winner: "goose", reason: "任务完成度达到100%" };
+    }
 
     // Goose win: all ducks dead
-    if (aliveDucks.length === 0) {
+    if (aliveDucks.length === 0 && aliveGeese.length > 0) {
         return { winner: "goose", reason: "所有鸭子已被淘汰" };
     }
 
-    // Duck win: ducks >= geese
-    if (aliveDucks.length >= aliveGeese.length) {
-        return { winner: "duck", reason: "鸭子数量超过或等于鹅" };
+    // Duck win: all geese dead
+    if (aliveDucks.length > 0 && aliveGeese.length === 0) {
+        return { winner: "duck", reason: "所有鹅已被淘汰" };
+    }
+
+    // Duck win: ducks >= non-ducks
+    const nonDuckCount = alivePlayers.length - aliveDucks.length;
+    if (aliveDucks.length > 0 && aliveDucks.length >= nonDuckCount) {
+        return { winner: "duck", reason: "鸭子数量超过或等于非鸭子" };
     }
 
     return null;
@@ -1035,6 +1117,177 @@ export function submitSharedTaskChoice(
     return { ok: false, error: "Unsupported shared task" };
 }
 
+// ============ Emergency Task System ============
+
+function ensureEmergencyTasks(snapshot: JokerSnapshot): Record<JokerLocation, JokerEmergencyTaskState> {
+    if (!snapshot.tasks) snapshot.tasks = {};
+    if (!snapshot.tasks.emergencyByLocation) {
+        snapshot.tasks.emergencyByLocation = {};
+    }
+    return snapshot.tasks.emergencyByLocation;
+}
+
+export function initGoldenRabbitTask(
+    snapshot: JokerSnapshot,
+    location: JokerLocation,
+    now: number
+): JokerEmergencyTaskState {
+    const emergencyByLocation = ensureEmergencyTasks(snapshot);
+    if (emergencyByLocation[location]) {
+        return emergencyByLocation[location];
+    }
+    const task: JokerEmergencyTaskState = {
+        kind: "emergency",
+        type: "golden_rabbit",
+        location,
+        status: "waiting",
+        participants: [],
+        startedAt: now,
+        joinDeadlineAt: now + GOLDEN_RABBIT_JOIN_MS,
+    };
+    emergencyByLocation[location] = task;
+    snapshot.tasks.emergencyByLocation = emergencyByLocation;
+    snapshot.tasks.lastEmergencyAt = now;
+    if (!snapshot.round.goldenRabbitTriggeredLocations.includes(location)) {
+        snapshot.round.goldenRabbitTriggeredLocations.push(location);
+    }
+    snapshot.updatedAt = now;
+    return task;
+}
+
+function initGoldenRabbitHunt(task: JokerEmergencyTaskState): void {
+    const participants = task.participants;
+    if (participants.length === 0) return;
+    const rabbitIndex = Math.floor(Math.random() * 9);
+    const available = shuffleArray(
+        Array.from({ length: 9 }, (_, idx) => idx).filter(idx => idx !== rabbitIndex)
+    );
+    const xBySession: Record<string, number[]> = {};
+    let pool = available;
+    let poolIndex = 0;
+
+    for (const id of participants) {
+        const picks: number[] = [];
+        while (picks.length < 2) {
+            if (poolIndex >= pool.length) {
+                pool = shuffleArray(available);
+                poolIndex = 0;
+            }
+            const candidate = pool[poolIndex++];
+            if (!picks.includes(candidate)) {
+                picks.push(candidate);
+            }
+        }
+        xBySession[id] = picks;
+    }
+
+    task.rabbitIndex = rabbitIndex;
+    task.xBySession = xBySession;
+    task.selections = {};
+}
+
+export function startGoldenRabbitHunt(task: JokerEmergencyTaskState, now: number): void {
+    task.status = "active";
+    task.startedAt = now;
+    initGoldenRabbitHunt(task);
+}
+
+export function joinGoldenRabbitTask(
+    snapshot: JokerSnapshot,
+    sessionId: string
+): ActionResult {
+    if (snapshot.phase !== "red_light") {
+        return { ok: false, error: "Golden rabbit only available during red light" };
+    }
+
+    const player = snapshot.players.find(p => p.sessionId === sessionId);
+    if (!player || !player.isAlive || !player.location) {
+        return { ok: false, error: "Invalid player" };
+    }
+
+    const task = snapshot.tasks?.emergencyByLocation?.[player.location];
+    if (!task || task.type !== "golden_rabbit") {
+        return { ok: false, error: "No golden rabbit" };
+    }
+    if (task.status !== "waiting") {
+        return { ok: false, error: "Golden rabbit closed" };
+    }
+    if (task.joinDeadlineAt && Date.now() > task.joinDeadlineAt) {
+        return { ok: false, error: "Golden rabbit closed" };
+    }
+    if (!task.participants.includes(sessionId)) {
+        task.participants.push(sessionId);
+        snapshot.updatedAt = Date.now();
+    }
+    return { ok: true };
+}
+
+export function resolveGoldenRabbitTask(
+    snapshot: JokerSnapshot,
+    task: JokerEmergencyTaskState,
+    success: boolean
+): ActionResult {
+    task.status = "resolved";
+    task.result = success ? "success" : "fail";
+    task.resolvedAt = Date.now();
+    if (success) {
+        snapshot.taskProgress = Math.min(
+            100,
+            snapshot.taskProgress + GOLDEN_RABBIT_PROGRESS_REWARD
+        );
+    }
+    snapshot.updatedAt = Date.now();
+    return { ok: true };
+}
+
+export function submitGoldenRabbitChoice(
+    snapshot: JokerSnapshot,
+    sessionId: string,
+    index: number
+): ActionResult {
+    if (snapshot.phase !== "red_light") {
+        return { ok: false, error: "Golden rabbit only available during red light" };
+    }
+    const player = snapshot.players.find(p => p.sessionId === sessionId);
+    if (!player || !player.location) {
+        return { ok: false, error: "Invalid player" };
+    }
+    const task = snapshot.tasks?.emergencyByLocation?.[player.location];
+    if (!task || task.type !== "golden_rabbit") {
+        return { ok: false, error: "No golden rabbit" };
+    }
+    if (task.status !== "active") {
+        return { ok: false, error: "Golden rabbit not active" };
+    }
+    if (task.rabbitIndex === undefined || !task.xBySession) {
+        return { ok: false, error: "Golden rabbit not initialized" };
+    }
+    if (!task.participants.includes(sessionId)) {
+        return { ok: false, error: "Not a participant" };
+    }
+    if (index < 0 || index > 8) {
+        return { ok: false, error: "Invalid index" };
+    }
+    if (!task.selections) task.selections = {};
+    if (task.selections[sessionId] !== undefined) {
+        return { ok: false, error: "Already submitted" };
+    }
+    const blocked = task.xBySession?.[sessionId] ?? [];
+    if (blocked.includes(index)) {
+        return { ok: false, error: "Blocked cell" };
+    }
+
+    task.selections[sessionId] = index;
+    const allDone = task.participants.every(id => task.selections?.[id] !== undefined);
+    if (allDone) {
+        const success = Object.values(task.selections).some(sel => sel === task.rabbitIndex);
+        return resolveGoldenRabbitTask(snapshot, task, success);
+    }
+
+    snapshot.updatedAt = Date.now();
+    return { ok: true };
+}
+
 export function finalizeGame(snapshot: JokerSnapshot, result: JokerGameResult): void {
     snapshot.phase = "game_over";
     snapshot.gameResult = result;
@@ -1059,7 +1312,7 @@ export function transitionToGreenLight(snapshot: JokerSnapshot): void {
 
     if (snapshot.tasks) {
         snapshot.tasks.sharedByLocation = undefined;
-        snapshot.tasks.emergency = undefined;
+        snapshot.tasks.emergencyByLocation = undefined;
     }
 
     // Update locations based on alive count
@@ -1073,8 +1326,13 @@ export function transitionToGreenLight(snapshot: JokerSnapshot): void {
         player.location = null;
         // Reset oxygen timestamp so frontend calculates from green light start
         player.oxygenUpdatedAt = now;
+        player.oxygenLeakActive = false;
+        player.oxygenLeakStartedAt = undefined;
+        player.oxygenLeakResolvedAt = undefined;
+        player.oxygenLeakRound = undefined;
     }
     snapshot.round.oxygenGivenThisRound = {};
+    snapshot.round.goldenRabbitTriggeredLocations = [];
 
     snapshot.deadline = Date.now() + PHASE_DURATIONS.green_light;
     snapshot.updatedAt = Date.now();
@@ -1136,6 +1394,11 @@ export function resetToLobby(snapshot: JokerSnapshot): void {
         player.oxygen = INITIAL_OXYGEN;
         player.oxygenUpdatedAt = Date.now();
         player.duckEmergencyUsed = false;
+        player.hawkEmergencyUsed = false;
+        player.oxygenLeakActive = false;
+        player.oxygenLeakStartedAt = undefined;
+        player.oxygenLeakResolvedAt = undefined;
+        player.oxygenLeakRound = undefined;
         player.hasVoted = false;
         player.voteTarget = null;
         player.lifeCode = resetCodes[idx];
