@@ -564,6 +564,9 @@ export function extendMeeting(snapshot: JokerSnapshot, ms: number): ActionResult
     if (snapshot.phase !== "meeting" || !snapshot.meeting) {
         return { ok: false, error: "Meeting not active" };
     }
+    if (snapshot.meeting.discussionEndAt === undefined) {
+        return { ok: false, error: "Discussion end time not set" };
+    }
     snapshot.meeting.discussionEndAt += ms;
     snapshot.deadline = snapshot.meeting.discussionEndAt;
     snapshot.updatedAt = Date.now();
@@ -815,7 +818,7 @@ export function joinSharedTask(
     }
 
     if (!snapshot.tasks) snapshot.tasks = {};
-    const sharedByLocation = snapshot.tasks.sharedByLocation ?? {};
+    const sharedByLocation: Partial<Record<JokerLocation, JokerSharedTaskState>> = snapshot.tasks.sharedByLocation ?? {};
     const existing = sharedByLocation[player.location];
     if (existing && existing.status !== "resolved") {
         if (!existing.joined.includes(sessionId)) {
@@ -823,7 +826,7 @@ export function joinSharedTask(
             player.oxygen = Math.max(0, player.oxygen - SHARED_TASK_OXYGEN_COST);
             player.oxygenUpdatedAt = Date.now();
         }
-        snapshot.tasks.sharedByLocation = sharedByLocation;
+        snapshot.tasks.sharedByLocation = sharedByLocation as Record<JokerLocation, JokerSharedTaskState>;
         snapshot.updatedAt = Date.now();
         return { ok: true };
     }
@@ -839,8 +842,7 @@ export function joinSharedTask(
         return { ok: false, error: "Not enough players for shared task" };
     }
 
-    snapshot.tasks.sharedByLocation = sharedByLocation;
-    snapshot.tasks.sharedByLocation[player.location] = {
+    sharedByLocation[player.location] = {
         kind: "shared",
         type,
         location: player.location,
@@ -848,6 +850,7 @@ export function joinSharedTask(
         participants,
         joined: [sessionId],
     };
+    snapshot.tasks.sharedByLocation = sharedByLocation as Record<JokerLocation, JokerSharedTaskState>;
     player.oxygen = Math.max(0, player.oxygen - SHARED_TASK_OXYGEN_COST);
     player.oxygenUpdatedAt = Date.now();
     snapshot.updatedAt = Date.now();
