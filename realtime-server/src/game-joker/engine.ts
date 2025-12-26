@@ -1119,7 +1119,7 @@ export function submitSharedTaskChoice(
 
 // ============ Emergency Task System ============
 
-function ensureEmergencyTasks(snapshot: JokerSnapshot): Record<JokerLocation, JokerEmergencyTaskState> {
+function ensureEmergencyTasks(snapshot: JokerSnapshot): Partial<Record<JokerLocation, JokerEmergencyTaskState>> {
     if (!snapshot.tasks) snapshot.tasks = {};
     if (!snapshot.tasks.emergencyByLocation) {
         snapshot.tasks.emergencyByLocation = {};

@@ -1,7 +1,7 @@
 // realtime-server/src/game-joker/scheduler.ts
 
 import type { Server } from "socket.io";
-import type { JokerSnapshot } from "./types.js";
+import type { JokerEmergencyTaskState, JokerLocation, JokerSnapshot } from "./types.js";
 import {
     PHASE_DURATIONS,
     transitionToGreenLight,
@@ -280,7 +280,7 @@ function scheduleGoldenRabbitEvents(
     io: Server
 ): void {
     const snapshot = room.snapshot as JokerSnapshot;
-    const locationMap = new Map<string, number>();
+    const locationMap = new Map<JokerLocation, number>();
     for (const player of snapshot.players) {
         if (player.isAlive && player.sessionId && player.location) {
             locationMap.set(player.location, (locationMap.get(player.location) ?? 0) + 1);
@@ -291,17 +291,17 @@ function scheduleGoldenRabbitEvents(
 
     const probability = 1 / locations.length;
     for (const location of locations) {
-        if (snapshot.round.goldenRabbitTriggeredLocations.includes(location as any)) continue;
-        if (snapshot.tasks?.emergencyByLocation?.[location as any]) continue;
+        if (snapshot.round.goldenRabbitTriggeredLocations.includes(location)) continue;
+        if (snapshot.tasks?.emergencyByLocation?.[location]) continue;
         if (Math.random() >= probability) continue;
         const delay = pickEmergencyDelayMs(snapshot);
         if (delay === null) continue;
         const timer = setTimeout(() => {
             const snap = room.snapshot as JokerSnapshot;
             if (snap.phase !== "red_light") return;
-            if (snap.round.goldenRabbitTriggeredLocations.includes(location as any)) return;
-            if (snap.tasks?.emergencyByLocation?.[location as any]) return;
-            initGoldenRabbitTask(snap, location as any, Date.now());
+            if (snap.round.goldenRabbitTriggeredLocations.includes(location)) return;
+            if (snap.tasks?.emergencyByLocation?.[location]) return;
+            initGoldenRabbitTask(snap, location, Date.now());
             broadcastSnapshot(room, io);
         }, delay);
         addTimeout(room.code, timer);
@@ -546,9 +546,12 @@ function startOxygenTick(
             }
         }
 
-        if (snapshot.phase === "red_light" && snapshot.tasks?.emergencyByLocation) {
+        if (snapshot.phase === "red_light") {
+            const emergencyByLocation = snapshot.tasks?.emergencyByLocation;
+            if (!emergencyByLocation) return;
             const now = Date.now();
-            for (const [location, emergency] of Object.entries(snapshot.tasks.emergencyByLocation)) {
+            const emergencyEntries = Object.entries(emergencyByLocation) as Array<[JokerLocation, JokerEmergencyTaskState]>;
+            for (const [location, emergency] of emergencyEntries) {
                 if (emergency.type !== "golden_rabbit") continue;
                 if (emergency.status === "waiting" && emergency.joinDeadlineAt && now >= emergency.joinDeadlineAt) {
                     if (emergency.participants.length > 0) {
@@ -560,7 +563,7 @@ function startOxygenTick(
                     broadcastSnapshot(room, io);
                 }
                 if (emergency.status === "resolved" && emergency.resolvedAt && now - emergency.resolvedAt > 2000) {
-                    delete snapshot.tasks.emergencyByLocation[location as keyof typeof snapshot.tasks.emergencyByLocation];
+                    delete emergencyByLocation[location];
                     snapshot.updatedAt = now;
                     broadcastSnapshot(room, io);
                 }

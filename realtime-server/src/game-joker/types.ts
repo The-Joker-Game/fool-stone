@@ -136,7 +136,7 @@ export interface JokerEmergencyTaskState {
 
 export interface JokerTaskSystemState {
     sharedByLocation?: Record<JokerLocation, JokerSharedTaskState>;
-    emergencyByLocation?: Record<JokerLocation, JokerEmergencyTaskState>;
+    emergencyByLocation?: Partial<Record<JokerLocation, JokerEmergencyTaskState>>;
     lastEmergencyAt?: number;
 }
 
