@@ -30,13 +30,19 @@ import {
   submitLifeCodeAction,
   submitVote as jokerSubmitVote,
   startMeeting as jokerStartMeeting,
+  transitionToVoting,
   transitionToRoleReveal,
   transitionToGreenLight,
+  extendMeeting,
+  extendVoting,
   resetToLobby as jokerResetToLobby,
   checkWinCondition as jokerCheckWin,
   finalizeGame as jokerFinalizeGame,
   startTask as jokerStartTask,
   completeTask as jokerCompleteTask,
+  joinSharedTask as jokerJoinSharedTask,
+  resolveSharedTask as jokerResolveSharedTask,
+  submitSharedTaskChoice as jokerSubmitSharedTaskChoice,
 } from "./game-joker/engine.js";
 import type { JokerPlayerState, JokerSnapshot } from "./game-joker/types.js";
 import { checkAndScheduleActions as jokerScheduleActions, clearRoomTimeouts as jokerClearTimeouts, checkAllVoted } from "./game-joker/scheduler.js";
@@ -82,7 +88,8 @@ type Room = {
 const rooms = new Map<string, Room>();
 const cleanupTimers = new Map<string, NodeJS.Timeout>();
 const disconnectCleanupTimers = new Map<string, NodeJS.Timeout>();
-const MAX_SEATS = 9;
+const JOKER_MAX_SEATS = 16;
+const FLOWER_MAX_SEATS = 9;
 const ROOM_EMPTY_GRACE_MS = Number(process.env.ROOM_EMPTY_GRACE_MS ?? 5 * 60 * 1000);
 const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS ?? 15 * 60 * 1000);
 
@@ -206,6 +213,7 @@ function listUsers(r: Room): PresenceUser[] {
   return Array.from(r.users.values()).map(u => ({ ...u }));
 }
 function nextAvailableSeat(r: Room, preferred?: number | null): number | null {
+  const cap = r.snapshot?.engine === "flower" ? FLOWER_MAX_SEATS : JOKER_MAX_SEATS;
   const occupied = new Set<number>();
   for (const u of r.users.values()) occupied.add(u.seat);
 
@@ -213,13 +221,13 @@ function nextAvailableSeat(r: Room, preferred?: number | null): number | null {
   if (
     typeof preferred === "number" &&
     preferred >= 1 &&
-    preferred <= MAX_SEATS &&
+    preferred <= cap &&
     !occupied.has(preferred)
   ) {
     return preferred;
   }
   // 否则找最小可用
-  for (let i = 1; i <= MAX_SEATS; i++) {
+  for (let i = 1; i <= cap; i++) {
     if (!occupied.has(i)) return i;
   }
   return null;
@@ -337,6 +345,9 @@ io.on("connection", (socket: Socket) => {
         if (!name || !sessionId) return cb({ ok: false, msg: "缺少 name 或 sessionId" });
 
         const existed = room.users.get(sessionId);
+        if (room.snapshot && room.snapshot.phase !== "lobby" && !existed) {
+          return cb({ ok: false, msg: "游戏已经开始，无法加入" });
+        }
         const seat = existed?.seat ?? nextAvailableSeat(room, preferredSeat ?? null);
         if (!seat) return cb({ ok: false, msg: "房间已满" });
 
@@ -853,15 +864,25 @@ io.on("connection", (socket: Socket) => {
         let res: { ok: boolean; error?: string; message?: string } = { ok: false, error: "Unknown action" };
         let shouldBroadcast = false;
         const jokerSnapshot = r.snapshot as JokerSnapshot;
+        if (jokerSnapshot.paused && action !== "joker:toggle_pause") {
+          return cb({ ok: false, msg: "Game paused" });
+        }
 
         switch (action) {
           case "joker:start_game":
             if (socket.data.sessionId !== r.hostSessionId) {
               return cb({ ok: false, msg: "Only host can start game" });
             }
+            {
+              const activeUsers = Array.from(r.users.values()).filter(u => !u.leftAt && !u.kickedAt);
+              const allReady = activeUsers.length > 0 && activeUsers.every(u => u.ready);
+              if (!allReady) {
+                return cb({ ok: false, msg: "All players must be ready to start" });
+              }
+            }
             // Sync users to snapshot before starting
             for (const u of r.users.values()) {
-              if (u.seat >= 1 && u.seat <= 10) {
+              if (u.seat >= 1 && u.seat <= 16) {
                 const p = jokerSnapshot.players[u.seat - 1];
                 if (p) {
                   p.sessionId = u.sessionId;
@@ -887,7 +908,7 @@ io.on("connection", (socket: Socket) => {
             res = submitLifeCodeAction(jokerSnapshot, data);
             shouldBroadcast = true;
             // Check for deaths and trigger meeting if needed
-            if (res.ok) {
+            if (res.ok || res.error === "foul_death") {
               const winResult = jokerCheckWin(jokerSnapshot);
               if (winResult) {
                 jokerFinalizeGame(jokerSnapshot, winResult);
@@ -906,6 +927,70 @@ io.on("connection", (socket: Socket) => {
             } else {
               res = { ok: false, error: "Invalid reporter" };
             }
+            break;
+          }
+
+          case "joker:meeting_start_vote": {
+            if (socket.data.sessionId !== r.hostSessionId) {
+              return cb({ ok: false, msg: "Only host can start voting" });
+            }
+            if (jokerSnapshot.phase !== "meeting") {
+              res = { ok: false, error: "Meeting not active" };
+              break;
+            }
+            jokerClearTimeouts(roomCode);
+            transitionToVoting(jokerSnapshot);
+            res = { ok: true };
+            shouldBroadcast = true;
+            break;
+          }
+
+          case "joker:meeting_extend": {
+            if (socket.data.sessionId !== r.hostSessionId) {
+              return cb({ ok: false, msg: "Only host can extend meeting" });
+            }
+            jokerClearTimeouts(roomCode);
+            res = extendMeeting(jokerSnapshot, 30_000);
+            shouldBroadcast = true;
+            break;
+          }
+
+          case "joker:toggle_pause": {
+            if (socket.data.sessionId !== r.hostSessionId) {
+              return cb({ ok: false, msg: "Only host can pause game" });
+            }
+            const now = Date.now();
+            if (!jokerSnapshot.paused) {
+              const remaining = jokerSnapshot.deadline ? Math.max(0, jokerSnapshot.deadline - now) : 0;
+              jokerSnapshot.paused = true;
+              jokerSnapshot.pauseRemainingMs = remaining;
+              jokerSnapshot.deadline = undefined;
+              if (jokerSnapshot.phase === "meeting" && jokerSnapshot.meeting) {
+                jokerSnapshot.meeting.discussionEndAt = undefined;
+              }
+              jokerClearTimeouts(roomCode);
+            } else {
+              jokerSnapshot.paused = false;
+              const remaining = jokerSnapshot.pauseRemainingMs ?? 0;
+              jokerSnapshot.deadline = Date.now() + remaining;
+              jokerSnapshot.pauseRemainingMs = undefined;
+              if (jokerSnapshot.phase === "meeting" && jokerSnapshot.meeting) {
+                jokerSnapshot.meeting.discussionEndAt = jokerSnapshot.deadline;
+              }
+            }
+            jokerSnapshot.updatedAt = Date.now();
+            res = { ok: true };
+            shouldBroadcast = true;
+            break;
+          }
+
+          case "joker:voting_extend": {
+            if (socket.data.sessionId !== r.hostSessionId) {
+              return cb({ ok: false, msg: "Only host can extend voting" });
+            }
+            jokerClearTimeouts(roomCode);
+            res = extendVoting(jokerSnapshot, 30_000);
+            shouldBroadcast = true;
             break;
           }
 
@@ -946,6 +1031,44 @@ io.on("connection", (socket: Socket) => {
             }
             break;
 
+          case "joker:shared_task_join":
+            res = jokerJoinSharedTask(jokerSnapshot, socket.data.sessionId, data?.type);
+            shouldBroadcast = true;
+            break;
+
+          case "joker:shared_task_resolve":
+            {
+              const actor = jokerSnapshot.players.find(
+                (p: JokerPlayerState) => p.sessionId === socket.data.sessionId
+              );
+              if (!actor || !actor.location) {
+                res = { ok: false, error: "Invalid player" };
+                break;
+              }
+              res = jokerResolveSharedTask(jokerSnapshot, actor.location, !!data?.success);
+            }
+            shouldBroadcast = true;
+            if (res.ok) {
+              const winResult = jokerCheckWin(jokerSnapshot);
+              if (winResult) {
+                jokerFinalizeGame(jokerSnapshot, winResult);
+                jokerClearTimeouts(roomCode);
+              }
+            }
+            break;
+
+          case "joker:shared_task_submit":
+            res = jokerSubmitSharedTaskChoice(jokerSnapshot, socket.data.sessionId, data?.index);
+            shouldBroadcast = true;
+            if (res.ok) {
+              const winResult = jokerCheckWin(jokerSnapshot);
+              if (winResult) {
+                jokerFinalizeGame(jokerSnapshot, winResult);
+                jokerClearTimeouts(roomCode);
+              }
+            }
+            break;
+
           case "joker:reset_game":
             if (socket.data.sessionId !== r.hostSessionId) {
               return cb({ ok: false, msg: "Only host can reset game" });
@@ -960,11 +1083,13 @@ io.on("connection", (socket: Socket) => {
             return cb({ ok: false, msg: "Unknown joker action" });
         }
 
-        if (res.ok) {
+        if (res.ok || res.error === "foul_death") {
           if (shouldBroadcast) {
             io.to(roomCode).emit("state:full", { snapshot: r.snapshot, from: "server", at: Date.now() });
             jokerScheduleActions(r, io);
           }
+        }
+        if (res.ok) {
           cb({ ok: true });
         } else {
           cb({ ok: false, msg: res.error });

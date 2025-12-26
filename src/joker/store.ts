@@ -12,7 +12,7 @@ import type {
 } from "./types";
 import { rt, getSessionId } from "../realtime/socket";
 
-const MAX_SEATS = 10;
+const MAX_SEATS = 16;
 
 type JokerSnapshotInput = Partial<JokerSnapshot> & { engine: "joker" };
 
@@ -192,9 +192,8 @@ function createEmptyPlayer(seat: number): JokerPlayerState {
         targetLocation: null,
         lifeCode: "",
         lifeCodeVersion: 0,
-        oxygen: 270,
+        oxygen: 240,
         oxygenUpdatedAt: Date.now(),
-        oxygenReceivedThisRound: false,
         duckEmergencyUsed: false,
         hasVoted: false,
         voteTarget: null,
@@ -276,8 +275,11 @@ function mergeIncomingSnapshot(target: JokerSnapshot, incoming: JokerSnapshotInp
     if (incoming.gameResult !== undefined) target.gameResult = incoming.gameResult;
     if (incoming.logs !== undefined) target.logs = incoming.logs;
     if ('deadline' in incoming) target.deadline = incoming.deadline;
+    if ('paused' in incoming) target.paused = incoming.paused;
+    if ('pauseRemainingMs' in incoming) target.pauseRemainingMs = incoming.pauseRemainingMs;
     if (incoming.hostSessionId !== undefined) target.hostSessionId = incoming.hostSessionId;
     if (incoming.taskProgress !== undefined) target.taskProgress = incoming.taskProgress;
+    if (incoming.tasks !== undefined) target.tasks = incoming.tasks;
 
     // Merge chat messages
     if (incoming.chatMessages) {

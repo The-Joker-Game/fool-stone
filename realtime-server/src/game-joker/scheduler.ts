@@ -7,7 +7,6 @@ import {
     transitionToGreenLight,
     transitionToYellowLight,
     transitionToRedLight,
-    rotateLifeCodesAtHalfRedLight,
     transitionToVoting,
     resolveVotes,
     checkWinCondition,
@@ -15,11 +14,17 @@ import {
     tickOxygen,
     checkOxygenDeath,
     startMeeting,
+    generateAllLifeCodes,
+    SHARED_TASK_DURATIONS_MS,
+    initNineGridSharedTask,
+    initDigitPuzzleSharedTask,
+    resolveSharedTask,
 } from "./engine.js";
 
 // Track active timers per room
 const roomTimers = new Map<string, NodeJS.Timeout[]>();
 const oxygenIntervals = new Map<string, NodeJS.Timeout>();
+const lifeCodeIntervals = new Map<string, NodeJS.Timeout>();
 const scheduledDeadlines = new Map<string, number>();
 
 export function addTimeout(roomCode: string, timeout: NodeJS.Timeout): void {
@@ -44,6 +49,12 @@ export function clearRoomTimeouts(roomCode: string): void {
         oxygenIntervals.delete(roomCode);
     }
 
+    const lifeCodeInterval = lifeCodeIntervals.get(roomCode);
+    if (lifeCodeInterval) {
+        clearInterval(lifeCodeInterval);
+        lifeCodeIntervals.delete(roomCode);
+    }
+
     scheduledDeadlines.delete(roomCode);
 }
 
@@ -61,6 +72,12 @@ export function checkAndScheduleActions(
 ): void {
     const snapshot = room.snapshot as JokerSnapshot;
     if (!snapshot || snapshot.engine !== "joker") return;
+
+    if (snapshot.paused) {
+        stopOxygenTick(room.code);
+        stopLifeCodeRotation(room.code);
+        return;
+    }
 
     const { phase, deadline } = snapshot;
     const now = Date.now();
@@ -86,36 +103,44 @@ export function checkAndScheduleActions(
     switch (phase) {
         case "lobby":
             // No timers in lobby
+            stopLifeCodeRotation(room.code);
             break;
 
         case "role_reveal":
             scheduleRoleRevealToGreenLight(room, io);
+            stopLifeCodeRotation(room.code);
             break;
 
         case "green_light":
             schedulePhaseTransition(room, io, "yellow_light");
             startOxygenTick(room, io);
+            startLifeCodeRotation(room, io);
             break;
 
         case "yellow_light":
             schedulePhaseTransition(room, io, "red_light");
+            startLifeCodeRotation(room, io);
             break;
 
         case "red_light":
             scheduleRedLightActions(room, io);
+            startLifeCodeRotation(room, io);
             break;
 
         case "meeting":
             scheduleMeetingToVoting(room, io);
             stopOxygenTick(room.code);
+            stopLifeCodeRotation(room.code);
             break;
 
         case "voting":
             scheduleVoteResolution(room, io);
+            stopLifeCodeRotation(room.code);
             break;
 
         case "execution":
             schedulePostExecution(room, io);
+            stopLifeCodeRotation(room.code);
             break;
 
         case "game_over":
@@ -173,21 +198,7 @@ function scheduleRedLightActions(
     const snapshot = room.snapshot as JokerSnapshot;
     if (!snapshot.deadline) return;
 
-    const phaseStart = snapshot.round.phaseStartAt;
-    const halfDelay = 30_000; // 30 seconds into red light
     const fullDelay = Math.max(0, snapshot.deadline - Date.now());
-
-    // Schedule life code rotation at 30s mark
-    if (snapshot.round.redLightHalf === "first") {
-        const rotationDelay = Math.max(0, phaseStart + halfDelay - Date.now());
-
-        const rotationTimer = setTimeout(() => {
-            rotateLifeCodesAtHalfRedLight(snapshot);
-            broadcastSnapshot(room, io);
-        }, rotationDelay);
-
-        addTimeout(room.code, rotationTimer);
-    }
 
     // Schedule end of red light
     const endTimer = setTimeout(() => {
@@ -259,6 +270,32 @@ function scheduleMeetingToVoting(
     }, delay);
 
     addTimeout(room.code, timer);
+}
+
+function startLifeCodeRotation(
+    room: { code: string; snapshot: any },
+    io: Server
+): void {
+    if (lifeCodeIntervals.has(room.code)) return;
+
+    const interval = setInterval(() => {
+        const snapshot = room.snapshot as JokerSnapshot;
+        if (!snapshot || snapshot.engine !== "joker") return;
+        const activePhase = ["green_light", "yellow_light", "red_light"].includes(snapshot.phase);
+        if (!activePhase) return;
+        generateAllLifeCodes(snapshot);
+        broadcastSnapshot(room, io);
+    }, 70_000);
+
+    lifeCodeIntervals.set(room.code, interval);
+}
+
+function stopLifeCodeRotation(roomCode: string): void {
+    const interval = lifeCodeIntervals.get(roomCode);
+    if (interval) {
+        clearInterval(interval);
+        lifeCodeIntervals.delete(roomCode);
+    }
 }
 
 function scheduleVoteResolution(
@@ -350,6 +387,10 @@ function startOxygenTick(
             return;
         }
 
+        if (snapshot.paused) {
+            return;
+        }
+
         // Only tick during light phases
         if (!["green_light", "yellow_light", "red_light"].includes(snapshot.phase)) {
             return;
@@ -368,6 +409,40 @@ function startOxygenTick(
                 finalizeGame(snapshot, result);
                 broadcastSnapshot(room, io);
                 clearRoomTimeouts(room.code);
+            }
+        }
+
+        // Shared task state advance (scaffold)
+        if (snapshot.phase === "red_light" && snapshot.tasks?.sharedByLocation) {
+            const now = Date.now();
+            for (const shared of Object.values(snapshot.tasks.sharedByLocation)) {
+                if (shared.status === "waiting" && shared.participants.length > 0) {
+                    const allJoined = shared.participants.every(id => shared.joined.includes(id));
+                    if (allJoined) {
+                        shared.status = "active";
+                        shared.startedAt = now;
+                        const durationMs = SHARED_TASK_DURATIONS_MS[shared.type] ?? 10_000;
+                        shared.deadlineAt = now + durationMs;
+                        if (shared.type === "nine_grid" && !shared.gridBySession) {
+                            initNineGridSharedTask(shared);
+                        }
+                        if (shared.type === "digit_puzzle" && !shared.digitSegmentsBySession) {
+                            initDigitPuzzleSharedTask(shared);
+                        }
+                        snapshot.updatedAt = now;
+                        broadcastSnapshot(room, io);
+                    }
+                } else if (shared.status === "active" && shared.deadlineAt && now >= shared.deadlineAt) {
+                    const res = resolveSharedTask(snapshot, shared.location, false);
+                    if (res.ok) {
+                        broadcastSnapshot(room, io);
+                    }
+                }
+                if (shared.status === "resolved" && shared.resolvedAt && now - shared.resolvedAt > 2000) {
+                    delete snapshot.tasks.sharedByLocation[shared.location];
+                    snapshot.updatedAt = now;
+                    broadcastSnapshot(room, io);
+                }
             }
         }
     }, 1000); // Tick every second

@@ -34,7 +34,6 @@ export interface JokerPlayerState {
 
     oxygen: number;
     oxygenUpdatedAt: number;
-    oxygenReceivedThisRound: boolean;
     duckEmergencyUsed: boolean;
 
     hasVoted: boolean;
@@ -75,6 +74,50 @@ export interface JokerRoundState {
     roundCount: number;
     phaseStartAt: number;
     redLightHalf: "first" | "second";
+    oxygenGivenThisRound: Record<string, Record<string, boolean>>;
+}
+
+export type JokerTaskKind = "personal" | "shared" | "emergency";
+export type JokerSharedTaskType = "nine_grid" | "digit_puzzle";
+export type JokerEmergencyTaskType = "oxygen_leak" | "golden_rabbit";
+export type JokerTaskStatus = "idle" | "waiting" | "active" | "resolved";
+
+export interface JokerSharedTaskState {
+    kind: "shared";
+    type: JokerSharedTaskType;
+    location: JokerLocation;
+    status: JokerTaskStatus;
+    participants: string[];
+    joined: string[];
+    startedAt?: number;
+    deadlineAt?: number;
+    remainingMs?: number;
+    gridBySession?: Record<string, string[]>;
+    commonIndex?: number;
+    commonIcon?: string;
+    selections?: Record<string, number>;
+    digitTarget?: number;
+    digitSegmentsBySession?: Record<string, number[]>;
+    digitSelections?: Record<string, number>;
+    resolvedAt?: number;
+    result?: "success" | "fail";
+}
+
+export interface JokerEmergencyTaskState {
+    kind: "emergency";
+    type: JokerEmergencyTaskType;
+    location: JokerLocation | "all";
+    status: JokerTaskStatus;
+    participants: string[];
+    startedAt?: number;
+    deadlineAt?: number;
+    result?: "success" | "fail";
+}
+
+export interface JokerTaskSystemState {
+    sharedByLocation?: Record<JokerLocation, JokerSharedTaskState>;
+    emergency?: JokerEmergencyTaskState;
+    lastEmergencyAt?: number;
 }
 
 export interface JokerGameResult {
@@ -115,6 +158,9 @@ export interface JokerSnapshot {
     chatMessages: JokerChatMessage[];
     taskProgress: number;
     deadline?: number;
+    tasks?: JokerTaskSystemState;
+    paused?: boolean;
+    pauseRemainingMs?: number;
     updatedAt: number;
 }
 

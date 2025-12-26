@@ -37,8 +37,7 @@ export interface JokerPlayerState {
     // Oxygen system
     oxygen: number; // seconds remaining (default 240)
     oxygenUpdatedAt: number; // server timestamp when oxygen was last updated
-    oxygenReceivedThisRound: boolean;
-    duckEmergencyUsed: boolean; // duck one-time +120 on first death
+    duckEmergencyUsed: boolean; // duck one-time +160 on first death
 
     // Voting
     hasVoted: boolean;
@@ -83,6 +82,51 @@ export interface JokerRoundState {
     phaseStartAt: number;
     // Red light sub-phase: 0-20s = old codes, 20-40s = new codes
     redLightHalf: "first" | "second";
+    // Track oxygen gives per round: actorSessionId -> targetSessionId -> true
+    oxygenGivenThisRound: Record<string, Record<string, boolean>>;
+}
+
+export type JokerTaskKind = "personal" | "shared" | "emergency";
+export type JokerSharedTaskType = "nine_grid" | "digit_puzzle";
+export type JokerEmergencyTaskType = "oxygen_leak" | "golden_rabbit";
+export type JokerTaskStatus = "idle" | "waiting" | "active" | "resolved";
+
+export interface JokerSharedTaskState {
+    kind: "shared";
+    type: JokerSharedTaskType;
+    location: JokerLocation;
+    status: JokerTaskStatus;
+    participants: string[]; // sessionIds in same location
+    joined: string[]; // sessionIds who clicked join
+    startedAt?: number;
+    deadlineAt?: number;
+    remainingMs?: number;
+    gridBySession?: Record<string, string[]>;
+    commonIndex?: number;
+    commonIcon?: string;
+    selections?: Record<string, number>;
+    digitTarget?: number;
+    digitSegmentsBySession?: Record<string, number[]>;
+    digitSelections?: Record<string, number>;
+    resolvedAt?: number;
+    result?: "success" | "fail";
+}
+
+export interface JokerEmergencyTaskState {
+    kind: "emergency";
+    type: JokerEmergencyTaskType;
+    location: JokerLocation | "all";
+    status: JokerTaskStatus;
+    participants: string[]; // sessionIds who joined
+    startedAt?: number;
+    deadlineAt?: number;
+    result?: "success" | "fail";
+}
+
+export interface JokerTaskSystemState {
+    sharedByLocation?: Record<JokerLocation, JokerSharedTaskState>;
+    emergency?: JokerEmergencyTaskState;
+    lastEmergencyAt?: number;
 }
 
 export interface JokerGameResult {
@@ -134,9 +178,12 @@ export interface JokerSnapshot {
 
     // Task progress (0-100, goose wins at 100)
     taskProgress: number;
+    tasks?: JokerTaskSystemState;
 
     // Timing
     deadline?: number;
+    paused?: boolean;
+    pauseRemainingMs?: number;
     updatedAt: number;
 }
 
