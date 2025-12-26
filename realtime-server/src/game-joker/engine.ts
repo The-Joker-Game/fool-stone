@@ -1132,7 +1132,8 @@ export function initGoldenRabbitTask(
     location: JokerLocation,
     now: number
 ): JokerEmergencyTaskState {
-    const emergencyByLocation = ensureEmergencyTasks(snapshot);
+    const tasks = snapshot.tasks ?? (snapshot.tasks = {});
+    const emergencyByLocation = tasks.emergencyByLocation ?? (tasks.emergencyByLocation = {});
     if (emergencyByLocation[location]) {
         return emergencyByLocation[location];
     }
@@ -1146,8 +1147,8 @@ export function initGoldenRabbitTask(
         joinDeadlineAt: now + GOLDEN_RABBIT_JOIN_MS,
     };
     emergencyByLocation[location] = task;
-    snapshot.tasks.emergencyByLocation = emergencyByLocation;
-    snapshot.tasks.lastEmergencyAt = now;
+    tasks.emergencyByLocation = emergencyByLocation;
+    tasks.lastEmergencyAt = now;
     if (!snapshot.round.goldenRabbitTriggeredLocations.includes(location)) {
         snapshot.round.goldenRabbitTriggeredLocations.push(location);
     }
