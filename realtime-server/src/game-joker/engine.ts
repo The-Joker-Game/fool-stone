@@ -137,6 +137,8 @@ export function initJokerRoom(roomCode: string, players: InitPlayer[]): JokerSna
         round: createEmptyRoundState(),
         logs: [],
         chatMessages: [],
+        deaths: [],
+        votingHistory: [],
         taskProgress: 0,
         tasks: createEmptyTaskSystem(),
         paused: false,
@@ -447,6 +449,14 @@ export function submitLifeCodeAction(
     const target = findPlayerByLifeCode(snapshot, payload.code, includeOldCodes);
 
     if (!target) {
+        // Duck loses 30s oxygen for incorrect kill code
+        if (payload.action === "kill" && actor.role === "duck") {
+            const KILL_CODE_PENALTY = 30;
+            actor.oxygen -= KILL_CODE_PENALTY;
+            actor.oxygenUpdatedAt = now;
+            snapshot.updatedAt = now;
+            return { ok: false, error: "Invalid life code", message: `错误代码，损失${KILL_CODE_PENALTY}秒氧气` };
+        }
         return { ok: false, error: "Invalid life code", message: "No player with this code" };
     }
 
@@ -464,16 +474,31 @@ function handleKillAction(
     actor: JokerPlayerState,
     target: JokerPlayerState
 ): ActionResult {
+    const now = Date.now();
+
     // Goose or dodo trying to kill = foul
     if (actor.role === "goose" || actor.role === "dodo") {
         actor.isAlive = false;
 
+        // Create death record for foul
+        snapshot.deaths.push({
+            sessionId: actor.sessionId!,
+            seat: actor.seat,
+            name: actor.name,
+            role: actor.role,
+            reason: "foul",
+            location: actor.location ?? undefined,
+            round: snapshot.roundCount,
+            at: now,
+            revealed: false,
+        });
+
         snapshot.logs.push({
-            at: Date.now(),
+            at: now,
             text: `Player ${actor.name} died`,
             type: "death",
         });
-        snapshot.updatedAt = Date.now();
+        snapshot.updatedAt = now;
 
         return {
             ok: false,
@@ -485,13 +510,27 @@ function handleKillAction(
     // Duck or hawk kills target (no location check, no same-round check per rules)
     target.isAlive = false;
 
+    // Create death record for kill
+    snapshot.deaths.push({
+        sessionId: target.sessionId!,
+        seat: target.seat,
+        name: target.name,
+        role: target.role!,
+        reason: "kill",
+        killerSessionId: actor.sessionId ?? undefined,
+        location: target.location ?? undefined,
+        round: snapshot.roundCount,
+        at: now,
+        revealed: false,
+    });
+
     snapshot.logs.push({
-        at: Date.now(),
+        at: now,
         text: `Player ${target.name} was killed`,
         type: "kill",
     });
 
-    snapshot.updatedAt = Date.now();
+    snapshot.updatedAt = now;
 
     return { ok: true, message: "Kill successful" };
 }
@@ -857,6 +896,7 @@ export function tickOxygen(snapshot: JokerSnapshot): void {
 
 export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
     const deaths: JokerPlayerState[] = [];
+    const now = Date.now();
 
     for (const player of snapshot.players) {
         if (!player.isAlive || !player.sessionId) continue;
@@ -865,22 +905,22 @@ export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
             if (player.role === "duck" && !player.duckEmergencyUsed) {
                 // Duck gets emergency oxygen (one-time)
                 player.oxygen = DUCK_EMERGENCY_OXYGEN;
-                player.oxygenUpdatedAt = Date.now();
+                player.oxygenUpdatedAt = now;
                 player.duckEmergencyUsed = true;
 
                 snapshot.logs.push({
-                    at: Date.now(),
+                    at: now,
                     text: `Player ${player.name} used emergency oxygen`,
                     type: "oxygen",
                 });
             } else if (player.role === "hawk" && !player.hawkEmergencyUsed) {
                 // Hawk gets emergency oxygen (one-time)
                 player.oxygen = HAWK_EMERGENCY_OXYGEN;
-                player.oxygenUpdatedAt = Date.now();
+                player.oxygenUpdatedAt = now;
                 player.hawkEmergencyUsed = true;
 
                 snapshot.logs.push({
-                    at: Date.now(),
+                    at: now,
                     text: `Player ${player.name} used emergency oxygen`,
                     type: "oxygen",
                 });
@@ -890,8 +930,21 @@ export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
                 player.oxygenLeakActive = false;
                 deaths.push(player);
 
+                // Create death record for oxygen death
+                snapshot.deaths.push({
+                    sessionId: player.sessionId,
+                    seat: player.seat,
+                    name: player.name,
+                    role: player.role!,
+                    reason: "oxygen",
+                    location: player.location ?? undefined,
+                    round: snapshot.roundCount,
+                    at: now,
+                    revealed: false,
+                });
+
                 snapshot.logs.push({
-                    at: Date.now(),
+                    at: now,
                     text: `Player ${player.name} died from oxygen depletion`,
                     type: "death",
                 });
@@ -899,7 +952,7 @@ export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
         }
     }
 
-    snapshot.updatedAt = Date.now();
+    snapshot.updatedAt = now;
     return deaths;
 }
 
@@ -915,11 +968,20 @@ export function startMeeting(
         return { ok: false, error: "Invalid reporter" };
     }
 
+    // Reveal all unrevealed deaths when entering meeting
+    const now = Date.now();
+    for (const death of snapshot.deaths) {
+        if (!death.revealed) {
+            death.revealed = true;
+            death.revealedAt = now;
+        }
+    }
+
     snapshot.phase = "meeting";
     snapshot.meeting = {
         reporterSessionId,
         bodySessionId,
-        discussionEndAt: Date.now() + PHASE_DURATIONS.meeting,
+        discussionEndAt: now + PHASE_DURATIONS.meeting,
     };
 
     // Reset voting state
@@ -940,7 +1002,7 @@ export function startMeeting(
     }
 
     snapshot.deadline = snapshot.meeting.discussionEndAt;
-    snapshot.updatedAt = Date.now();
+    snapshot.updatedAt = now;
 
     return { ok: true };
 }
@@ -1074,11 +1136,25 @@ export function resolveVotes(snapshot: JokerSnapshot): ActionResult {
     if (executedSessionId) {
         const executed = snapshot.players.find(p => p.sessionId === executedSessionId);
         if (executed) {
+            const now = Date.now();
             executed.isAlive = false;
             executedRole = executed.role;
 
+            // Create death record for vote execution (immediately revealed)
+            snapshot.deaths.push({
+                sessionId: executedSessionId,
+                seat: executed.seat,
+                name: executed.name,
+                role: executed.role!,
+                reason: "vote",
+                round: snapshot.roundCount,
+                at: now,
+                revealed: true,
+                revealedAt: now,
+            });
+
             snapshot.logs.push({
-                at: Date.now(),
+                at: now,
                 text: `Player ${executed.name} was executed by vote (${executedRole})`,
                 type: "vote",
             });
@@ -1090,6 +1166,18 @@ export function resolveVotes(snapshot: JokerSnapshot): ActionResult {
         executedRole,
         reason,
     };
+
+    // Save voting history for review
+    snapshot.votingHistory.push({
+        round: snapshot.roundCount,
+        votes: [...snapshot.voting.votes],
+        tally: { ...tally },
+        skipCount,
+        executedSessionId,
+        executedRole,
+        reason,
+        at: Date.now(),
+    });
 
     snapshot.phase = "execution";
     snapshot.deadline = Date.now() + PHASE_DURATIONS.execution;
@@ -1151,10 +1239,10 @@ export function checkWinCondition(snapshot: JokerSnapshot): JokerGameResult | nu
 
 // ============ Task System ============
 
-const TASK_PROGRESS_PER_COMPLETION = 1; // +1% per task
-const POWER_TASK_PROGRESS_PER_COMPLETION = 3; // +3% per task with power boost
+const TASK_PROGRESS_PER_COMPLETION = 2; // +2% per task
+const POWER_TASK_PROGRESS_PER_COMPLETION = 4; // +4% per task with power boost
 const TASK_OXYGEN_COST = 10; // -10s oxygen per task attempt
-const SHARED_TASK_PROGRESS_PER_PARTICIPANT = 2; // +2% per participant
+const SHARED_TASK_PROGRESS_PER_PARTICIPANT = 3; // +3% per participant
 const SHARED_TASK_OXYGEN_COST = 10; // -10s oxygen per shared task join
 export const SHARED_TASK_DURATIONS_MS: Record<JokerSharedTaskType, number> = {
     nine_grid: 10_000,
@@ -1732,6 +1820,7 @@ export function resetToLobby(snapshot: JokerSnapshot): void {
     snapshot.lifeCodes = createEmptyLifeCodeState();
     snapshot.round = createEmptyRoundState();
     snapshot.logs = [];
+    snapshot.deaths = [];
     snapshot.taskProgress = 0;
     snapshot.tasks = createEmptyTaskSystem();
     snapshot.paused = false;

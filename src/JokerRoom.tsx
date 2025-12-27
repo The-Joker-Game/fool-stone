@@ -12,6 +12,7 @@ import type {
 import { useJokerStore } from "./joker/store";
 import type { JokerStore } from "./joker/store";
 import { MiniGame, getRandomGame, type MiniGameType } from "./joker/mini-games";
+import { JokerGameReview } from "./joker/components/JokerGameReview";
 import { GiKitchenKnives, GiMedicalPack, GiElectric, GiCctvCamera, GiCardboardBox } from "react-icons/gi";
 import {
     Card,
@@ -57,6 +58,7 @@ import {
     Pause,
     Play as PlayIcon,
     BookOpen,
+    Eye,
 } from "lucide-react";
 import Avvvatars from "avvvatars-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -338,6 +340,7 @@ export default function JokerRoom() {
     const [oxygenLeakFlash, setOxygenLeakFlash] = useState<null | { message: string; until: number }>(null);
     const [monitorPeek, setMonitorPeek] = useState<null | { code: string; until: number }>(null);
     const [showMedicalDialog, setShowMedicalDialog] = useState(false);
+    const [showReview, setShowReview] = useState(false);
     const [suppressPauseDialog, setSuppressPauseDialog] = useState(false);
     const [pendingLocationEffect, setPendingLocationEffect] = useState<null | { location: JokerLocation; targetSessionId?: string }>(null);
     const [locationEffectFlash, setLocationEffectFlash] = useState<null | { message: string; until: number }>(null);
@@ -405,7 +408,7 @@ export default function JokerRoom() {
     const kitchenUsed = !!jokerSnapshot?.round?.kitchenUsedBySession?.[mySessionId];
     const medicalUsed = !!jokerSnapshot?.round?.medicalUsedBySession?.[mySessionId];
     const personalTaskProgressLabel =
-        soloLocationEffect === "发电室" && powerBoostActive ? "+3%进度" : "+1%进度";
+        soloLocationEffect === "发电室" && powerBoostActive ? "+4%进度" : "+2%进度";
     const medicalTargets = useMemo(
         () => jokerPlayers.filter(p => p.isAlive && p.sessionId && p.sessionId !== me?.sessionId),
         [jokerPlayers, me?.sessionId]
@@ -739,13 +742,13 @@ export default function JokerRoom() {
                     ? "至少需要5位玩家才能开始游戏！"
                     : res.error === "All players must be ready to start"
                         ? "所有玩家准备后才能开始游戏！"
-                    : res.error === "Only host can start game"
-                        ? "只有房主可以开始游戏"
-                    : res.error === "Game paused"
-                        ? "游戏已暂停"
-                    : res.error === "No snapshot"
-                        ? "暂无游戏快照"
-                    : res.error || "开始游戏失败";
+                        : res.error === "Only host can start game"
+                            ? "只有房主可以开始游戏"
+                            : res.error === "Game paused"
+                                ? "游戏已暂停"
+                                : res.error === "No snapshot"
+                                    ? "暂无游戏快照"
+                                    : res.error || "开始游戏失败";
             await alert(msg);
         }
     }, [startGame]);
@@ -768,21 +771,21 @@ export default function JokerRoom() {
                             ? "不能给自己补氧"
                             : res.error === "Already gave oxygen to this player this round"
                                 ? "本回合已对该玩家补氧"
-                            : res.error === "Actions only available during red light"
-                                ? "只能在红灯阶段操作"
-                            : res.error === "Invalid actor"
-                                ? "操作无效"
-                            : res.error === "Unknown action"
-                                ? "未知操作"
-                            : res.error === "foul_death" || res.error === "foul"
-                                ? "犯规死亡"
-                            : res.error === "Game paused"
-                                ? "游戏已暂停"
-                            : res.error === "No snapshot"
-                                ? "暂无游戏快照"
-                            : res.error === "Player not found"
-                                ? "未找到玩家"
-                            : "操作失败";
+                                : res.error === "Actions only available during red light"
+                                    ? "只能在红灯阶段操作"
+                                    : res.error === "Invalid actor"
+                                        ? "操作无效"
+                                        : res.error === "Unknown action"
+                                            ? "未知操作"
+                                            : res.error === "foul_death" || res.error === "foul"
+                                                ? "犯规死亡"
+                                                : res.error === "Game paused"
+                                                    ? "游戏已暂停"
+                                                    : res.error === "No snapshot"
+                                                        ? "暂无游戏快照"
+                                                        : res.error === "Player not found"
+                                                            ? "未找到玩家"
+                                                            : "操作失败";
             await alert(msg);
         }
         setLifeCodeInput("");
@@ -1419,8 +1422,8 @@ export default function JokerRoom() {
                                 {"\n"}• 可投自己或弃票；结果显示每人得票。
                                 {"\n\n"}
                                 【任务机制】
-                                {"\n"}• 个人任务：成功+1%进度，失败不加；每次消耗10秒氧气。
-                                {"\n"}• 共同任务：同场所所有人都点击后才开始；成功按参与人数每人+2%进度；失败不加进度但照扣氧气。
+                                {"\n"}• 个人任务：成功+2%进度，失败不加；每次消耗10秒氧气。
+                                {"\n"}• 共同任务：同场所所有人都点击后才开始；成功按参与人数每人+3%进度；失败不加进度但照扣氧气。
                                 {"\n"}• 类型：九宫寻宝、数字拼图（限时10秒）。
                                 {"\n\n"}
                                 【突发任务】（红灯随机5-50秒）
@@ -1429,7 +1432,7 @@ export default function JokerRoom() {
                                 {"\n\n"}
                                 【场所效果】（独自一人时生效）
                                 {"\n"}• 监控室（调取影像）：随机窥视1名不同阵营玩家命门码（显示5秒）。
-                                {"\n"}• 发电室（超载推进）：本回合个人任务+3%。
+                                {"\n"}• 发电室（超载推进）：本回合个人任务+4%。
                                 {"\n"}• 厨房（补氧配给）：自补氧+90秒。
                                 {"\n"}• 医务室（远程治疗）：给任意其他玩家补氧+90秒。
                                 {"\n"}• 仓库（应急供氧）：全场补氧+60秒。
@@ -2040,7 +2043,7 @@ export default function JokerRoom() {
                                                                         超载推进
                                                                     </div>
                                                                     <span className="text-[11px] text-white/90">
-                                                                        {powerBoostUsed ? "本回合已使用" : "个人任务+3%"}
+                                                                        {powerBoostUsed ? "本回合已使用" : "个人任务+4%"}
                                                                     </span>
                                                                 </Button>
                                                             );
@@ -2104,7 +2107,7 @@ export default function JokerRoom() {
                                                                 <Users className="w-4 h-4" />
                                                                 共同任务
                                                             </div>
-                                                            <span className="text-[11px] text-white/80">每人+2%进度</span>
+                                                            <span className="text-[11px] text-white/80">每人+3%进度</span>
                                                         </Button>
                                                     )}
                                                 </div>
@@ -2469,11 +2472,21 @@ export default function JokerRoom() {
                                         </CardContent>
                                     </Card>
 
-                                    {isHost && (
-                                        <Button onClick={handleResetGame} size="lg" className="w-full h-14 text-xl font-bold rounded-xl bg-white text-black hover:bg-white/90">
-                                            <RotateCcw className="w-5 h-5 mr-2" />再来一局
+                                    <div className="flex gap-3">
+                                        <Button
+                                            onClick={() => setShowReview(true)}
+                                            variant="outline"
+                                            size="lg"
+                                            className="flex-1 h-14 text-lg font-bold rounded-xl border-white/20 bg-white/10 text-white hover:bg-white/20"
+                                        >
+                                            <Eye className="w-5 h-5 mr-2" />复盘
                                         </Button>
-                                    )}
+                                        {isHost && (
+                                            <Button onClick={handleResetGame} size="lg" className="flex-1 h-14 text-lg font-bold rounded-xl bg-white text-black hover:bg-white/90">
+                                                <RotateCcw className="w-5 h-5 mr-2" />再来一局
+                                            </Button>
+                                        )}
+                                    </div>
                                 </motion.div>
                             )}
 
@@ -2529,6 +2542,27 @@ export default function JokerRoom() {
                             <div className="text-center text-sm text-white/50">暂无可补氧目标</div>
                         )}
                     </div>
+                </DialogContent>
+            </Dialog>
+            {/* Review Dialog */}
+            <Dialog open={showReview} onOpenChange={setShowReview}>
+                <DialogContent className="bg-slate-950/95 text-white border-white/10 max-w-lg max-h-[85vh] overflow-hidden flex flex-col">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <Eye className="w-5 h-5" />
+                            游戏复盘
+                        </DialogTitle>
+                        <DialogDescription className="text-white/60">
+                            查看死亡时间线和投票历史
+                        </DialogDescription>
+                    </DialogHeader>
+                    <ScrollArea className="flex-1 pr-4">
+                        <JokerGameReview
+                            deaths={jokerSnapshot?.deaths ?? []}
+                            votingHistory={jokerSnapshot?.votingHistory ?? []}
+                            players={jokerPlayers}
+                        />
+                    </ScrollArea>
                 </DialogContent>
             </Dialog>
             {ConfirmDialogElement}

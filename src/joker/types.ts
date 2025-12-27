@@ -15,6 +15,27 @@ export type JokerPhase =
 
 export type JokerLocation = "厨房" | "医务室" | "发电室" | "监控室" | "仓库";
 
+// Death tracking
+export type JokerDeathReason =
+    | "kill"           // 被杀
+    | "foul"           // 犯规死亡
+    | "oxygen"         // 氧气耗尽
+    | "vote";          // 投票淘汰
+
+export interface JokerDeathRecord {
+    sessionId: string;
+    seat: number;
+    name: string;
+    role: JokerRole;
+    reason: JokerDeathReason;
+    killerSessionId?: string;
+    location?: JokerLocation;
+    round: number;
+    at: number;
+    revealed: boolean;
+    revealedAt?: number;
+}
+
 export interface JokerPlayerState {
     seat: number;
     sessionId: string | null;
@@ -67,6 +88,18 @@ export interface JokerExecutionResult {
     executedSessionId: string | null;
     executedRole: JokerRole | null;
     reason: "vote" | "tie" | "skip" | null;
+}
+
+// Voting round history for review
+export interface JokerVotingRoundRecord {
+    round: number;
+    votes: JokerVoteEntry[];
+    tally: Record<string, number>;
+    skipCount: number;
+    executedSessionId: string | null;
+    executedRole: JokerRole | null;
+    reason: "vote" | "tie" | "skip" | null;
+    at: number;
 }
 
 export interface JokerLifeCodeState {
@@ -173,6 +206,8 @@ export interface JokerSnapshot {
     gameResult?: JokerGameResult | null;
     logs: JokerLogEntry[];
     chatMessages: JokerChatMessage[];
+    deaths: JokerDeathRecord[];
+    votingHistory: JokerVotingRoundRecord[];
     taskProgress: number;
     deadline?: number;
     tasks?: JokerTaskSystemState;

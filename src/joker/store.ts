@@ -287,6 +287,8 @@ function mergeIncomingSnapshot(target: JokerSnapshot, incoming: JokerSnapshotInp
     if (incoming.hostSessionId !== undefined) target.hostSessionId = incoming.hostSessionId;
     if (incoming.taskProgress !== undefined) target.taskProgress = incoming.taskProgress;
     if (incoming.tasks !== undefined) target.tasks = incoming.tasks;
+    if (incoming.deaths !== undefined) target.deaths = incoming.deaths;
+    if (incoming.votingHistory !== undefined) target.votingHistory = incoming.votingHistory;
 
     // Merge chat messages
     if (incoming.chatMessages) {

@@ -314,11 +314,6 @@ function handleRedLightEnd(
 ): void {
     const snapshot = room.snapshot as JokerSnapshot;
 
-    // Check for deaths from kills during red light
-    const deadPlayers = snapshot.players.filter(
-        p => !p.isAlive && p.sessionId
-    );
-
     // Check win condition
     const result = checkWinCondition(snapshot);
     if (result) {
@@ -328,27 +323,17 @@ function handleRedLightEnd(
         return;
     }
 
-    // If there were any deaths during red light, trigger meeting
-    // For simplicity, we check if any player died (isAlive=false with role assigned)
-    const recentDeaths = snapshot.logs.filter(
-        log => log.type === "kill" || log.type === "death"
-    );
-
-    if (recentDeaths.length > 0) {
-        // Find a living player to be the "reporter" (system auto-reports)
-        const livingPlayer = snapshot.players.find(p => p.isAlive && p.sessionId);
-        if (livingPlayer && livingPlayer.sessionId) {
-            startMeeting(snapshot, livingPlayer.sessionId);
-            broadcastSnapshot(room, io);
-            checkAndScheduleActions(room, io);
-            return;
-        }
+    // Always enter meeting after red light (deaths will be revealed there)
+    const livingPlayer = snapshot.players.find(p => p.isAlive && p.sessionId);
+    if (livingPlayer && livingPlayer.sessionId) {
+        startMeeting(snapshot, livingPlayer.sessionId);
+        broadcastSnapshot(room, io);
+        checkAndScheduleActions(room, io);
+        return;
     }
 
-    // Clear logs for next round
+    // Fallback: if somehow no living players, go to green light
     snapshot.logs = [];
-
-    // No deaths, continue to next round
     transitionToGreenLight(snapshot);
     broadcastSnapshot(room, io);
     checkAndScheduleActions(room, io);

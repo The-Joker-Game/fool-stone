@@ -931,6 +931,11 @@ io.on("connection", (socket: Socket) => {
                 jokerClearTimeouts(roomCode);
               }
             }
+            // Also broadcast when duck loses oxygen for incorrect kill code
+            if (res.error === "Invalid life code" && data?.action === "kill") {
+              // Force broadcast even on error so oxygen penalty is synced
+              io.to(roomCode).emit("state:full", { snapshot: r.snapshot, from: "server", at: Date.now() });
+            }
             break;
 
           case "joker:report": {

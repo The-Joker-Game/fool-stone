@@ -15,6 +15,27 @@ export type JokerPhase =
 
 export type JokerLocation = "厨房" | "医务室" | "发电室" | "监控室" | "仓库";
 
+// Death tracking
+export type JokerDeathReason =
+    | "kill"           // 被杀
+    | "foul"           // 犯规死亡 (鹅/呆呆鸟尝试杀人)
+    | "oxygen"         // 氧气耗尽
+    | "vote";          // 投票淘汰
+
+export interface JokerDeathRecord {
+    sessionId: string;           // 死者 sessionId
+    seat: number;                // 死者座位号
+    name: string;                // 死者名字
+    role: JokerRole;             // 死者角色
+    reason: JokerDeathReason;    // 死亡原因
+    killerSessionId?: string;    // 凶手 sessionId (仅 kill/foul)
+    location?: JokerLocation;    // 死亡地点 (仅 kill/oxygen)
+    round: number;               // 发生回合
+    at: number;                  // 死亡时间戳
+    revealed: boolean;           // 是否已公开
+    revealedAt?: number;         // 公开时间戳
+}
+
 export interface JokerPlayerState {
     seat: number;
     sessionId: string | null;
@@ -71,6 +92,18 @@ export interface JokerExecutionResult {
     executedSessionId: string | null;
     executedRole: JokerRole | null;
     reason: "vote" | "tie" | "skip" | null;
+}
+
+// Voting round history for review
+export interface JokerVotingRoundRecord {
+    round: number;                          // 轮次
+    votes: JokerVoteEntry[];                // 投票记录
+    tally: Record<string, number>;          // 票数统计
+    skipCount: number;                      // 弃票数
+    executedSessionId: string | null;       // 被淘汰玩家
+    executedRole: JokerRole | null;         // 被淘汰玩家角色
+    reason: "vote" | "tie" | "skip" | null; // 淘汰原因
+    at: number;                             // 时间戳
 }
 
 export interface JokerLifeCodeState {
@@ -192,6 +225,12 @@ export interface JokerSnapshot {
     // Logs and chat
     logs: JokerLogEntry[];
     chatMessages: JokerChatMessage[];
+
+    // Death records
+    deaths: JokerDeathRecord[];
+
+    // Voting history for review
+    votingHistory: JokerVotingRoundRecord[];
 
     // Task progress (0-100, goose wins at 100)
     taskProgress: number;
