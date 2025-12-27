@@ -51,7 +51,7 @@ import {
   joinGoldenRabbitTask as jokerJoinGoldenRabbitTask,
   submitGoldenRabbitChoice as jokerSubmitGoldenRabbitChoice,
 } from "./game-joker/engine.js";
-import type { JokerPlayerState, JokerSnapshot } from "./game-joker/types.js";
+import type { ActionResult, JokerPlayerState, JokerSnapshot } from "./game-joker/types.js";
 import { checkAndScheduleActions as jokerScheduleActions, clearRoomTimeouts as jokerClearTimeouts, checkAllVoted } from "./game-joker/scheduler.js";
 
 // Load env vars (allow .env.local to override)
@@ -868,7 +868,7 @@ io.on("connection", (socket: Socket) => {
           return cb({ ok: false, msg: "Joker game not initialized" });
         }
 
-        let res: { ok: boolean; error?: string; message?: string } = { ok: false, error: "Unknown action" };
+        let res: ActionResult = { ok: false, error: "Unknown action" };
         let shouldBroadcast = false;
         const jokerSnapshot = r.snapshot as JokerSnapshot;
         if (jokerSnapshot.paused && action !== "joker:toggle_pause" && action !== "joker:reset_game") {
