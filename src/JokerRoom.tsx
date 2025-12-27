@@ -64,6 +64,8 @@ import Avvvatars from "avvvatars-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useConfirm } from "@/flower/components/ConfirmDialog";
+import { toast } from "sonner";
+import { Toaster } from "@/components/ui/sonner";
 
 // Utility
 function randName() {
@@ -335,15 +337,11 @@ export default function JokerRoom() {
     const actionCooldown = cooldownSeconds > 0;
     const [taskCooldownSeconds, setTaskCooldownSeconds] = useState(0);
     const taskCooldown = taskCooldownSeconds > 0;
-    const [taskResultFlash, setTaskResultFlash] = useState<null | { result: "success" | "fail"; until: number }>(null);
-    const [goldenRabbitResultFlash, setGoldenRabbitResultFlash] = useState<null | { result: "success" | "fail"; until: number; rabbitIndex?: number }>(null);
-    const [oxygenLeakFlash, setOxygenLeakFlash] = useState<null | { message: string; until: number }>(null);
     const [monitorPeek, setMonitorPeek] = useState<null | { code: string; until: number }>(null);
     const [showMedicalDialog, setShowMedicalDialog] = useState(false);
     const [showReview, setShowReview] = useState(false);
     const [suppressPauseDialog, setSuppressPauseDialog] = useState(false);
     const [pendingLocationEffect, setPendingLocationEffect] = useState<null | { location: JokerLocation; targetSessionId?: string }>(null);
-    const [locationEffectFlash, setLocationEffectFlash] = useState<null | { message: string; until: number }>(null);
 
     // Mini-game state
     const [showMiniGame, setShowMiniGame] = useState(false);
@@ -390,7 +388,6 @@ export default function JokerRoom() {
     const myGoldenRabbitX = goldenRabbitTask?.xBySession?.[mySessionId] ?? [];
     const [sharedTimeLeft, setSharedTimeLeft] = useState(0);
     const [goldenRabbitJoinLeft, setGoldenRabbitJoinLeft] = useState(0);
-    const [sharedResultFlash, setSharedResultFlash] = useState<null | { result: "success" | "fail"; until: number }>(null);
     const lastSharedResolvedAtRef = useRef<number | null>(null);
     const lastGoldenRabbitResolvedAtRef = useRef<number | null>(null);
     const lastOxygenLeakStartedAtRef = useRef<number | null>(null);
@@ -455,27 +452,6 @@ export default function JokerRoom() {
         }, 1000);
         return () => clearInterval(interval);
     }, [taskCooldownSeconds]);
-
-    useEffect(() => {
-        if (!taskResultFlash) return;
-        const delay = Math.max(0, taskResultFlash.until - Date.now());
-        const timer = setTimeout(() => setTaskResultFlash(null), delay);
-        return () => clearTimeout(timer);
-    }, [taskResultFlash?.until]);
-
-    useEffect(() => {
-        if (!goldenRabbitResultFlash) return;
-        const delay = Math.max(0, goldenRabbitResultFlash.until - Date.now());
-        const timer = setTimeout(() => setGoldenRabbitResultFlash(null), delay);
-        return () => clearTimeout(timer);
-    }, [goldenRabbitResultFlash?.until]);
-
-    useEffect(() => {
-        if (!oxygenLeakFlash) return;
-        const delay = Math.max(0, oxygenLeakFlash.until - Date.now());
-        const timer = setTimeout(() => setOxygenLeakFlash(null), delay);
-        return () => clearTimeout(timer);
-    }, [oxygenLeakFlash?.until]);
 
     useEffect(() => {
         if (jokerSnapshot?.paused && typeof jokerSnapshot?.pauseRemainingMs === "number") {
@@ -1024,7 +1000,7 @@ export default function JokerRoom() {
             await alert(locationEffectErrorMessage((resp as any)?.msg));
             return;
         }
-        setLocationEffectFlash({ message: "场所效果失败，本回合无法再使用", until: Date.now() + 2000 });
+        toast.error("场所效果失败，本回合无法再使用");
     }, [roomCode, locationEffectErrorMessage]);
 
     const handleLocationEffectSuccess = useCallback(async (effect: { location: JokerLocation; targetSessionId?: string }) => {
@@ -1097,7 +1073,7 @@ export default function JokerRoom() {
         if (sharedTask?.status !== "resolved" || !sharedTask.result || !sharedTask.resolvedAt) return;
         if (lastSharedResolvedAtRef.current === sharedTask.resolvedAt) return;
         lastSharedResolvedAtRef.current = sharedTask.resolvedAt;
-        setSharedResultFlash({ result: sharedTask.result, until: Date.now() + 2000 });
+        toast[sharedTask.result === "success" ? "success" : "error"](`共同任务${sharedTask.result === "success" ? "成功" : "失败"}`);
         if (isSharedParticipant) {
             setTaskCooldownSeconds(10);
         }
@@ -1108,11 +1084,7 @@ export default function JokerRoom() {
         if (lastGoldenRabbitResolvedAtRef.current === goldenRabbitTask.resolvedAt) return;
         lastGoldenRabbitResolvedAtRef.current = goldenRabbitTask.resolvedAt;
         if (isGoldenRabbitParticipant) {
-            setGoldenRabbitResultFlash({
-                result: goldenRabbitTask.result,
-                until: Date.now() + 2000,
-                rabbitIndex: goldenRabbitTask.rabbitIndex,
-            });
+            toast[goldenRabbitTask.result === "success" ? "success" : "error"](`捕兔${goldenRabbitTask.result === "success" ? "成功！" : "失败"}`);
         }
     }, [goldenRabbitTask?.status, goldenRabbitTask?.result, goldenRabbitTask?.resolvedAt, isGoldenRabbitParticipant]);
 
@@ -1120,28 +1092,15 @@ export default function JokerRoom() {
         if (!me?.oxygenLeakActive || !me.oxygenLeakStartedAt) return;
         if (lastOxygenLeakStartedAtRef.current === me.oxygenLeakStartedAt) return;
         lastOxygenLeakStartedAtRef.current = me.oxygenLeakStartedAt;
-        setOxygenLeakFlash({
-            message: "氧气瓶泄漏！立刻找身边玩家进行补氧，协助维修！",
-            until: Date.now() + 2500,
-        });
+        toast.error("氧气瓶泄漏！立刻找身边玩家进行补氧，协助维修！", { duration: 3000 });
     }, [me?.oxygenLeakActive, me?.oxygenLeakStartedAt]);
 
     useEffect(() => {
         if (!me?.oxygenLeakResolvedAt) return;
         if (lastOxygenLeakResolvedAtRef.current === me.oxygenLeakResolvedAt) return;
         lastOxygenLeakResolvedAtRef.current = me.oxygenLeakResolvedAt;
-        setOxygenLeakFlash({
-            message: "氧气瓶修复完毕！",
-            until: Date.now() + 2000,
-        });
+        toast.success("氧气瓶修复完毕！");
     }, [me?.oxygenLeakResolvedAt]);
-
-    useEffect(() => {
-        if (!sharedResultFlash) return;
-        const delay = Math.max(0, sharedResultFlash.until - Date.now());
-        const timer = setTimeout(() => setSharedResultFlash(null), delay);
-        return () => clearTimeout(timer);
-    }, [sharedResultFlash?.until]);
 
     useEffect(() => {
         if (!monitorPeek) return;
@@ -1149,13 +1108,6 @@ export default function JokerRoom() {
         const timer = setTimeout(() => setMonitorPeek(null), delay);
         return () => clearTimeout(timer);
     }, [monitorPeek?.until]);
-
-    useEffect(() => {
-        if (!locationEffectFlash) return;
-        const delay = Math.max(0, locationEffectFlash.until - Date.now());
-        const timer = setTimeout(() => setLocationEffectFlash(null), delay);
-        return () => clearTimeout(timer);
-    }, [locationEffectFlash?.until]);
 
     const handleCompleteTask = useCallback(async () => {
         if (!roomCode) return;
@@ -1168,7 +1120,7 @@ export default function JokerRoom() {
             return;
         }
         await rt.emitAck("intent", { room: roomCode, action: "joker:complete_task" });
-        setTaskResultFlash({ result: "success", until: Date.now() + 2000 });
+        toast.success("个人任务成功");
         setTaskCooldownSeconds(10);
     }, [roomCode, pendingLocationEffect, handleLocationEffectSuccess]);
 
@@ -1180,7 +1132,7 @@ export default function JokerRoom() {
             handleLocationEffectFail();
             return;
         }
-        setTaskResultFlash({ result: "fail", until: Date.now() + 2000 });
+        toast.error("个人任务失败");
         setTaskCooldownSeconds(10);
     }, [pendingLocationEffect, handleLocationEffectFail]);
 
@@ -1456,72 +1408,10 @@ export default function JokerRoom() {
                     </div>
                 </div>
             )}
-            {sharedResultFlash && (
-                <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
-                    <div className={`px-6 py-3 rounded-full border text-lg font-semibold ${sharedResultFlash.result === "success"
-                        ? "bg-emerald-500/20 text-emerald-200 border-emerald-500/30"
-                        : "bg-red-500/20 text-red-200 border-red-500/30"
-                        }`}>
-                        共同任务{sharedResultFlash.result === "success" ? "成功" : "失败"}
-                    </div>
-                </div>
-            )}
-            {goldenRabbitResultFlash && (
-                <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
-                    <div className={`px-6 py-4 rounded-2xl border text-lg font-semibold ${goldenRabbitResultFlash.result === "success"
-                        ? "bg-amber-400/20 text-amber-100 border-amber-400/40"
-                        : "bg-red-500/20 text-red-200 border-red-500/30"
-                        }`}>
-                        <div className="text-center">
-                            捕兔{goldenRabbitResultFlash.result === "success" ? "成功" : "失败"}
-                        </div>
-                        {goldenRabbitResultFlash.rabbitIndex !== undefined && (
-                            <div className="mt-3 grid grid-cols-3 gap-1">
-                                {Array.from({ length: 9 }, (_, idx) => {
-                                    const isRabbit = idx === goldenRabbitResultFlash.rabbitIndex;
-                                    return (
-                                        <div
-                                            key={idx}
-                                            className={`w-7 h-7 rounded-md border ${isRabbit
-                                                ? "bg-amber-300/80 border-amber-200"
-                                                : "bg-white/5 border-white/20"
-                                                }`}
-                                        />
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-            {oxygenLeakFlash && (
-                <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
-                    <div className="px-6 py-3 rounded-full border text-lg font-semibold bg-red-500/20 text-red-100 border-red-500/30">
-                        {oxygenLeakFlash.message}
-                    </div>
-                </div>
-            )}
-            {locationEffectFlash && (
-                <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
-                    <div className="px-6 py-3 rounded-full border text-lg font-semibold bg-slate-500/20 text-slate-100 border-slate-400/40">
-                        {locationEffectFlash.message}
-                    </div>
-                </div>
-            )}
             {monitorPeek && (
                 <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
                     <div className="px-6 py-3 rounded-full border text-lg font-semibold bg-slate-500/20 text-slate-100 border-slate-400/40">
                         窥视到命门代码 {monitorPeek.code}
-                    </div>
-                </div>
-            )}
-            {taskResultFlash && (
-                <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
-                    <div className={`px-6 py-3 rounded-full border text-lg font-semibold ${taskResultFlash.result === "success"
-                        ? "bg-emerald-500/20 text-emerald-200 border-emerald-500/30"
-                        : "bg-red-500/20 text-red-200 border-red-500/30"
-                        }`}>
-                        个人任务{taskResultFlash.result === "success" ? "成功" : "失败"}
                     </div>
                 </div>
             )}
@@ -1812,20 +1702,23 @@ export default function JokerRoom() {
                             {phase === "green_light" && myAlive && (
                                 <motion.div variants={cardVariants} initial="hidden" animate="visible">
                                     <div className="grid grid-cols-2 gap-3">
-                                        {jokerSnapshot?.activeLocations.map((loc) => (
-                                            <button
-                                                key={loc}
-                                                onClick={() => handleSelectLocation(loc)}
-                                                disabled={isInteractionDisabled}
-                                                className={`relative h-24 rounded-2xl border-2 flex flex-col items-center justify-center gap-2 transition-all active:scale-95 ${me?.targetLocation === loc
-                                                    ? "bg-green-500/20 text-green-400 border-green-500/50 shadow-[0_0_20px_rgba(34,197,94,0.3)]"
-                                                    : "bg-white/5 text-white/70 border-white/10 hover:bg-white/10 hover:text-white hover:border-white/30"
-                                                    }`}
-                                            >
-                                                <MapPin className={`w-6 h-6 ${me?.targetLocation === loc ? "text-green-400" : "text-white/70"}`} />
-                                                <span className="font-bold text-lg">{loc}</span>
-                                            </button>
-                                        ))}
+                                        {jokerSnapshot?.activeLocations.map((loc) => {
+                                            const LocationIcon = LOCATION_ICONS[loc];
+                                            return (
+                                                <button
+                                                    key={loc}
+                                                    onClick={() => handleSelectLocation(loc)}
+                                                    disabled={isInteractionDisabled}
+                                                    className={`relative h-24 rounded-2xl border-2 flex flex-col items-center justify-center gap-2 transition-all active:scale-95 ${me?.targetLocation === loc
+                                                        ? "bg-green-500/20 text-green-400 border-green-500/50 shadow-[0_0_20px_rgba(34,197,94,0.3)]"
+                                                        : "bg-white/5 text-white/70 border-white/10 hover:bg-white/10 hover:text-white hover:border-white/30"
+                                                        }`}
+                                                >
+                                                    <LocationIcon className={`w-6 h-6 ${me?.targetLocation === loc ? "text-green-400" : "text-white/70"}`} />
+                                                    <span className="font-bold text-lg">{loc}</span>
+                                                </button>
+                                            );
+                                        })}
                                     </div>
                                     <p className="text-center text-white/50 mt-6 text-sm">点击位置前往</p>
                                 </motion.div>
@@ -1953,7 +1846,7 @@ export default function JokerRoom() {
                                                                 <>
                                                                     {isGoldenRabbitParticipant ? (
                                                                         <div className="space-y-2">
-                                                                            <div className="text-xs text-white/70">九宫格围捕：排除 X 后选择一格</div>
+                                                                            <div className="text-xs text-amber-300/90 bg-amber-500/10 px-2 py-1 rounded">对照彼此屏幕，排除X格，任意队员选中兔子藏身之格即成功！</div>
                                                                             <div className="grid grid-cols-3 gap-2">
                                                                                 {Array.from({ length: 9 }, (_, idx) => {
                                                                                     const blocked = myGoldenRabbitX.includes(idx);
@@ -2139,25 +2032,28 @@ export default function JokerRoom() {
                                                             <div className="space-y-2">
                                                                 <div>共同任务进行中... 剩余 {sharedTimeLeft}s</div>
                                                                 {sharedTask.type === "nine_grid" && mySharedGrid.length === 9 && (
-                                                                    <div className="grid grid-cols-3 gap-2 pt-2">
-                                                                        {mySharedGrid.map((icon, idx) => {
-                                                                            const selected = mySharedSelection === idx;
-                                                                            return (
-                                                                                <Button
-                                                                                    key={idx}
-                                                                                    onClick={() => handleSharedTaskSubmit(idx)}
-                                                                                    disabled={isInteractionDisabled || sharedTask.status !== "active" || mySharedSelection !== undefined}
-                                                                                    className={`h-12 text-xl font-bold ${selected ? "bg-emerald-500/70 hover:bg-emerald-500/70" : "bg-white/10 hover:bg-white/20"} text-white`}
-                                                                                >
-                                                                                    {renderNineGridIcon(icon)}
-                                                                                </Button>
-                                                                            );
-                                                                        })}
-                                                                    </div>
+                                                                    <>
+                                                                        <div className="text-xs text-amber-300/90 bg-amber-500/10 px-2 py-1 rounded">对照彼此屏幕，找出同位置的相同图标并点击！</div>
+                                                                        <div className="grid grid-cols-3 gap-2 pt-2">
+                                                                            {mySharedGrid.map((icon, idx) => {
+                                                                                const selected = mySharedSelection === idx;
+                                                                                return (
+                                                                                    <Button
+                                                                                        key={idx}
+                                                                                        onClick={() => handleSharedTaskSubmit(idx)}
+                                                                                        disabled={isInteractionDisabled || sharedTask.status !== "active" || mySharedSelection !== undefined}
+                                                                                        className={`h-12 text-xl font-bold ${selected ? "bg-emerald-500/70 hover:bg-emerald-500/70" : "bg-white/10 hover:bg-white/20"} text-white`}
+                                                                                    >
+                                                                                        {renderNineGridIcon(icon)}
+                                                                                    </Button>
+                                                                                );
+                                                                            })}
+                                                                        </div>
+                                                                    </>
                                                                 )}
                                                                 {sharedTask.type === "digit_puzzle" && (
                                                                     <div className="space-y-2 pt-2">
-                                                                        <div className="text-xs text-white/60">数字拼图：你只看到部分亮段</div>
+                                                                        <div className="text-xs text-amber-300/90 bg-amber-500/10 px-2 py-1 rounded">对照彼此屏幕，拼出一个数字！</div>
                                                                         {renderDigitSegments(myDigitSegments)}
                                                                         {myDigitSegments.length === 0 && (
                                                                             <div className="text-xs text-white/50">这次你没有亮段，观察他人屏幕</div>
@@ -2249,6 +2145,45 @@ export default function JokerRoom() {
                                         <MessageCircle className="w-7 h-7" />
                                         紧急会议
                                     </h2>
+                                    {/* 显示拉铃信息 */}
+                                    <div className="mb-4 space-y-3">
+                                        <div className="flex items-center justify-center gap-2 text-white/90 text-lg">
+                                            <Siren className="w-5 h-5 text-blue-400" />
+                                            {jokerSnapshot?.meeting?.triggerType === "system"
+                                                ? <span>系统自动触发</span>
+                                                : (
+                                                    <div className="flex items-center gap-2">
+                                                        <Avvvatars value={String(jokerSnapshot?.meeting?.triggerPlayerSeat ?? "?")} size={24} />
+                                                        <span>{jokerSnapshot?.meeting?.triggerPlayerName ?? "玩家"} 拉响了警铃</span>
+                                                    </div>
+                                                )}
+                                        </div>
+                                        {(jokerSnapshot?.meeting?.deathCount ?? 0) > 0 && (
+                                            <>
+                                                <div className="flex items-center justify-center gap-2 text-red-400 text-base font-medium">
+                                                    <Skull className="w-4 h-4" />
+                                                    <span>本轮有 {jokerSnapshot?.meeting?.deathCount} 人死亡</span>
+                                                </div>
+                                                {/* 显示死亡玩家列表 */}
+                                                <div className="flex flex-wrap items-center justify-center gap-2 mt-2">
+                                                    {jokerSnapshot?.deaths
+                                                        .filter(d => d.revealed && d.round === jokerSnapshot.roundCount)
+                                                        .map(d => (
+                                                            <div key={d.sessionId} className="flex items-center gap-1.5 bg-red-500/20 px-2 py-1 rounded-lg border border-red-500/30">
+                                                                <Avvvatars value={String(d.seat)} size={20} />
+                                                                <span className="text-sm text-red-300">{d.name}</span>
+                                                            </div>
+                                                        ))}
+                                                </div>
+                                            </>
+                                        )}
+                                        {(jokerSnapshot?.meeting?.deathCount ?? 0) === 0 && (
+                                            <div className="flex items-center justify-center gap-2 text-green-400/80 text-base">
+                                                <CheckCircle2 className="w-4 h-4" />
+                                                <span>本轮无人死亡</span>
+                                            </div>
+                                        )}
+                                    </div>
                                     <p className="text-white/70 max-w-xs mx-auto">与其他玩家讨论。谁的行为可疑？</p>
                                     {isHost && (
                                         <div className="mt-6 flex items-center justify-center gap-3">
@@ -2570,11 +2505,13 @@ export default function JokerRoom() {
                             deaths={jokerSnapshot?.deaths ?? []}
                             votingHistory={jokerSnapshot?.votingHistory ?? []}
                             players={jokerPlayers}
+                            locationHistory={jokerSnapshot?.locationHistory}
                         />
                     </ScrollArea>
                 </DialogContent>
             </Dialog>
             {ConfirmDialogElement}
+            <Toaster position="top-center" richColors theme="dark" />
         </div>
     );
 }

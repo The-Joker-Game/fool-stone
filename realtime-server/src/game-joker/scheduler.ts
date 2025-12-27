@@ -330,7 +330,7 @@ function handleRedLightEnd(
         // Enter meeting to reveal deaths
         const livingPlayer = snapshot.players.find(p => p.isAlive && p.sessionId);
         if (livingPlayer && livingPlayer.sessionId) {
-            startMeeting(snapshot, livingPlayer.sessionId);
+            startMeeting(snapshot, livingPlayer.sessionId, undefined, "system");
             broadcastSnapshot(room, io);
             checkAndScheduleActions(room, io);
             return;

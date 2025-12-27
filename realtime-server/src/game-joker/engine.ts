@@ -139,6 +139,7 @@ export function initJokerRoom(roomCode: string, players: InitPlayer[]): JokerSna
         chatMessages: [],
         deaths: [],
         votingHistory: [],
+        locationHistory: {},
         taskProgress: 0,
         tasks: createEmptyTaskSystem(),
         paused: false,
@@ -518,6 +519,8 @@ function handleKillAction(
         role: target.role!,
         reason: "kill",
         killerSessionId: actor.sessionId ?? undefined,
+        killerSeat: actor.seat,
+        killerLocation: actor.location ?? undefined,
         location: target.location ?? undefined,
         round: snapshot.roundCount,
         at: now,
@@ -961,12 +964,16 @@ export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
 export function startMeeting(
     snapshot: JokerSnapshot,
     reporterSessionId: string,
-    bodySessionId?: string
+    bodySessionId?: string,
+    triggerType: "player" | "system" = "player"
 ): ActionResult {
     const reporter = snapshot.players.find(p => p.sessionId === reporterSessionId);
     if (!reporter || !reporter.isAlive) {
         return { ok: false, error: "Invalid reporter" };
     }
+
+    // Count unrevealed deaths before revealing them
+    const unrevealedDeathCount = snapshot.deaths.filter(d => !d.revealed).length;
 
     // Reveal all unrevealed deaths when entering meeting
     const now = Date.now();
@@ -982,6 +989,10 @@ export function startMeeting(
         reporterSessionId,
         bodySessionId,
         discussionEndAt: now + PHASE_DURATIONS.meeting,
+        triggerType,
+        triggerPlayerName: triggerType === "player" ? reporter.name : undefined,
+        triggerPlayerSeat: triggerType === "player" ? reporter.seat : undefined,
+        deathCount: unrevealedDeathCount,
     };
 
     // Reset voting state
@@ -1793,6 +1804,25 @@ export function transitionToRedLight(snapshot: JokerSnapshot): void {
     snapshot.phase = "red_light";
     snapshot.round.phaseStartAt = Date.now();
     snapshot.round.redLightHalf = "first";
+
+    // 记录当前回合每个场所的玩家座位号
+    const roundLocations: Record<string, number[]> = {};
+    for (const loc of snapshot.activeLocations) {
+        roundLocations[loc] = [];
+    }
+    for (const player of snapshot.players) {
+        if (player.isAlive && player.location) {
+            if (!roundLocations[player.location]) {
+                roundLocations[player.location] = [];
+            }
+            roundLocations[player.location].push(player.seat);
+        }
+    }
+    // 按座位号排序
+    for (const loc of Object.keys(roundLocations)) {
+        roundLocations[loc].sort((a, b) => a - b);
+    }
+    snapshot.locationHistory[snapshot.roundCount] = roundLocations as Record<JokerLocation, number[]>;
 
     snapshot.deadline = Date.now() + PHASE_DURATIONS.red_light;
     snapshot.updatedAt = Date.now();

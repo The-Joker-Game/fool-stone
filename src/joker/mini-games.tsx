@@ -209,8 +209,13 @@ export function NumberMemoryGame({ onComplete, onClose }: MiniGameProps) {
         if (inputValue.length < 4) {
             const newValue = inputValue + key;
             setInputValue(newValue);
-            if (newValue === targetNumber) {
-                onComplete();
+            if (newValue.length === 4) {
+                if (newValue === targetNumber) {
+                    onComplete();
+                } else {
+                    // 输入错误，立刻显示任务失败
+                    onClose();
+                }
             }
         }
     };

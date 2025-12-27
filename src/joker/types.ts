@@ -29,6 +29,8 @@ export interface JokerDeathRecord {
     role: JokerRole;
     reason: JokerDeathReason;
     killerSessionId?: string;
+    killerSeat?: number;
+    killerLocation?: JokerLocation;
     location?: JokerLocation;
     round: number;
     at: number;
@@ -76,6 +78,10 @@ export interface JokerMeetingState {
     reporterSessionId?: string;
     bodySessionId?: string;
     discussionEndAt?: number;
+    triggerType?: "player" | "system";
+    triggerPlayerName?: string;
+    triggerPlayerSeat?: number;
+    deathCount?: number;
 }
 
 export interface JokerVotingState {
@@ -208,6 +214,7 @@ export interface JokerSnapshot {
     chatMessages: JokerChatMessage[];
     deaths: JokerDeathRecord[];
     votingHistory: JokerVotingRoundRecord[];
+    locationHistory: Record<number, Record<JokerLocation, number[]>>;
     taskProgress: number;
     deadline?: number;
     tasks?: JokerTaskSystemState;

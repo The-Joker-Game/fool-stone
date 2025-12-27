@@ -1,8 +1,8 @@
 // src/joker/components/JokerGameReview.tsx
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Skull, Vote, MapPin, Swords } from "lucide-react";
-import type { JokerDeathRecord, JokerVotingRoundRecord, JokerPlayerState, JokerRole } from "../types";
+import { Skull, Vote, Users } from "lucide-react";
+import type { JokerDeathRecord, JokerVotingRoundRecord, JokerPlayerState, JokerRole, JokerLocation } from "../types";
 import Avvvatars from "avvvatars-react";
 import { JokerVotingGraph } from "./JokerVotingGraph";
 
@@ -10,6 +10,7 @@ interface JokerGameReviewProps {
     deaths: JokerDeathRecord[];
     votingHistory: JokerVotingRoundRecord[];
     players: JokerPlayerState[];
+    locationHistory?: Record<number, Record<JokerLocation, number[]>>;
 }
 
 const ROLE_LABELS: Record<JokerRole, string> = {
@@ -26,40 +27,46 @@ const ROLE_COLORS: Record<JokerRole, string> = {
     hawk: "bg-blue-500/20 text-blue-300 border-blue-500/30",
 };
 
-const DEATH_REASON_LABELS: Record<string, string> = {
-    kill: "被击杀",
-    foul: "犯规死亡",
-    oxygen: "氧气耗尽",
-    vote: "投票淘汰",
-};
-
-const DEATH_REASON_COLORS: Record<string, string> = {
-    kill: "bg-red-500/20 text-red-300 border-red-500/30",
-    foul: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30",
-    oxygen: "bg-cyan-500/20 text-cyan-300 border-cyan-500/30",
-    vote: "bg-purple-500/20 text-purple-300 border-purple-500/30",
-};
-
 type TimelineEvent =
     | { type: "round_start"; round: number }
+    | { type: "location_summary"; round: number; locations: Record<JokerLocation, number[]> }
     | { type: "death"; death: JokerDeathRecord }
     | { type: "voting"; voting: JokerVotingRoundRecord };
 
-export function JokerGameReview({ deaths, votingHistory, players }: JokerGameReviewProps) {
-    // Helper to get player name by sessionId
-    const getPlayerName = (sessionId: string | null) => {
-        if (!sessionId) return "未知";
-        const player = players.find(p => p.sessionId === sessionId);
-        return player?.name || `玩家${player?.seat || "?"}`;
-    };
-
+export function JokerGameReview({ deaths, votingHistory, players, locationHistory }: JokerGameReviewProps) {
     const getPlayerSeat = (sessionId: string | null) => {
         if (!sessionId) return 0;
         const player = players.find(p => p.sessionId === sessionId);
         return player?.seat || 0;
     };
 
-    // Build timeline: group by round, showing deaths then voting for each round
+    const getPlayerName = (sessionId: string | null) => {
+        if (!sessionId) return "未知";
+        const player = players.find(p => p.sessionId === sessionId);
+        return player?.name || `玩家${player?.seat || "?"}`;
+    };
+
+    // 格式化死亡描述
+    const formatDeathDescription = (death: JokerDeathRecord): string => {
+        if (death.reason === "kill" && death.killerSeat) {
+            const killerLoc = death.killerLocation ? `（${death.killerLocation}）` : "";
+            const victimLoc = death.location ? `（${death.location}）` : "";
+            return `${death.killerSeat}号${killerLoc} 击杀 ${death.seat}号${victimLoc}`;
+        }
+        if (death.reason === "oxygen") {
+            return `${death.seat}号 缺氧而死`;
+        }
+        if (death.reason === "foul") {
+            const loc = death.location ? `（${death.location}）` : "";
+            return `${death.seat}号${loc} 犯规死亡`;
+        }
+        if (death.reason === "vote") {
+            return `${death.seat}号 被投票淘汰`;
+        }
+        return `${death.seat}号 死亡`;
+    };
+
+    // Build timeline
     const maxRound = Math.max(
         ...deaths.map(d => d.round),
         ...votingHistory.map(v => v.round),
@@ -69,10 +76,16 @@ export function JokerGameReview({ deaths, votingHistory, players }: JokerGameRev
     const timeline: TimelineEvent[] = [];
 
     for (let round = 1; round <= maxRound; round++) {
-        // Add round header
+        // Round header
         timeline.push({ type: "round_start", round });
 
-        // Get deaths for this round (excluding vote deaths which are part of voting)
+        // Location summary for this round
+        const roundLocations = locationHistory?.[round];
+        if (roundLocations && Object.keys(roundLocations).length > 0) {
+            timeline.push({ type: "location_summary", round, locations: roundLocations });
+        }
+
+        // Deaths (excluding vote deaths)
         const roundDeaths = deaths
             .filter(d => d.round === round && d.reason !== "vote")
             .sort((a, b) => a.at - b.at);
@@ -81,7 +94,7 @@ export function JokerGameReview({ deaths, votingHistory, players }: JokerGameRev
             timeline.push({ type: "death", death });
         }
 
-        // Get voting for this round
+        // Voting
         const roundVoting = votingHistory.find(v => v.round === round);
         if (roundVoting) {
             timeline.push({ type: "voting", voting: roundVoting });
@@ -110,45 +123,46 @@ export function JokerGameReview({ deaths, votingHistory, players }: JokerGameRev
                     );
                 }
 
+                if (event.type === "location_summary") {
+                    const locations = event.locations;
+                    return (
+                        <Card key={`loc-${idx}`} className="bg-slate-500/5 backdrop-blur-xl border-slate-500/20">
+                            <CardContent className="p-3">
+                                <div className="flex items-center gap-2 mb-2 text-sm text-white/70">
+                                    <Users className="w-4 h-4" />
+                                    <span>场所分布</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-xs">
+                                    {Object.entries(locations).map(([loc, seats]) => (
+                                        seats.length > 0 && (
+                                            <div key={loc} className="flex items-center justify-between bg-white/5 px-2 py-1 rounded">
+                                                <span className="text-white/60">{loc}</span>
+                                                <span className="text-white/90 font-mono">
+                                                    {seats.join(", ")}号
+                                                </span>
+                                            </div>
+                                        )
+                                    ))}
+                                </div>
+                            </CardContent>
+                        </Card>
+                    );
+                }
+
                 if (event.type === "death") {
                     const death = event.death;
-                    const killerName = death.killerSessionId ? getPlayerName(death.killerSessionId) : null;
+                    const description = formatDeathDescription(death);
 
                     return (
                         <Card key={`death-${idx}`} className="bg-red-500/5 backdrop-blur-xl border-red-500/20">
                             <CardContent className="p-3">
-                                <div className="flex items-start gap-3">
-                                    <div className="flex-shrink-0 mt-0.5">
-                                        <div className="w-8 h-8 rounded-full bg-red-500/20 flex items-center justify-center">
-                                            <Skull className="w-4 h-4 text-red-400" />
+                                <div className="flex items-center gap-3">
+                                    <div className="flex-shrink-0">
+                                        <div className="w-6 h-6 rounded-full bg-red-500/20 flex items-center justify-center">
+                                            <Skull className="w-3 h-3 text-red-400" />
                                         </div>
                                     </div>
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            <Avvvatars value={String(death.seat)} size={20} />
-                                            <span className="font-medium text-white">{death.name}</span>
-                                            <Badge variant="outline" className={ROLE_COLORS[death.role]}>
-                                                {ROLE_LABELS[death.role]}
-                                            </Badge>
-                                            <Badge variant="outline" className={DEATH_REASON_COLORS[death.reason]}>
-                                                {DEATH_REASON_LABELS[death.reason]}
-                                            </Badge>
-                                        </div>
-                                        <div className="flex items-center gap-3 mt-1 text-xs text-white/50">
-                                            {death.location && (
-                                                <span className="flex items-center gap-1">
-                                                    <MapPin className="w-3 h-3" />
-                                                    {death.location}
-                                                </span>
-                                            )}
-                                            {killerName && (
-                                                <span className="flex items-center gap-1">
-                                                    <Swords className="w-3 h-3" />
-                                                    凶手: {killerName}
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
+                                    <span className="text-sm text-white/90">{description}</span>
                                 </div>
                             </CardContent>
                         </Card>
@@ -191,14 +205,11 @@ export function JokerGameReview({ deaths, votingHistory, players }: JokerGameRev
                                 </CardTitle>
                             </CardHeader>
                             <CardContent className="p-3 pt-0">
-                                {/* Voting Graph with Bezier curves */}
                                 <JokerVotingGraph
                                     players={players}
                                     votes={round.votes}
                                     showRole={true}
                                 />
-
-                                {/* Executed role reveal */}
                                 {round.executedRole && (
                                     <div className="pt-2 mt-2 border-t border-white/10">
                                         <div className="flex items-center gap-2 justify-center text-sm">

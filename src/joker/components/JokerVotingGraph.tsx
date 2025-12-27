@@ -147,13 +147,10 @@ export function JokerVotingGraph({ players, votes, showRole = false }: JokerVoti
                                 <div className={`relative rounded-full transition-all duration-200 ${isFocused ? "ring-2 ring-offset-1 ring-blue-500 ring-offset-transparent" : ""}`}>
                                     <Avvvatars value={String(player?.seat || sessionId)} size={AVATAR_SIZE} />
                                     {showRole && player?.role && (
-                                        <div className={`absolute -top-1 -left-1 text-[7px] px-1 py-0 rounded-full border ${ROLE_COLORS[player.role]} z-20`}>
+                                        <div className={`absolute -bottom-1 -right-1 text-[7px] px-1 py-0 rounded-full border ${ROLE_COLORS[player.role]} z-20`}>
                                             {ROLE_LABELS[player.role][0]}
                                         </div>
                                     )}
-                                    <div className="absolute -bottom-0.5 -right-0.5 bg-gray-700 text-white text-[8px] px-0.5 rounded-full leading-tight">
-                                        {player?.seat || "?"}
-                                    </div>
                                 </div>
                                 <div className="text-[9px] truncate max-w-full opacity-70 text-center px-0.5">
                                     {player?.name || `玩家`}
@@ -237,15 +234,12 @@ export function JokerVotingGraph({ players, votes, showRole = false }: JokerVoti
                                 <div className={`relative rounded-full transition-all duration-200 ${isFocused ? "ring-2 ring-offset-1 ring-blue-500 ring-offset-transparent" : ""}`}>
                                     <Avvvatars value={String(player?.seat || sessionId)} size={AVATAR_SIZE} />
                                     {showRole && player?.role && (
-                                        <div className={`absolute -top-1 -left-1 text-[7px] px-1 py-0 rounded-full border ${ROLE_COLORS[player.role]} z-30`}>
+                                        <div className={`absolute -bottom-1 -right-1 text-[7px] px-1 py-0 rounded-full border ${ROLE_COLORS[player.role]} z-30`}>
                                             {ROLE_LABELS[player.role][0]}
                                         </div>
                                     )}
                                     <div className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[8px] w-3.5 h-3.5 flex items-center justify-center rounded-full shadow-sm z-20">
                                         {voteCount}
-                                    </div>
-                                    <div className="absolute -bottom-0.5 -right-0.5 bg-gray-700 text-white text-[8px] px-0.5 rounded-full leading-tight z-10">
-                                        {player?.seat || "?"}
                                     </div>
                                 </div>
                                 <div className="text-[9px] truncate max-w-full opacity-70 text-center px-0.5">

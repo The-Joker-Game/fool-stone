@@ -29,6 +29,8 @@ export interface JokerDeathRecord {
     role: JokerRole;             // 死者角色
     reason: JokerDeathReason;    // 死亡原因
     killerSessionId?: string;    // 凶手 sessionId (仅 kill/foul)
+    killerSeat?: number;         // 凶手座位号 (仅 kill/foul)
+    killerLocation?: JokerLocation; // 凶手位置 (仅 kill/foul)
     location?: JokerLocation;    // 死亡地点 (仅 kill/oxygen)
     round: number;               // 发生回合
     at: number;                  // 死亡时间戳
@@ -80,6 +82,10 @@ export interface JokerMeetingState {
     reporterSessionId?: string;
     bodySessionId?: string; // who was found dead
     discussionEndAt?: number;
+    triggerType: "player" | "system"; // 谁触发的会议
+    triggerPlayerName?: string; // 玩家名字（仅当triggerType为player时）
+    triggerPlayerSeat?: number; // 玩家座位号（仅当triggerType为player时）
+    deathCount: number; // 进入会议时的死亡人数
 }
 
 export interface JokerVotingState {
@@ -231,6 +237,10 @@ export interface JokerSnapshot {
 
     // Voting history for review
     votingHistory: JokerVotingRoundRecord[];
+
+    // Location history: 记录每回合每个场所有哪些玩家 (seat numbers)
+    // 格式: { [round]: { [location]: [seat1, seat2, ...] } }
+    locationHistory: Record<number, Record<JokerLocation, number[]>>;
 
     // Task progress (0-100, goose wins at 100)
     taskProgress: number;

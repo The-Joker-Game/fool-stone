@@ -271,6 +271,41 @@ function currentStillAlive(room: Room, sessionId: string) {
   return true;
 }
 
+/**
+ * 在大厅阶段压缩座位号，使座位保持连续(1, 2, 3, ...)
+ * 仅在大厅阶段有效，游戏进行中不会改变座位
+ */
+function compactSeatsIfLobby(room: Room) {
+  // 只在大厅阶段压缩座位
+  if (room.snapshot && room.snapshot.phase !== "lobby") return;
+
+  // 按当前座位号排序所有用户
+  const users = Array.from(room.users.values()).sort((a, b) => a.seat - b.seat);
+
+  // 重新分配座位号 (1, 2, 3, ...)
+  let newSeat = 1;
+  for (const user of users) {
+    if (user.seat !== newSeat) {
+      room.users.set(user.sessionId, { ...user, seat: newSeat });
+    }
+    newSeat++;
+  }
+
+  // 同步到 snapshot
+  if (room.snapshot) {
+    for (const user of room.users.values()) {
+      const player = room.snapshot.players[user.seat - 1];
+      if (player) {
+        player.sessionId = user.sessionId;
+        player.name = user.name;
+        player.isHost = user.isHost ?? false;
+        player.isBot = user.isBot ?? false;
+      }
+    }
+    room.snapshot.updatedAt = Date.now();
+  }
+}
+
 function genBotSessionId() {
   return `bot_${Date.now()}_${Math.random().toString(36).slice(2, 6)} `;
 }
@@ -356,7 +391,10 @@ io.on("connection", (socket: Socket) => {
         if (room.snapshot && room.snapshot.phase !== "lobby" && !existed) {
           return cb({ ok: false, msg: "游戏已经开始，无法加入" });
         }
-        const seat = existed?.seat ?? nextAvailableSeat(room, preferredSeat ?? null);
+        // 大厅阶段：忽略preferredSeat，按先来后到分配座位
+        // 游戏进行中：使用原座位或preferredSeat
+        const isLobby = !room.snapshot || room.snapshot.phase === "lobby";
+        const seat = existed?.seat ?? nextAvailableSeat(room, isLobby ? null : (preferredSeat ?? null));
         if (!seat) return cb({ ok: false, msg: "房间已满" });
 
         const me: PresenceUser = existed
@@ -425,7 +463,10 @@ io.on("connection", (socket: Socket) => {
         if (!sessionId) return cb({ ok: false, msg: "缺少 sessionId" });
 
         const existed = room.users.get(sessionId);
-        const seat = existed?.seat ?? nextAvailableSeat(room, preferredSeat ?? null);
+        // 大厅阶段：忽略preferredSeat，按先来后到分配座位
+        // 游戏进行中：使用原座位或preferredSeat
+        const isLobby = !room.snapshot || room.snapshot.phase === "lobby";
+        const seat = existed?.seat ?? nextAvailableSeat(room, isLobby ? null : (preferredSeat ?? null));
         if (!seat) return cb({ ok: false, msg: "房间已满" });
 
         const base: PresenceUser = existed
@@ -615,6 +656,7 @@ io.on("connection", (socket: Socket) => {
 
         room.users.delete(targetSessionId);
         ensureHost(room);
+        compactSeatsIfLobby(room); // 大厅阶段压缩座位
         handleRoomPopulationChange(room);
         broadcastPresence(room);
 
@@ -709,6 +751,7 @@ io.on("connection", (socket: Socket) => {
 
         room.users.delete(targetSessionId);
         ensureHost(room);
+        compactSeatsIfLobby(room); // 大厅阶段压缩座位
 
         socket.leave(code);
         handleRoomPopulationChange(room);
