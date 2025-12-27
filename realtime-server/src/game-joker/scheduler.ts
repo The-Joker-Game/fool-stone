@@ -323,16 +323,24 @@ function handleRedLightEnd(
         return;
     }
 
-    // Always enter meeting after red light (deaths will be revealed there)
-    const livingPlayer = snapshot.players.find(p => p.isAlive && p.sessionId);
-    if (livingPlayer && livingPlayer.sessionId) {
-        startMeeting(snapshot, livingPlayer.sessionId);
-        broadcastSnapshot(room, io);
-        checkAndScheduleActions(room, io);
-        return;
+    // Check if there are any unrevealed deaths
+    const hasUnrevealedDeaths = snapshot.deaths.some(d => !d.revealed);
+
+    if (hasUnrevealedDeaths) {
+        // Enter meeting to reveal deaths
+        const livingPlayer = snapshot.players.find(p => p.isAlive && p.sessionId);
+        if (livingPlayer && livingPlayer.sessionId) {
+            startMeeting(snapshot, livingPlayer.sessionId);
+            broadcastSnapshot(room, io);
+            checkAndScheduleActions(room, io);
+            return;
+        }
     }
 
-    // Fallback: if somehow no living players, go to green light
+    // No deaths: proceed to next round (green light)
+    snapshot.meeting = undefined;
+    snapshot.voting = undefined;
+    snapshot.execution = undefined;
     snapshot.logs = [];
     transitionToGreenLight(snapshot);
     broadcastSnapshot(room, io);

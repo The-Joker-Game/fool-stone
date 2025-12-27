@@ -37,7 +37,7 @@ export const PHASE_DURATIONS = {
     yellow_light: 10_000,
     red_light: 60_000,
     meeting: 60_000,
-    voting: 30_000,
+    voting: 120_000,
     execution: 10_000,
 };
 
@@ -449,8 +449,8 @@ export function submitLifeCodeAction(
     const target = findPlayerByLifeCode(snapshot, payload.code, includeOldCodes);
 
     if (!target) {
-        // Duck loses 30s oxygen for incorrect kill code
-        if (payload.action === "kill" && actor.role === "duck") {
+        // Duck or hawk loses 30s oxygen for incorrect kill code
+        if (payload.action === "kill" && (actor.role === "duck" || actor.role === "hawk")) {
             const KILL_CODE_PENALTY = 30;
             actor.oxygen -= KILL_CODE_PENALTY;
             actor.oxygenUpdatedAt = now;
@@ -1240,7 +1240,7 @@ export function checkWinCondition(snapshot: JokerSnapshot): JokerGameResult | nu
 // ============ Task System ============
 
 const TASK_PROGRESS_PER_COMPLETION = 2; // +2% per task
-const POWER_TASK_PROGRESS_PER_COMPLETION = 4; // +4% per task with power boost
+const POWER_TASK_PROGRESS_PER_COMPLETION = 3; // +3% per task with power boost (1.5x)
 const TASK_OXYGEN_COST = 10; // -10s oxygen per task attempt
 const SHARED_TASK_PROGRESS_PER_PARTICIPANT = 3; // +3% per participant
 const SHARED_TASK_OXYGEN_COST = 10; // -10s oxygen per shared task join

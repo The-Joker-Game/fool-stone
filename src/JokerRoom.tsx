@@ -408,7 +408,7 @@ export default function JokerRoom() {
     const kitchenUsed = !!jokerSnapshot?.round?.kitchenUsedBySession?.[mySessionId];
     const medicalUsed = !!jokerSnapshot?.round?.medicalUsedBySession?.[mySessionId];
     const personalTaskProgressLabel =
-        soloLocationEffect === "发电室" && powerBoostActive ? "+4%进度" : "+2%进度";
+        soloLocationEffect === "发电室" && powerBoostActive ? "+3%进度" : "+2%进度";
     const medicalTargets = useMemo(
         () => jokerPlayers.filter(p => p.isAlive && p.sessionId && p.sessionId !== me?.sessionId),
         [jokerPlayers, me?.sessionId]
@@ -1257,88 +1257,97 @@ export default function JokerRoom() {
     // Render: Dead player - exclusive screen
     if (roomCode && phase !== "lobby" && phase !== "game_over" && me && !me.isAlive) {
         return (
-            <div className="min-h-screen relative flex flex-col items-center justify-center text-white p-6 bg-gradient-to-br from-red-950 via-red-900 to-black">
-                {/* Dark overlay that pulses */}
-                <div
-                    className="absolute inset-0 bg-black"
-                    style={{
-                        animation: 'deadFade 4s ease-in-out infinite',
-                    }}
-                />
-                <style>{`
+            <>
+                <div className="min-h-screen relative flex flex-col items-center justify-center text-white p-6 bg-gradient-to-br from-red-950 via-red-900 to-black">
+                    {/* Dark overlay that pulses */}
+                    <div
+                        className="absolute inset-0 bg-black"
+                        style={{
+                            animation: 'deadFade 4s ease-in-out infinite',
+                        }}
+                    />
+                    <style>{`
                     @keyframes deadFade {
                         0%, 100% { opacity: 0; }
                         50% { opacity: 0.5; }
                     }
                 `}</style>
-                <div className="relative z-10 text-center space-y-8">
-                    <div className="w-32 h-32 mx-auto rounded-full bg-red-800/50 flex items-center justify-center border-4 border-red-600/50 shadow-2xl shadow-red-900/50">
-                        <Skull className="w-16 h-16 text-red-400" />
-                    </div>
-                    <div className="space-y-3">
-                        <h1 className="text-5xl font-black tracking-tight text-red-200">你已死亡</h1>
-                        <p className="text-2xl text-red-100 font-bold mt-6">请原地蹲下或坐下</p>
-                        <p className="text-lg text-red-300/70">安静等待游戏结束</p>
-                    </div>
-                    <div className="pt-8 space-y-4">
-                        <div className="text-sm text-red-400/50 uppercase tracking-widest">当前阶段</div>
-                        <div className="text-2xl font-bold text-red-300">{PHASE_LABELS[phase]}</div>
-                    </div>
-                    {isHost && (
-                        <div className="w-full max-w-sm mx-auto space-y-3 pt-4">
-                            <div className="text-xs text-red-200/70 uppercase tracking-widest text-center">房主控制</div>
-                            <Button
-                                onClick={handleTogglePause}
-                                className="w-full h-11 bg-white text-black hover:bg-white/90"
-                            >
-                                {isPaused ? "恢复游戏" : "暂停游戏"}
-                            </Button>
-                            <Button
-                                onClick={handleRestartGame}
-                                className="w-full h-11 bg-white/10 text-white hover:bg-white/20 border border-white/20"
-                            >
-                                <RotateCcw className="w-4 h-4 mr-2" />
-                                重启
-                            </Button>
-                            {phase === "meeting" && (
-                                <div className="grid grid-cols-2 gap-3">
+                    <div className="relative z-10 text-center space-y-8">
+                        <div className="w-32 h-32 mx-auto rounded-full bg-red-800/50 flex items-center justify-center border-4 border-red-600/50 shadow-2xl shadow-red-900/50">
+                            <Skull className="w-16 h-16 text-red-400" />
+                        </div>
+                        <div className="space-y-3">
+                            <h1 className="text-5xl font-black tracking-tight text-red-200">你已死亡</h1>
+                            <p className="text-2xl text-red-100 font-bold mt-6">请原地蹲下或坐下</p>
+                            <p className="text-lg text-red-300/70">安静等待游戏结束</p>
+                        </div>
+                        <div className="pt-8 space-y-4">
+                            <div className="text-sm text-red-400/50 uppercase tracking-widest">当前阶段</div>
+                            <div className="text-2xl font-bold text-red-300">{PHASE_LABELS[phase]}</div>
+                            {timeLeft > 0 && (
+                                <div className="inline-flex items-center gap-2 bg-black/30 px-4 py-1.5 rounded-full border border-red-500/20">
+                                    <RotateCcw className="w-3 h-3 text-red-400 animate-spin-reverse" style={{ animationDuration: '3s' }} />
+                                    <span className="font-mono text-xl text-red-400 tabular-nums">{timeLeft}s</span>
+                                </div>
+                            )}
+                        </div>
+                        {isHost && (
+                            <div className="w-full max-w-sm mx-auto space-y-3 pt-4">
+                                <div className="text-xs text-red-200/70 uppercase tracking-widest text-center">房主控制</div>
+                                <Button
+                                    onClick={handleTogglePause}
+                                    className="w-full h-11 bg-white text-black hover:bg-white/90"
+                                >
+                                    {isPaused ? "恢复游戏" : "暂停游戏"}
+                                </Button>
+                                <Button
+                                    onClick={handleRestartGame}
+                                    className="w-full h-11 bg-white/10 text-white hover:bg-white/20 border border-white/20"
+                                >
+                                    <RotateCcw className="w-4 h-4 mr-2" />
+                                    重启
+                                </Button>
+                                {phase === "meeting" && (
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <Button
+                                            onClick={handleMeetingStartVote}
+                                            disabled={isInteractionDisabled}
+                                            className="h-11 bg-white text-black hover:bg-white/90"
+                                        >
+                                            开始投票
+                                        </Button>
+                                        <Button
+                                            onClick={handleMeetingExtend}
+                                            disabled={isInteractionDisabled}
+                                            className="h-11 bg-white/10 text-white hover:bg-white/20 border border-white/20"
+                                        >
+                                            延长30秒
+                                        </Button>
+                                    </div>
+                                )}
+                                {phase === "voting" && (
                                     <Button
-                                        onClick={handleMeetingStartVote}
+                                        onClick={handleVotingExtend}
                                         disabled={isInteractionDisabled}
-                                        className="h-11 bg-white text-black hover:bg-white/90"
-                                    >
-                                        开始投票
-                                    </Button>
-                                    <Button
-                                        onClick={handleMeetingExtend}
-                                        disabled={isInteractionDisabled}
-                                        className="h-11 bg-white/10 text-white hover:bg-white/20 border border-white/20"
+                                        className="w-full h-11 bg-white/10 text-white hover:bg-white/20 border border-white/20"
                                     >
                                         延长30秒
                                     </Button>
-                                </div>
-                            )}
-                            {phase === "voting" && (
-                                <Button
-                                    onClick={handleVotingExtend}
-                                    disabled={isInteractionDisabled}
-                                    className="w-full h-11 bg-white/10 text-white hover:bg-white/20 border border-white/20"
-                                >
-                                    延长30秒
-                                </Button>
-                            )}
-                        </div>
-                    )}
-                    <Button
-                        variant="ghost"
-                        onClick={leaveRoom}
-                        className="mt-12 text-red-400 hover:text-red-300 hover:bg-red-900/30"
-                    >
-                        <LogOut className="w-4 h-4 mr-2" />
-                        离开房间
-                    </Button>
+                                )}
+                            </div>
+                        )}
+                        <Button
+                            variant="ghost"
+                            onClick={leaveRoom}
+                            className="mt-12 text-red-400 hover:text-red-300 hover:bg-red-900/30"
+                        >
+                            <LogOut className="w-4 h-4 mr-2" />
+                            离开房间
+                        </Button>
+                    </div>
                 </div>
-            </div>
+                {ConfirmDialogElement}
+            </>
         );
     }
 
@@ -1432,7 +1441,7 @@ export default function JokerRoom() {
                                 {"\n\n"}
                                 【场所效果】（独自一人时生效）
                                 {"\n"}• 监控室（调取影像）：随机窥视1名不同阵营玩家命门码（显示5秒）。
-                                {"\n"}• 发电室（超载推进）：本回合个人任务+4%。
+                                {"\n"}• 发电室（超载推进）：本回合个人任务+3%。
                                 {"\n"}• 厨房（补氧配给）：自补氧+90秒。
                                 {"\n"}• 医务室（远程治疗）：给任意其他玩家补氧+90秒。
                                 {"\n"}• 仓库（应急供氧）：全场补氧+60秒。
@@ -2043,7 +2052,7 @@ export default function JokerRoom() {
                                                                         超载推进
                                                                     </div>
                                                                     <span className="text-[11px] text-white/90">
-                                                                        {powerBoostUsed ? "本回合已使用" : "个人任务+4%"}
+                                                                        {powerBoostUsed ? "本回合已使用" : "个人任务+3%"}
                                                                     </span>
                                                                 </Button>
                                                             );
