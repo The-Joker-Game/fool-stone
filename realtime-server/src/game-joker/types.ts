@@ -90,6 +90,11 @@ export interface JokerRoundState {
     // Track oxygen gives per round: actorSessionId -> targetSessionId -> true
     oxygenGivenThisRound: Record<string, Record<string, boolean>>;
     goldenRabbitTriggeredLocations: JokerLocation[];
+    powerBoostBySession: Record<string, boolean>;
+    warehouseUsedBySession: Record<string, boolean>;
+    monitorUsedBySession: Record<string, boolean>;
+    kitchenUsedBySession: Record<string, boolean>;
+    medicalUsedBySession: Record<string, boolean>;
 }
 
 export type JokerTaskKind = "personal" | "shared" | "emergency";
@@ -220,4 +225,4 @@ export interface ReportPayload {
 }
 
 // Result types
-export type ActionResult = { ok: boolean; error?: string; message?: string };
+export type ActionResult = { ok: boolean; error?: string; message?: string; data?: unknown };

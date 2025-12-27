@@ -24,6 +24,13 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
+import {
     Users,
     LogOut,
     Crown,
@@ -54,6 +61,7 @@ import {
 import Avvvatars from "avvvatars-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useConfirm } from "@/flower/components/ConfirmDialog";
 
 // Utility
 function randName() {
@@ -328,6 +336,9 @@ export default function JokerRoom() {
     const [taskResultFlash, setTaskResultFlash] = useState<null | { result: "success" | "fail"; until: number }>(null);
     const [goldenRabbitResultFlash, setGoldenRabbitResultFlash] = useState<null | { result: "success" | "fail"; until: number; rabbitIndex?: number }>(null);
     const [oxygenLeakFlash, setOxygenLeakFlash] = useState<null | { message: string; until: number }>(null);
+    const [monitorPeek, setMonitorPeek] = useState<null | { code: string; until: number }>(null);
+    const [showMedicalDialog, setShowMedicalDialog] = useState(false);
+    const [suppressPauseDialog, setSuppressPauseDialog] = useState(false);
 
     // Mini-game state
     const [showMiniGame, setShowMiniGame] = useState(false);
@@ -335,6 +346,8 @@ export default function JokerRoom() {
 
     // Join room input
     const [joinCodeInput, setJoinCodeInput] = useState("");
+
+    const { confirm, ConfirmDialogElement } = useConfirm(true);
 
     // Store
     const jokerSnapshot = useJokerStore((state: JokerStore) => state.snapshot);
@@ -357,6 +370,7 @@ export default function JokerRoom() {
     const myRole = (me?.role ?? "goose") as JokerRole;
     const myAlive = me?.isAlive ?? false;
     const isPaused = jokerSnapshot?.paused ?? false;
+    const showPauseDialog = isPaused && !suppressPauseDialog;
     const isInteractionDisabled = isPaused;
     const sharedTask = me?.location ? jokerSnapshot?.tasks?.sharedByLocation?.[me.location] : undefined;
     const mySessionId = getSessionId();
@@ -380,6 +394,19 @@ export default function JokerRoom() {
         if (!me?.location) return 0;
         return jokerPlayers.filter(p => p.isAlive && p.location === me.location).length;
     }, [jokerPlayers, me?.location]);
+    const soloLocation = !!me?.location && sameLocationCount === 1;
+    const soloLocationEffect = myAlive && phase === "red_light" && soloLocation ? me.location : null;
+    const powerBoostActive = !!jokerSnapshot?.round?.powerBoostBySession?.[mySessionId];
+    const warehouseUsed = !!jokerSnapshot?.round?.warehouseUsedBySession?.[mySessionId];
+    const monitorUsed = !!jokerSnapshot?.round?.monitorUsedBySession?.[mySessionId];
+    const kitchenUsed = !!jokerSnapshot?.round?.kitchenUsedBySession?.[mySessionId];
+    const medicalUsed = !!jokerSnapshot?.round?.medicalUsedBySession?.[mySessionId];
+    const personalTaskProgressLabel =
+        soloLocationEffect === "发电室" && powerBoostActive ? "+3%进度" : "+1%进度";
+    const medicalTargets = useMemo(
+        () => jokerPlayers.filter(p => p.isAlive && p.sessionId && p.sessionId !== me?.sessionId),
+        [jokerPlayers, me?.sessionId]
+    );
     const myVoteLabel = useMemo(() => {
         if (!me?.hasVoted) return null;
         if (me.voteTarget === null) return "弃票";
@@ -395,6 +422,13 @@ export default function JokerRoom() {
             setCurrentGameType(null);
         }
     }, [phase]);
+
+    useEffect(() => {
+        if (!showMedicalDialog) return;
+        if (phase !== "red_light" || soloLocationEffect !== "医务室") {
+            setShowMedicalDialog(false);
+        }
+    }, [phase, soloLocationEffect, showMedicalDialog]);
 
     // Timer
     const [timeLeft, setTimeLeft] = useState(0);
@@ -701,13 +735,13 @@ export default function JokerRoom() {
                     ? "至少需要5位玩家才能开始游戏！"
                     : res.error === "All players must be ready to start"
                         ? "所有玩家准备后才能开始游戏！"
-                        : res.error === "Only host can start game"
-                            ? "只有房主可以开始游戏"
-                            : res.error === "Game paused"
-                                ? "游戏已暂停"
-                                : res.error === "No snapshot"
-                                    ? "暂无游戏快照"
-                                    : "开始游戏失败";
+                    : res.error === "Only host can start game"
+                        ? "只有房主可以开始游戏"
+                    : res.error === "Game paused"
+                        ? "游戏已暂停"
+                    : res.error === "No snapshot"
+                        ? "暂无游戏快照"
+                    : res.error || "开始游戏失败";
             await alert(msg);
         }
     }, [startGame]);
@@ -781,8 +815,55 @@ export default function JokerRoom() {
     }, [roomCode, isInteractionDisabled]);
 
     const handleResetGame = useCallback(async () => {
-        await resetGame();
+        const res = await resetGame();
+        if (!res.ok) {
+            const msg =
+                res.error === "Only host can reset game"
+                    ? "只有房主可以重启"
+                    : res.error === "Game paused"
+                        ? "游戏已暂停"
+                        : res.error === "No snapshot"
+                            ? "暂无游戏快照"
+                            : res.error === "Joker game not initialized"
+                                ? "房间尚未初始化"
+                                : res.error
+                                    ? `重启失败：${res.error}`
+                                    : "重启失败";
+            await alert(msg);
+        }
     }, [resetGame]);
+
+    const handleRestartGame = useCallback(async () => {
+        setSuppressPauseDialog(true);
+        const confirmed = await confirm({
+            title: "确认重启游戏？",
+            description: "这会直接结束当前对局，所有人回到大厅重新准备。",
+            confirmText: "确认重启",
+            cancelText: "取消",
+            variant: "destructive",
+        });
+        try {
+            if (!confirmed) return;
+            const res = await resetGame();
+            if (!res.ok) {
+                const msg =
+                    res.error === "Only host can reset game"
+                        ? "只有房主可以重启"
+                        : res.error === "Game paused"
+                            ? "游戏已暂停"
+                            : res.error === "No snapshot"
+                                ? "暂无游戏快照"
+                                : res.error === "Joker game not initialized"
+                                    ? "房间尚未初始化"
+                                    : res.error
+                                        ? `重启失败：${res.error}`
+                                        : "重启失败";
+                await alert(msg);
+            }
+        } finally {
+            setSuppressPauseDialog(false);
+        }
+    }, [confirm, resetGame]);
 
     // Task handlers
     const handleStartTask = useCallback(async () => {
@@ -816,7 +897,15 @@ export default function JokerRoom() {
                                 ? "同场所至少需要2人才能进行共同任务"
                                 : err === "Game paused"
                                     ? "游戏已暂停"
-                                    : "无法发起共同任务";
+                                    : err === "Invalid player"
+                                        ? "操作无效（玩家不存在或已死亡）"
+                                        : err === "Joker game not initialized"
+                                            ? "房间尚未初始化"
+                                            : err === "Unknown action"
+                                                ? "未知指令"
+                                                : err
+                                                    ? `无法发起共同任务：${err}`
+                                                    : "无法发起共同任务";
             await alert(msg);
         }
     }, [roomCode, isInteractionDisabled, taskCooldown]);
@@ -846,6 +935,104 @@ export default function JokerRoom() {
             data: { index },
         });
     }, [roomCode, isInteractionDisabled]);
+
+    const locationEffectErrorMessage = useCallback((err?: string) => {
+        if (!err) return "操作失败";
+        const map: Record<string, string> = {
+            "Location effects only available during red light": "只能在红灯阶段操作",
+            "Invalid player": "操作无效",
+            "Not in monitoring room": "必须在监控室使用",
+            "Not in power room": "必须在发电室使用",
+            "Not in kitchen": "必须在厨房使用",
+            "Not in medical room": "必须在医务室使用",
+            "Not in warehouse": "必须在仓库使用",
+            "Not alone in location": "该场所需单人状态",
+            "No eligible target": "无可用目标",
+            "Already gave oxygen to this player this round": "本回合已对该玩家补氧",
+            "Invalid target": "无效目标",
+            "Warehouse already used this round": "本回合已使用应急供氧",
+            "Monitoring already used this round": "本回合已使用调取影像",
+            "Power boost already used this round": "本回合已使用超载推进",
+            "Kitchen already used this round": "本回合已使用补氧配给",
+            "Medical already used this round": "本回合已使用远程治疗",
+        };
+        return map[err] ?? "操作失败";
+    }, []);
+
+    const handleMonitorPeek = useCallback(async () => {
+        if (!roomCode || isInteractionDisabled) return;
+        const resp = await rt.emitAck("intent", {
+            room: roomCode,
+            action: "joker:location_monitor",
+        });
+        if (!(resp as any)?.ok) {
+            await alert(locationEffectErrorMessage((resp as any)?.msg));
+            return;
+        }
+        const code = (resp as any)?.data?.lifeCode;
+        if (code) {
+            setMonitorPeek({ code, until: Date.now() + 5000 });
+        }
+    }, [roomCode, isInteractionDisabled, locationEffectErrorMessage]);
+
+    const handlePowerBoost = useCallback(async () => {
+        if (!roomCode || isInteractionDisabled) return;
+        const resp = await rt.emitAck("intent", {
+            room: roomCode,
+            action: "joker:location_power",
+        });
+        if (!(resp as any)?.ok) {
+            await alert(locationEffectErrorMessage((resp as any)?.msg));
+        }
+    }, [roomCode, isInteractionDisabled, locationEffectErrorMessage]);
+
+    const handleKitchenOxygen = useCallback(async () => {
+        if (!roomCode || isInteractionDisabled) return;
+        const resp = await rt.emitAck("intent", {
+            room: roomCode,
+            action: "joker:location_kitchen",
+        });
+        if (!(resp as any)?.ok) {
+            await alert(locationEffectErrorMessage((resp as any)?.msg));
+        }
+    }, [roomCode, isInteractionDisabled, locationEffectErrorMessage]);
+
+    const handleWarehouseOxygen = useCallback(async () => {
+        if (!roomCode || isInteractionDisabled) return;
+        const resp = await rt.emitAck("intent", {
+            room: roomCode,
+            action: "joker:location_warehouse",
+        });
+        if (!(resp as any)?.ok) {
+            await alert(locationEffectErrorMessage((resp as any)?.msg));
+        }
+    }, [roomCode, isInteractionDisabled, locationEffectErrorMessage]);
+
+    const handleMedicalOpen = useCallback(() => {
+        if (isInteractionDisabled) return;
+        if (medicalUsed) {
+            alert("本回合已使用远程治疗");
+            return;
+        }
+        if (medicalTargets.length === 0) {
+            alert("暂无可补氧目标");
+            return;
+        }
+        setShowMedicalDialog(true);
+    }, [isInteractionDisabled, medicalTargets.length, medicalUsed]);
+
+    const handleMedicalSelect = useCallback(async (targetSessionId: string) => {
+        if (!roomCode || isInteractionDisabled) return;
+        setShowMedicalDialog(false);
+        const resp = await rt.emitAck("intent", {
+            room: roomCode,
+            action: "joker:location_medical",
+            data: { targetSessionId },
+        });
+        if (!(resp as any)?.ok) {
+            await alert(locationEffectErrorMessage((resp as any)?.msg));
+        }
+    }, [roomCode, isInteractionDisabled, locationEffectErrorMessage]);
 
     useEffect(() => {
         if (!sharedTask?.deadlineAt || sharedTask.status !== "active") {
@@ -924,6 +1111,13 @@ export default function JokerRoom() {
         const timer = setTimeout(() => setSharedResultFlash(null), delay);
         return () => clearTimeout(timer);
     }, [sharedResultFlash?.until]);
+
+    useEffect(() => {
+        if (!monitorPeek) return;
+        const delay = Math.max(0, monitorPeek.until - Date.now());
+        const timer = setTimeout(() => setMonitorPeek(null), delay);
+        return () => clearTimeout(timer);
+    }, [monitorPeek?.until]);
 
     const handleCompleteTask = useCallback(async () => {
         if (!roomCode) return;
@@ -1050,6 +1244,13 @@ export default function JokerRoom() {
                             >
                                 {isPaused ? "恢复游戏" : "暂停游戏"}
                             </Button>
+                            <Button
+                                onClick={handleRestartGame}
+                                className="w-full h-11 bg-white/10 text-white hover:bg-white/20 border border-white/20"
+                            >
+                                <RotateCcw className="w-4 h-4 mr-2" />
+                                重启
+                            </Button>
                             {phase === "meeting" && (
                                 <div className="grid grid-cols-2 gap-3">
                                     <Button
@@ -1100,7 +1301,7 @@ export default function JokerRoom() {
                 <div className="absolute top-0 left-0 w-full h-1/2 bg-gradient-to-b from-white/5 to-transparent" />
             </div>
 
-            {isPaused && (
+            {showPauseDialog && (
                 <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm">
                     <div className="w-[90%] max-w-sm rounded-2xl border border-white/10 bg-slate-950/90 p-6 text-center">
                         <div className="text-2xl font-black tracking-wide text-white">游戏已暂停</div>
@@ -1111,6 +1312,15 @@ export default function JokerRoom() {
                                 className="mt-6 h-12 w-full bg-white text-black hover:bg-white/90"
                             >
                                 恢复游戏
+                            </Button>
+                        )}
+                        {isHost && (
+                            <Button
+                                onClick={handleRestartGame}
+                                className="mt-3 h-11 w-full bg-white/10 text-white hover:bg-white/20 border border-white/20"
+                            >
+                                <RotateCcw className="w-4 h-4 mr-2" />
+                                重启
                             </Button>
                         )}
                         <Button
@@ -1132,14 +1342,53 @@ export default function JokerRoom() {
                         className="w-full max-w-md rounded-2xl border border-white/10 bg-slate-950/90 p-6 text-left"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <div className="text-xl font-black tracking-wide text-white">游戏背景</div>
-                        <div className="mt-3 text-sm text-white/70 leading-relaxed whitespace-pre-line">
-                            在遥远的星际航线上，鹅族正在建造一艘承载新家园的巨型太空船。为了防止渗透与破坏，工程系统被设计成“红绿灯作业协议”：绿灯允许人员调度与沟通，黄灯强制分流到各个作业点，红灯则全船锁定——所有工程师必须原地完成关键维修与校准任务。
-                            {"\n\n"}
-                            但这艘船上混入了伪装者：鸭族。它们外表与鹅无异，却以破坏与清除为目标。更糟的是，飞船采用了生命维持的“命门代码”机制：每名成员都有一串的动态的氧气校验码，协作时可以互相输入以补充氧气；而鸭族只要在锁定时刻窥见并输入校验码，就能让对方的生命维持系统瞬间断开，制造无声的“事故”。
-                            {"\n\n"}
-                            当警报响起，船员只能召开紧急会议，用投票把怀疑者投入太空。工程进度、氧气余量、同伴的眼神与手机屏幕的反光，都会成为你判断真相的证据——在这艘尚未完工的星际方舟里，活下去与完工，必须同时做到。
-                        </div>
+                        <div className="text-xl font-black tracking-wide text-white">游戏规则</div>
+                        <ScrollArea className="mt-3 max-h-[70vh] pr-2">
+                            <div className="text-sm text-white/70 leading-relaxed whitespace-pre-line">
+                                【游戏背景】
+                                {"\n"}在遥远的星际航线上，鹅族正在建造一艘承载新家园的巨型太空船。为了防止渗透与破坏，工程系统被设计成“红绿灯作业协议”：绿灯允许人员调度与沟通，黄灯强制分流到各个作业点，红灯则全船锁定——所有工程师必须原地完成关键维修与校准任务。
+                                {"\n"}但这艘船上混入了伪装者：鸭族。它们外表与鹅无异，却以破坏与清除为目标。更糟的是，飞船采用了生命维持的“命门代码”机制：每名成员都有一串的动态的氧气校验码，协作时可以互相输入以补充氧气；而鸭族只要在锁定时刻窥见并输入校验码，就能让对方的生命维持系统瞬间断开，制造无声的“事故”。
+                                {"\n"}当警报响起，船员只能召开紧急会议，用投票把怀疑者投入太空。工程进度、氧气余量、同伴的眼神与手机屏幕的反光，都会成为你判断真相的证据——在这艘尚未完工的星际方舟里，活下去与完工，必须同时做到。
+                                {"\n\n"}
+                                【胜利条件】
+                                {"\n"}• 鹅：任务进度100% 或投票放逐所有鸭子。
+                                {"\n"}• 鸭：杀光鹅，或鸭子数 ≥ 非鸭子数。
+                                {"\n"}• 呆呆鸟（中立）：被投票放逐获胜。
+                                {"\n"}• 猎鹰（中立）：可杀任何人，存活到最后（只剩你或你+1只鹅）。
+                                {"\n\n"}
+                                【回合节奏】
+                                {"\n"}• 每回合90秒：绿灯20秒选地点 → 黄灯10秒移动 → 红灯60秒做任务/击杀。
+                                {"\n"}• 命门代码每隔一段时间（70秒左右）刷新一次。
+                                {"\n\n"}
+                                【命门代码与氧气】
+                                {"\n"}• 红灯显示2位命门码，用于击杀/补氧。
+                                {"\n"}• 输入命门码后，击杀/补氧都会进入10秒冷却。
+                                {"\n"}• 补氧：每次+90秒；同一回合对同一玩家仅一次。
+                                {"\n"}• 初始氧气每人270秒，耗尽死亡；鸭子和猎鹰氧气归零自动启用180秒备用氧气（整局1次）。
+                                {"\n"}• 鹅尝试击杀会犯规死亡。
+                                {"\n\n"}
+                                【会议与投票】
+                                {"\n"}• 讨论60秒（房主可跳过或延长30秒）。
+                                {"\n"}• 投票30秒（房主可延长30秒，全员投完即结束）。
+                                {"\n"}• 可投自己或弃票；结果显示每人得票。
+                                {"\n\n"}
+                                【任务机制】
+                                {"\n"}• 个人任务：成功+1%进度，失败不加；每次消耗10秒氧气。
+                                {"\n"}• 共同任务：同场所所有人都点击后才开始；成功按参与人数每人+2%进度；失败不加进度但照扣氧气。
+                                {"\n"}• 类型：九宫寻宝、数字拼图（限时10秒）。
+                                {"\n\n"}
+                                【突发任务】（红灯随机5-50秒）
+                                {"\n"}• 氧气泄漏：耗氧变为-3/秒；任一玩家对你补氧即修复；不额外扣氧。
+                                {"\n"}• 黄金兔子：8秒内加入捕兔队；九宫格捕捉，任一人选中即成功；奖励+8%进度。
+                                {"\n\n"}
+                                【场所效果】（独自一人时生效）
+                                {"\n"}• 监控室（调取影像）：随机窥视1名不同阵营玩家命门码（显示5秒）。
+                                {"\n"}• 发电室（超载推进）：本回合个人任务+3%。
+                                {"\n"}• 厨房（补氧配给）：自补氧+90秒。
+                                {"\n"}• 医务室（远程治疗）：给任意其他玩家补氧+90秒。
+                                {"\n"}• 仓库（应急供氧）：全场补氧+60秒。
+                            </div>
+                        </ScrollArea>
                         <Button
                             onClick={() => setShowRules(false)}
                             className="mt-6 h-11 w-full bg-white text-black hover:bg-white/90"
@@ -1191,6 +1440,13 @@ export default function JokerRoom() {
                 <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
                     <div className="px-6 py-3 rounded-full border text-lg font-semibold bg-red-500/20 text-red-100 border-red-500/30">
                         {oxygenLeakFlash.message}
+                    </div>
+                </div>
+            )}
+            {monitorPeek && (
+                <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
+                    <div className="px-6 py-3 rounded-full border text-lg font-semibold bg-slate-500/20 text-slate-100 border-slate-400/40">
+                        窥视到命门代码 {monitorPeek.code}
                     </div>
                 </div>
             )}
@@ -1698,19 +1954,106 @@ export default function JokerRoom() {
                                                             <ClipboardList className="w-4 h-4" />
                                                             个人任务
                                                         </div>
-                                                        <span className="text-[11px] text-white/80">+1%进度</span>
+                                                        <span className="text-[11px] text-white/80">{personalTaskProgressLabel}</span>
                                                     </Button>
-                                                    <Button
-                                                        onClick={handleJoinSharedTask}
-                                                        disabled={isInteractionDisabled || !myAlive || !me?.location || sameLocationCount < 2 || taskCooldown}
-                                                        className="h-14 rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-700 to-amber-600 hover:from-amber-600 hover:to-amber-500 text-sm font-bold flex flex-col gap-1 text-white"
-                                                    >
-                                                        <div className="flex items-center gap-2">
-                                                            <Users className="w-4 h-4" />
-                                                            共同任务
-                                                        </div>
-                                                        <span className="text-[11px] text-white/80">+2%进度</span>
-                                                    </Button>
+                                                    {soloLocationEffect ? (() => {
+                                                        const LocationIcon = LOCATION_ICONS[soloLocationEffect];
+                                                        if (soloLocationEffect === "监控室") {
+                                                            return (
+                                                                <Button
+                                                                    onClick={handleMonitorPeek}
+                                                                    disabled={isInteractionDisabled || monitorUsed}
+                                                                    className="h-14 rounded-xl border border-white/10 bg-gradient-to-r from-slate-700 to-slate-600 hover:from-slate-600 hover:to-slate-500 text-sm font-bold flex flex-col gap-1 text-white"
+                                                                >
+                                                                    <div className="flex items-center gap-2">
+                                                                        <LocationIcon className="w-4 h-4" />
+                                                                        调取影像
+                                                                    </div>
+                                                                    <span className="text-[11px] text-white/80">
+                                                                        {monitorUsed ? "本回合已使用" : "命门代码 5秒"}
+                                                                    </span>
+                                                                </Button>
+                                                            );
+                                                        }
+                                                        if (soloLocationEffect === "发电室") {
+                                                            return (
+                                                                <Button
+                                                                    onClick={handlePowerBoost}
+                                                                    disabled={isInteractionDisabled || powerBoostActive}
+                                                                    className="h-14 rounded-xl border border-white/10 bg-gradient-to-r from-amber-600 to-yellow-500 hover:from-amber-500 hover:to-yellow-400 text-sm font-bold flex flex-col gap-1 text-white"
+                                                                >
+                                                                    <div className="flex items-center gap-2">
+                                                                        <LocationIcon className="w-4 h-4" />
+                                                                        超载推进
+                                                                    </div>
+                                                                    <span className="text-[11px] text-white/90">
+                                                                        {powerBoostActive ? "本回合已使用" : "个人任务+3%"}
+                                                                    </span>
+                                                                </Button>
+                                                            );
+                                                        }
+                                                        if (soloLocationEffect === "厨房") {
+                                                            return (
+                                                                <Button
+                                                                    onClick={handleKitchenOxygen}
+                                                                    disabled={isInteractionDisabled || kitchenUsed}
+                                                                    className="h-14 rounded-xl border border-white/10 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-sm font-bold flex flex-col gap-1 text-white"
+                                                                >
+                                                                    <div className="flex items-center gap-2">
+                                                                        <LocationIcon className="w-4 h-4" />
+                                                                        补氧配给
+                                                                    </div>
+                                                                    <span className="text-[11px] text-white/90">
+                                                                        {kitchenUsed ? "本回合已使用" : "+90s 氧气"}
+                                                                    </span>
+                                                                </Button>
+                                                            );
+                                                        }
+                                                        if (soloLocationEffect === "医务室") {
+                                                            return (
+                                                                <Button
+                                                                    onClick={handleMedicalOpen}
+                                                                    disabled={isInteractionDisabled || medicalUsed}
+                                                                    className="h-14 rounded-xl border border-white/10 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-sm font-bold flex flex-col gap-1 text-white"
+                                                                >
+                                                                    <div className="flex items-center gap-2">
+                                                                        <LocationIcon className="w-4 h-4" />
+                                                                        远程治疗
+                                                                    </div>
+                                                                    <span className="text-[11px] text-white/90">
+                                                                        {medicalUsed ? "本回合已使用" : "+90s 氧气"}
+                                                                    </span>
+                                                                </Button>
+                                                            );
+                                                        }
+                                                        return (
+                                                            <Button
+                                                                onClick={handleWarehouseOxygen}
+                                                                disabled={isInteractionDisabled || warehouseUsed}
+                                                                className="h-14 rounded-xl border border-white/10 bg-gradient-to-r from-indigo-700 to-slate-700 hover:from-indigo-600 hover:to-slate-600 text-sm font-bold flex flex-col gap-1 text-white"
+                                                            >
+                                                                <div className="flex items-center gap-2">
+                                                                    <LocationIcon className="w-4 h-4" />
+                                                                    应急供氧
+                                                                </div>
+                                                                <span className="text-[11px] text-white/90">
+                                                                    {warehouseUsed ? "本回合已使用" : "+60s 全员氧气"}
+                                                                </span>
+                                                            </Button>
+                                                        );
+                                                    })() : (
+                                                        <Button
+                                                            onClick={handleJoinSharedTask}
+                                                            disabled={isInteractionDisabled || !myAlive || !me?.location || sameLocationCount < 2 || taskCooldown}
+                                                            className="h-14 rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-700 to-amber-600 hover:from-amber-600 hover:to-amber-500 text-sm font-bold flex flex-col gap-1 text-white"
+                                                        >
+                                                            <div className="flex items-center gap-2">
+                                                                <Users className="w-4 h-4" />
+                                                                共同任务
+                                                            </div>
+                                                            <span className="text-[11px] text-white/80">每人+2%进度</span>
+                                                        </Button>
+                                                    )}
                                                 </div>
                                                 {taskCooldown && (
                                                     <div className="text-center text-xs text-amber-200/80">
@@ -2105,6 +2448,37 @@ export default function JokerRoom() {
                     </motion.div>
                 )}
             </AnimatePresence>
+            <Dialog open={showMedicalDialog} onOpenChange={setShowMedicalDialog}>
+                <DialogContent className="bg-slate-950/95 text-white border-white/10">
+                    <DialogHeader>
+                        <DialogTitle>远程治疗</DialogTitle>
+                        <DialogDescription className="text-white/60">
+                            选择要补氧的玩家（+90秒）
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-2">
+                        {medicalTargets.map(target => (
+                            <Button
+                                key={target.sessionId}
+                                onClick={() => handleMedicalSelect(target.sessionId!)}
+                                className="justify-between bg-white/5 border border-white/10 hover:bg-white/10"
+                            >
+                                <div className="flex items-center gap-2">
+                                    <Avvvatars value={String(target.seat)} size={24} />
+                                    <span className="font-medium text-white">
+                                        {target.name || `玩家${target.seat}`}
+                                    </span>
+                                </div>
+                                <span className="text-xs text-white/60">座位 {target.seat}</span>
+                            </Button>
+                        ))}
+                        {medicalTargets.length === 0 && (
+                            <div className="text-center text-sm text-white/50">暂无可补氧目标</div>
+                        )}
+                    </div>
+                </DialogContent>
+            </Dialog>
+            {ConfirmDialogElement}
         </div>
     );
 }

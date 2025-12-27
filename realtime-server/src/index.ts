@@ -40,6 +40,11 @@ import {
   finalizeGame as jokerFinalizeGame,
   startTask as jokerStartTask,
   completeTask as jokerCompleteTask,
+  useMonitoringPeek as jokerUseMonitoringPeek,
+  usePowerBoost as jokerUsePowerBoost,
+  useKitchenOxygen as jokerUseKitchenOxygen,
+  useMedicalOxygen as jokerUseMedicalOxygen,
+  useWarehouseOxygen as jokerUseWarehouseOxygen,
   joinSharedTask as jokerJoinSharedTask,
   resolveSharedTask as jokerResolveSharedTask,
   submitSharedTaskChoice as jokerSubmitSharedTaskChoice,
@@ -866,7 +871,7 @@ io.on("connection", (socket: Socket) => {
         let res: { ok: boolean; error?: string; message?: string } = { ok: false, error: "Unknown action" };
         let shouldBroadcast = false;
         const jokerSnapshot = r.snapshot as JokerSnapshot;
-        if (jokerSnapshot.paused && action !== "joker:toggle_pause") {
+        if (jokerSnapshot.paused && action !== "joker:toggle_pause" && action !== "joker:reset_game") {
           return cb({ ok: false, msg: "Game paused" });
         }
 
@@ -877,6 +882,14 @@ io.on("connection", (socket: Socket) => {
             }
             {
               const activeUsers = Array.from(r.users.values()).filter(u => !u.leftAt && !u.kickedAt);
+              const disconnected = activeUsers.filter(u => u.isDisconnected);
+              if (disconnected.length > 0) {
+                const seats = disconnected
+                  .map(u => u.seat)
+                  .sort((a, b) => a - b)
+                  .join("、");
+                return cb({ ok: false, msg: `座位${seats}玩家已断开连接` });
+              }
               const allReady = activeUsers.length > 0 && activeUsers.every(u => u.ready);
               if (!allReady) {
                 return cb({ ok: false, msg: "All players must be ready to start" });
@@ -1021,7 +1034,7 @@ io.on("connection", (socket: Socket) => {
             break;
 
           case "joker:complete_task":
-            res = jokerCompleteTask(jokerSnapshot);
+            res = jokerCompleteTask(jokerSnapshot, socket.data.sessionId);
             shouldBroadcast = true;
             // Check win condition after task completion
             if (res.ok) {
@@ -1031,6 +1044,31 @@ io.on("connection", (socket: Socket) => {
                 jokerClearTimeouts(roomCode);
               }
             }
+            break;
+
+          case "joker:location_monitor":
+            res = jokerUseMonitoringPeek(jokerSnapshot, socket.data.sessionId);
+            shouldBroadcast = res.ok;
+            break;
+
+          case "joker:location_power":
+            res = jokerUsePowerBoost(jokerSnapshot, socket.data.sessionId);
+            shouldBroadcast = true;
+            break;
+
+          case "joker:location_kitchen":
+            res = jokerUseKitchenOxygen(jokerSnapshot, socket.data.sessionId);
+            shouldBroadcast = true;
+            break;
+
+          case "joker:location_medical":
+            res = jokerUseMedicalOxygen(jokerSnapshot, socket.data.sessionId, data?.targetSessionId);
+            shouldBroadcast = true;
+            break;
+
+          case "joker:location_warehouse":
+            res = jokerUseWarehouseOxygen(jokerSnapshot, socket.data.sessionId);
+            shouldBroadcast = true;
             break;
 
           case "joker:shared_task_join":
@@ -1109,7 +1147,8 @@ io.on("connection", (socket: Socket) => {
           }
         }
         if (res.ok) {
-          cb({ ok: true });
+          const payload = res.data ? { ok: true, data: res.data } : { ok: true };
+          cb(payload);
         } else {
           cb({ ok: false, msg: res.error });
         }

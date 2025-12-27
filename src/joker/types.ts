@@ -81,6 +81,11 @@ export interface JokerRoundState {
     redLightHalf: "first" | "second";
     oxygenGivenThisRound: Record<string, Record<string, boolean>>;
     goldenRabbitTriggeredLocations: JokerLocation[];
+    powerBoostBySession: Record<string, boolean>;
+    warehouseUsedBySession: Record<string, boolean>;
+    monitorUsedBySession: Record<string, boolean>;
+    kitchenUsedBySession: Record<string, boolean>;
+    medicalUsedBySession: Record<string, boolean>;
 }
 
 export type JokerTaskKind = "personal" | "shared" | "emergency";

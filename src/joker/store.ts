@@ -29,7 +29,7 @@ export interface JokerStore {
     submitAction: (code: string, action: "kill" | "oxygen") => Promise<{ ok: boolean; error?: string }>;
     report: () => Promise<{ ok: boolean; error?: string }>;
     vote: (targetSessionId: string | null) => Promise<{ ok: boolean; error?: string }>;
-    resetGame: () => Promise<void>;
+    resetGame: () => Promise<{ ok: boolean; error?: string }>;
 }
 
 export const useJokerStore = create<JokerStore>()(
@@ -161,16 +161,18 @@ export const useJokerStore = create<JokerStore>()(
 
         async resetGame() {
             const snapshot = get().snapshot;
-            if (!snapshot) return;
+            if (!snapshot) return { ok: false, error: "No snapshot" };
 
             try {
-                await rt.emitAck("intent", {
+                const resp = await rt.emitAck("intent", {
                     room: snapshot.roomCode,
                     action: "joker:reset_game",
                     from: getSessionId(),
                 }, 3000);
+                return { ok: (resp as any)?.ok ?? false, error: (resp as any)?.msg };
             } catch (e) {
                 console.error("Failed to reset game", e);
+                return { ok: false, error: "Failed to reset game" };
             }
         },
     }))

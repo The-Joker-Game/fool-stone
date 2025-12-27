@@ -22,6 +22,7 @@ import type {
 const MAX_SEATS = 16;
 const INITIAL_OXYGEN = 270;
 const OXYGEN_REFILL = 90;
+const WAREHOUSE_OXYGEN_REFILL = 60;
 const DUCK_EMERGENCY_OXYGEN = 180;
 const HAWK_EMERGENCY_OXYGEN = 180;
 const OXYGEN_DRAIN_NORMAL = 1;
@@ -93,6 +94,11 @@ function createEmptyRoundState(): JokerRoundState {
         redLightHalf: "first",
         oxygenGivenThisRound: {},
         goldenRabbitTriggeredLocations: [],
+        powerBoostBySession: {},
+        warehouseUsedBySession: {},
+        monitorUsedBySession: {},
+        kitchenUsedBySession: {},
+        medicalUsedBySession: {},
     };
 }
 
@@ -320,6 +326,37 @@ export function assignLocations(snapshot: JokerSnapshot): ActionResult {
     return { ok: true };
 }
 
+// ============ Location Effects ============
+
+type JokerCamp = "goose" | "duck" | "neutral";
+
+function getCamp(role: JokerRole | null): JokerCamp | null {
+    if (role === "goose") return "goose";
+    if (role === "duck") return "duck";
+    if (role === "hawk" || role === "dodo") return "neutral";
+    return null;
+}
+
+function getAlivePlayersInLocation(snapshot: JokerSnapshot, location: JokerLocation): JokerPlayerState[] {
+    return snapshot.players.filter(p => p.isAlive && p.location === location);
+}
+
+function isSoloInLocation(snapshot: JokerSnapshot, sessionId: string, location: JokerLocation): boolean {
+    const aliveAtLocation = getAlivePlayersInLocation(snapshot, location);
+    return (
+        aliveAtLocation.length === 1 &&
+        aliveAtLocation[0].sessionId === sessionId
+    );
+}
+
+function ensureRoundTracking(snapshot: JokerSnapshot): void {
+    if (!snapshot.round.powerBoostBySession) snapshot.round.powerBoostBySession = {};
+    if (!snapshot.round.warehouseUsedBySession) snapshot.round.warehouseUsedBySession = {};
+    if (!snapshot.round.monitorUsedBySession) snapshot.round.monitorUsedBySession = {};
+    if (!snapshot.round.kitchenUsedBySession) snapshot.round.kitchenUsedBySession = {};
+    if (!snapshot.round.medicalUsedBySession) snapshot.round.medicalUsedBySession = {};
+}
+
 // ============ Life Code System ============
 
 function generateLifeCode(): string {
@@ -504,6 +541,243 @@ function handleOxygenAction(
     snapshot.updatedAt = Date.now();
 
     return { ok: true, message: `Successfully gave ${OXYGEN_REFILL}s oxygen to ${target.name}` };
+}
+
+function markOxygenGivenThisRound(
+    snapshot: JokerSnapshot,
+    actorSessionId: string,
+    targetSessionId: string
+): void {
+    if (!snapshot.round.oxygenGivenThisRound[actorSessionId]) {
+        snapshot.round.oxygenGivenThisRound[actorSessionId] = {};
+    }
+    snapshot.round.oxygenGivenThisRound[actorSessionId][targetSessionId] = true;
+}
+
+function applyOxygenWithoutLeakFix(target: JokerPlayerState, amount: number, now: number): void {
+    target.oxygen += amount;
+    target.oxygenUpdatedAt = now;
+}
+
+export function useMonitoringPeek(
+    snapshot: JokerSnapshot,
+    sessionId: string
+): ActionResult {
+    if (snapshot.phase !== "red_light") {
+        return { ok: false, error: "Location effects only available during red light" };
+    }
+
+    const actor = snapshot.players.find(p => p.sessionId === sessionId);
+    if (!actor || !actor.isAlive || !actor.location) {
+        return { ok: false, error: "Invalid player" };
+    }
+
+    if (actor.location !== "监控室") {
+        return { ok: false, error: "Not in monitoring room" };
+    }
+
+    if (!isSoloInLocation(snapshot, sessionId, actor.location)) {
+        return { ok: false, error: "Not alone in location" };
+    }
+
+    ensureRoundTracking(snapshot);
+    if (snapshot.round.monitorUsedBySession[sessionId]) {
+        return { ok: false, error: "Monitoring already used this round" };
+    }
+
+    const actorCamp = getCamp(actor.role);
+    if (!actorCamp) {
+        return { ok: false, error: "Invalid player" };
+    }
+
+    const candidates = snapshot.players.filter(p => {
+        if (!p.isAlive || !p.sessionId) return false;
+        if (p.sessionId === sessionId) return false;
+        const camp = getCamp(p.role);
+        return camp !== null && camp !== actorCamp;
+    });
+
+    if (candidates.length === 0) {
+        return { ok: false, error: "No eligible target" };
+    }
+
+    const target = candidates[Math.floor(Math.random() * candidates.length)];
+    snapshot.round.monitorUsedBySession[sessionId] = true;
+    snapshot.updatedAt = Date.now();
+    return { ok: true, data: { lifeCode: target.lifeCode } };
+}
+
+export function usePowerBoost(
+    snapshot: JokerSnapshot,
+    sessionId: string
+): ActionResult {
+    if (snapshot.phase !== "red_light") {
+        return { ok: false, error: "Location effects only available during red light" };
+    }
+
+    const actor = snapshot.players.find(p => p.sessionId === sessionId);
+    if (!actor || !actor.isAlive || !actor.location) {
+        return { ok: false, error: "Invalid player" };
+    }
+
+    if (actor.location !== "发电室") {
+        return { ok: false, error: "Not in power room" };
+    }
+
+    if (!isSoloInLocation(snapshot, sessionId, actor.location)) {
+        return { ok: false, error: "Not alone in location" };
+    }
+
+    ensureRoundTracking(snapshot);
+    if (snapshot.round.powerBoostBySession[sessionId]) {
+        return { ok: false, error: "Power boost already used this round" };
+    }
+    snapshot.round.powerBoostBySession[sessionId] = true;
+    snapshot.updatedAt = Date.now();
+    return { ok: true };
+}
+
+export function useKitchenOxygen(
+    snapshot: JokerSnapshot,
+    sessionId: string
+): ActionResult {
+    if (snapshot.phase !== "red_light") {
+        return { ok: false, error: "Location effects only available during red light" };
+    }
+
+    const actor = snapshot.players.find(p => p.sessionId === sessionId);
+    if (!actor || !actor.isAlive || !actor.location) {
+        return { ok: false, error: "Invalid player" };
+    }
+
+    if (actor.location !== "厨房") {
+        return { ok: false, error: "Not in kitchen" };
+    }
+
+    if (!isSoloInLocation(snapshot, sessionId, actor.location)) {
+        return { ok: false, error: "Not alone in location" };
+    }
+
+    ensureRoundTracking(snapshot);
+    if (snapshot.round.kitchenUsedBySession[sessionId]) {
+        return { ok: false, error: "Kitchen already used this round" };
+    }
+
+    if (snapshot.round.oxygenGivenThisRound[sessionId]?.[sessionId]) {
+        return { ok: false, error: "Already gave oxygen to this player this round" };
+    }
+
+    const now = Date.now();
+    applyOxygenWithoutLeakFix(actor, OXYGEN_REFILL, now);
+    markOxygenGivenThisRound(snapshot, sessionId, sessionId);
+    snapshot.round.kitchenUsedBySession[sessionId] = true;
+
+    snapshot.logs.push({
+        at: now,
+        text: `Player ${actor.name} used kitchen oxygen +${OXYGEN_REFILL}s`,
+        type: "oxygen",
+    });
+
+    snapshot.updatedAt = now;
+    return { ok: true };
+}
+
+export function useMedicalOxygen(
+    snapshot: JokerSnapshot,
+    sessionId: string,
+    targetSessionId?: string
+): ActionResult {
+    if (snapshot.phase !== "red_light") {
+        return { ok: false, error: "Location effects only available during red light" };
+    }
+
+    const actor = snapshot.players.find(p => p.sessionId === sessionId);
+    if (!actor || !actor.isAlive || !actor.location) {
+        return { ok: false, error: "Invalid player" };
+    }
+
+    if (actor.location !== "医务室") {
+        return { ok: false, error: "Not in medical room" };
+    }
+
+    if (!isSoloInLocation(snapshot, sessionId, actor.location)) {
+        return { ok: false, error: "Not alone in location" };
+    }
+
+    ensureRoundTracking(snapshot);
+    if (snapshot.round.medicalUsedBySession[sessionId]) {
+        return { ok: false, error: "Medical already used this round" };
+    }
+
+    if (!targetSessionId || targetSessionId === sessionId) {
+        return { ok: false, error: "Invalid target" };
+    }
+
+    const target = snapshot.players.find(p => p.sessionId === targetSessionId);
+    if (!target || !target.isAlive) {
+        return { ok: false, error: "Invalid target" };
+    }
+
+    if (snapshot.round.oxygenGivenThisRound[sessionId]?.[targetSessionId]) {
+        return { ok: false, error: "Already gave oxygen to this player this round" };
+    }
+
+    const now = Date.now();
+    applyOxygenWithoutLeakFix(target, OXYGEN_REFILL, now);
+    markOxygenGivenThisRound(snapshot, sessionId, targetSessionId);
+    snapshot.round.medicalUsedBySession[sessionId] = true;
+
+    snapshot.logs.push({
+        at: now,
+        text: `Player ${target.name} received +${OXYGEN_REFILL}s oxygen from ${actor.name}`,
+        type: "oxygen",
+    });
+
+    snapshot.updatedAt = now;
+    return { ok: true };
+}
+
+export function useWarehouseOxygen(
+    snapshot: JokerSnapshot,
+    sessionId: string
+): ActionResult {
+    if (snapshot.phase !== "red_light") {
+        return { ok: false, error: "Location effects only available during red light" };
+    }
+
+    const actor = snapshot.players.find(p => p.sessionId === sessionId);
+    if (!actor || !actor.isAlive || !actor.location) {
+        return { ok: false, error: "Invalid player" };
+    }
+
+    if (actor.location !== "仓库") {
+        return { ok: false, error: "Not in warehouse" };
+    }
+
+    if (!isSoloInLocation(snapshot, sessionId, actor.location)) {
+        return { ok: false, error: "Not alone in location" };
+    }
+
+    ensureRoundTracking(snapshot);
+    if (snapshot.round.warehouseUsedBySession[sessionId]) {
+        return { ok: false, error: "Warehouse already used this round" };
+    }
+
+    const now = Date.now();
+    for (const player of snapshot.players) {
+        if (!player.isAlive || !player.sessionId) continue;
+        applyOxygenWithoutLeakFix(player, WAREHOUSE_OXYGEN_REFILL, now);
+    }
+
+    snapshot.round.warehouseUsedBySession[sessionId] = true;
+    snapshot.logs.push({
+        at: now,
+        text: `Player ${actor.name} used warehouse oxygen +${WAREHOUSE_OXYGEN_REFILL}s`,
+        type: "oxygen",
+    });
+
+    snapshot.updatedAt = now;
+    return { ok: true };
 }
 
 // ============ Oxygen Tick ============
@@ -817,8 +1091,9 @@ export function checkWinCondition(snapshot: JokerSnapshot): JokerGameResult | nu
 // ============ Task System ============
 
 const TASK_PROGRESS_PER_COMPLETION = 1; // +1% per task
+const POWER_TASK_PROGRESS_PER_COMPLETION = 3; // +3% per task with power boost
 const TASK_OXYGEN_COST = 10; // -10s oxygen per task attempt
-const SHARED_TASK_PROGRESS_PER_COMPLETION = 2; // +2% per shared task
+const SHARED_TASK_PROGRESS_PER_PARTICIPANT = 2; // +2% per participant
 const SHARED_TASK_OXYGEN_COST = 10; // -10s oxygen per shared task join
 export const SHARED_TASK_DURATIONS_MS: Record<JokerSharedTaskType, number> = {
     nine_grid: 10_000,
@@ -869,12 +1144,24 @@ export function startTask(snapshot: JokerSnapshot, sessionId: string): ActionRes
     return { ok: true, message: `Started task, -${TASK_OXYGEN_COST}s oxygen` };
 }
 
-export function completeTask(snapshot: JokerSnapshot): ActionResult {
+export function completeTask(snapshot: JokerSnapshot, sessionId: string): ActionResult {
     if (snapshot.phase !== "red_light") {
         return { ok: false, error: "Tasks can only be completed during red light" };
     }
 
-    snapshot.taskProgress = Math.min(100, snapshot.taskProgress + TASK_PROGRESS_PER_COMPLETION);
+    const player = snapshot.players.find(p => p.sessionId === sessionId);
+    if (!player || !player.isAlive) {
+        return { ok: false, error: "Invalid player" };
+    }
+
+    const boostActive = snapshot.round.powerBoostBySession?.[sessionId];
+    const inPowerRoom = player.location === "发电室";
+    const soloPowerRoom = inPowerRoom && isSoloInLocation(snapshot, sessionId, "发电室");
+    const progressGain = boostActive && soloPowerRoom
+        ? POWER_TASK_PROGRESS_PER_COMPLETION
+        : TASK_PROGRESS_PER_COMPLETION;
+
+    snapshot.taskProgress = Math.min(100, snapshot.taskProgress + progressGain);
     snapshot.updatedAt = Date.now();
 
     return { ok: true, message: `Task completed! Progress: ${snapshot.taskProgress}%` };
@@ -961,10 +1248,8 @@ export function resolveSharedTask(
     shared.resolvedAt = Date.now();
 
     if (success) {
-        snapshot.taskProgress = Math.min(
-            100,
-            snapshot.taskProgress + SHARED_TASK_PROGRESS_PER_COMPLETION
-        );
+        const gain = SHARED_TASK_PROGRESS_PER_PARTICIPANT * shared.participants.length;
+        snapshot.taskProgress = Math.min(100, snapshot.taskProgress + gain);
     }
 
     snapshot.updatedAt = Date.now();
@@ -1334,6 +1619,11 @@ export function transitionToGreenLight(snapshot: JokerSnapshot): void {
     }
     snapshot.round.oxygenGivenThisRound = {};
     snapshot.round.goldenRabbitTriggeredLocations = [];
+    snapshot.round.powerBoostBySession = {};
+    snapshot.round.warehouseUsedBySession = {};
+    snapshot.round.monitorUsedBySession = {};
+    snapshot.round.kitchenUsedBySession = {};
+    snapshot.round.medicalUsedBySession = {};
 
     snapshot.deadline = Date.now() + PHASE_DURATIONS.green_light;
     snapshot.updatedAt = Date.now();
