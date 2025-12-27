@@ -45,6 +45,7 @@ import {
   useKitchenOxygen as jokerUseKitchenOxygen,
   useMedicalOxygen as jokerUseMedicalOxygen,
   useWarehouseOxygen as jokerUseWarehouseOxygen,
+  failLocationEffect as jokerFailLocationEffect,
   joinSharedTask as jokerJoinSharedTask,
   resolveSharedTask as jokerResolveSharedTask,
   submitSharedTaskChoice as jokerSubmitSharedTaskChoice,
@@ -1068,6 +1069,11 @@ io.on("connection", (socket: Socket) => {
 
           case "joker:location_warehouse":
             res = jokerUseWarehouseOxygen(jokerSnapshot, socket.data.sessionId);
+            shouldBroadcast = true;
+            break;
+
+          case "joker:location_effect_fail":
+            res = jokerFailLocationEffect(jokerSnapshot, socket.data.sessionId);
             shouldBroadcast = true;
             break;
 

@@ -82,6 +82,7 @@ export interface JokerRoundState {
     oxygenGivenThisRound: Record<string, Record<string, boolean>>;
     goldenRabbitTriggeredLocations: JokerLocation[];
     powerBoostBySession: Record<string, boolean>;
+    powerBoostActiveBySession: Record<string, boolean>;
     warehouseUsedBySession: Record<string, boolean>;
     monitorUsedBySession: Record<string, boolean>;
     kitchenUsedBySession: Record<string, boolean>;

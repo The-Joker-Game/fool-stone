@@ -95,6 +95,7 @@ function createEmptyRoundState(): JokerRoundState {
         oxygenGivenThisRound: {},
         goldenRabbitTriggeredLocations: [],
         powerBoostBySession: {},
+        powerBoostActiveBySession: {},
         warehouseUsedBySession: {},
         monitorUsedBySession: {},
         kitchenUsedBySession: {},
@@ -351,6 +352,7 @@ function isSoloInLocation(snapshot: JokerSnapshot, sessionId: string, location: 
 
 function ensureRoundTracking(snapshot: JokerSnapshot): void {
     if (!snapshot.round.powerBoostBySession) snapshot.round.powerBoostBySession = {};
+    if (!snapshot.round.powerBoostActiveBySession) snapshot.round.powerBoostActiveBySession = {};
     if (!snapshot.round.warehouseUsedBySession) snapshot.round.warehouseUsedBySession = {};
     if (!snapshot.round.monitorUsedBySession) snapshot.round.monitorUsedBySession = {};
     if (!snapshot.round.kitchenUsedBySession) snapshot.round.kitchenUsedBySession = {};
@@ -633,6 +635,7 @@ export function usePowerBoost(
         return { ok: false, error: "Power boost already used this round" };
     }
     snapshot.round.powerBoostBySession[sessionId] = true;
+    snapshot.round.powerBoostActiveBySession[sessionId] = true;
     snapshot.updatedAt = Date.now();
     return { ok: true };
 }
@@ -777,6 +780,64 @@ export function useWarehouseOxygen(
     });
 
     snapshot.updatedAt = now;
+    return { ok: true };
+}
+
+export function failLocationEffect(
+    snapshot: JokerSnapshot,
+    sessionId: string
+): ActionResult {
+    if (snapshot.phase !== "red_light") {
+        return { ok: false, error: "Location effects only available during red light" };
+    }
+
+    const actor = snapshot.players.find(p => p.sessionId === sessionId);
+    if (!actor || !actor.isAlive || !actor.location) {
+        return { ok: false, error: "Invalid player" };
+    }
+
+    if (!isSoloInLocation(snapshot, sessionId, actor.location)) {
+        return { ok: false, error: "Not alone in location" };
+    }
+
+    ensureRoundTracking(snapshot);
+
+    switch (actor.location) {
+        case "监控室":
+            if (snapshot.round.monitorUsedBySession[sessionId]) {
+                return { ok: false, error: "Monitoring already used this round" };
+            }
+            snapshot.round.monitorUsedBySession[sessionId] = true;
+            break;
+        case "发电室":
+            if (snapshot.round.powerBoostBySession[sessionId]) {
+                return { ok: false, error: "Power boost already used this round" };
+            }
+            snapshot.round.powerBoostBySession[sessionId] = true;
+            break;
+        case "厨房":
+            if (snapshot.round.kitchenUsedBySession[sessionId]) {
+                return { ok: false, error: "Kitchen already used this round" };
+            }
+            snapshot.round.kitchenUsedBySession[sessionId] = true;
+            break;
+        case "医务室":
+            if (snapshot.round.medicalUsedBySession[sessionId]) {
+                return { ok: false, error: "Medical already used this round" };
+            }
+            snapshot.round.medicalUsedBySession[sessionId] = true;
+            break;
+        case "仓库":
+            if (snapshot.round.warehouseUsedBySession[sessionId]) {
+                return { ok: false, error: "Warehouse already used this round" };
+            }
+            snapshot.round.warehouseUsedBySession[sessionId] = true;
+            break;
+        default:
+            return { ok: false, error: "Invalid location" };
+    }
+
+    snapshot.updatedAt = Date.now();
     return { ok: true };
 }
 
@@ -1154,7 +1215,7 @@ export function completeTask(snapshot: JokerSnapshot, sessionId: string): Action
         return { ok: false, error: "Invalid player" };
     }
 
-    const boostActive = snapshot.round.powerBoostBySession?.[sessionId];
+    const boostActive = snapshot.round.powerBoostActiveBySession?.[sessionId];
     const inPowerRoom = player.location === "发电室";
     const soloPowerRoom = inPowerRoom && isSoloInLocation(snapshot, sessionId, "发电室");
     const progressGain = boostActive && soloPowerRoom
@@ -1620,6 +1681,7 @@ export function transitionToGreenLight(snapshot: JokerSnapshot): void {
     snapshot.round.oxygenGivenThisRound = {};
     snapshot.round.goldenRabbitTriggeredLocations = [];
     snapshot.round.powerBoostBySession = {};
+    snapshot.round.powerBoostActiveBySession = {};
     snapshot.round.warehouseUsedBySession = {};
     snapshot.round.monitorUsedBySession = {};
     snapshot.round.kitchenUsedBySession = {};

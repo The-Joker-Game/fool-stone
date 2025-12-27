@@ -339,6 +339,8 @@ export default function JokerRoom() {
     const [monitorPeek, setMonitorPeek] = useState<null | { code: string; until: number }>(null);
     const [showMedicalDialog, setShowMedicalDialog] = useState(false);
     const [suppressPauseDialog, setSuppressPauseDialog] = useState(false);
+    const [pendingLocationEffect, setPendingLocationEffect] = useState<null | { location: JokerLocation; targetSessionId?: string }>(null);
+    const [locationEffectFlash, setLocationEffectFlash] = useState<null | { message: string; until: number }>(null);
 
     // Mini-game state
     const [showMiniGame, setShowMiniGame] = useState(false);
@@ -396,7 +398,8 @@ export default function JokerRoom() {
     }, [jokerPlayers, me?.location]);
     const soloLocation = !!me?.location && sameLocationCount === 1;
     const soloLocationEffect = myAlive && phase === "red_light" && soloLocation ? me.location : null;
-    const powerBoostActive = !!jokerSnapshot?.round?.powerBoostBySession?.[mySessionId];
+    const powerBoostUsed = !!jokerSnapshot?.round?.powerBoostBySession?.[mySessionId];
+    const powerBoostActive = !!jokerSnapshot?.round?.powerBoostActiveBySession?.[mySessionId];
     const warehouseUsed = !!jokerSnapshot?.round?.warehouseUsedBySession?.[mySessionId];
     const monitorUsed = !!jokerSnapshot?.round?.monitorUsedBySession?.[mySessionId];
     const kitchenUsed = !!jokerSnapshot?.round?.kitchenUsedBySession?.[mySessionId];
@@ -420,6 +423,7 @@ export default function JokerRoom() {
         if (phase !== "red_light") {
             setShowMiniGame(false);
             setCurrentGameType(null);
+            setPendingLocationEffect(null);
         }
     }, [phase]);
 
@@ -870,6 +874,7 @@ export default function JokerRoom() {
         if (!roomCode || isInteractionDisabled || taskCooldown) return;
         const result = await rt.emitAck("intent", { room: roomCode, action: "joker:start_task" });
         if ((result as any)?.ok) {
+            setPendingLocationEffect(null);
             setCurrentGameType(getRandomGame());
             setShowMiniGame(true);
         }
@@ -955,58 +960,37 @@ export default function JokerRoom() {
             "Power boost already used this round": "本回合已使用超载推进",
             "Kitchen already used this round": "本回合已使用补氧配给",
             "Medical already used this round": "本回合已使用远程治疗",
+            "Invalid location": "无效场所",
         };
         return map[err] ?? "操作失败";
     }, []);
 
-    const handleMonitorPeek = useCallback(async () => {
-        if (!roomCode || isInteractionDisabled) return;
-        const resp = await rt.emitAck("intent", {
-            room: roomCode,
-            action: "joker:location_monitor",
-        });
-        if (!(resp as any)?.ok) {
-            await alert(locationEffectErrorMessage((resp as any)?.msg));
-            return;
-        }
-        const code = (resp as any)?.data?.lifeCode;
-        if (code) {
-            setMonitorPeek({ code, until: Date.now() + 5000 });
-        }
-    }, [roomCode, isInteractionDisabled, locationEffectErrorMessage]);
+    const startLocationEffectTask = useCallback((location: JokerLocation, targetSessionId?: string) => {
+        if (!roomCode || showMiniGame) return;
+        setPendingLocationEffect({ location, targetSessionId });
+        setCurrentGameType(getRandomGame());
+        setShowMiniGame(true);
+    }, [roomCode, showMiniGame]);
 
-    const handlePowerBoost = useCallback(async () => {
-        if (!roomCode || isInteractionDisabled) return;
-        const resp = await rt.emitAck("intent", {
-            room: roomCode,
-            action: "joker:location_power",
-        });
-        if (!(resp as any)?.ok) {
-            await alert(locationEffectErrorMessage((resp as any)?.msg));
-        }
-    }, [roomCode, isInteractionDisabled, locationEffectErrorMessage]);
+    const handleMonitorPeek = useCallback(() => {
+        if (isInteractionDisabled) return;
+        startLocationEffectTask("监控室");
+    }, [isInteractionDisabled, startLocationEffectTask]);
 
-    const handleKitchenOxygen = useCallback(async () => {
-        if (!roomCode || isInteractionDisabled) return;
-        const resp = await rt.emitAck("intent", {
-            room: roomCode,
-            action: "joker:location_kitchen",
-        });
-        if (!(resp as any)?.ok) {
-            await alert(locationEffectErrorMessage((resp as any)?.msg));
-        }
-    }, [roomCode, isInteractionDisabled, locationEffectErrorMessage]);
+    const handlePowerBoost = useCallback(() => {
+        if (isInteractionDisabled) return;
+        startLocationEffectTask("发电室");
+    }, [isInteractionDisabled, startLocationEffectTask]);
 
-    const handleWarehouseOxygen = useCallback(async () => {
-        if (!roomCode || isInteractionDisabled) return;
-        const resp = await rt.emitAck("intent", {
-            room: roomCode,
-            action: "joker:location_warehouse",
-        });
-        if (!(resp as any)?.ok) {
-            await alert(locationEffectErrorMessage((resp as any)?.msg));
-        }
-    }, [roomCode, isInteractionDisabled, locationEffectErrorMessage]);
+    const handleKitchenOxygen = useCallback(() => {
+        if (isInteractionDisabled) return;
+        startLocationEffectTask("厨房");
+    }, [isInteractionDisabled, startLocationEffectTask]);
+
+    const handleWarehouseOxygen = useCallback(() => {
+        if (isInteractionDisabled) return;
+        startLocationEffectTask("仓库");
+    }, [isInteractionDisabled, startLocationEffectTask]);
 
     const handleMedicalOpen = useCallback(() => {
         if (isInteractionDisabled) return;
@@ -1021,18 +1005,62 @@ export default function JokerRoom() {
         setShowMedicalDialog(true);
     }, [isInteractionDisabled, medicalTargets.length, medicalUsed]);
 
-    const handleMedicalSelect = useCallback(async (targetSessionId: string) => {
-        if (!roomCode || isInteractionDisabled) return;
+    const handleMedicalSelect = useCallback((targetSessionId: string) => {
+        if (isInteractionDisabled) return;
         setShowMedicalDialog(false);
+        startLocationEffectTask("医务室", targetSessionId);
+    }, [isInteractionDisabled, startLocationEffectTask]);
+
+    const handleLocationEffectFail = useCallback(async () => {
+        if (!roomCode) return;
         const resp = await rt.emitAck("intent", {
             room: roomCode,
-            action: "joker:location_medical",
-            data: { targetSessionId },
+            action: "joker:location_effect_fail",
         });
         if (!(resp as any)?.ok) {
             await alert(locationEffectErrorMessage((resp as any)?.msg));
+            return;
         }
-    }, [roomCode, isInteractionDisabled, locationEffectErrorMessage]);
+        setLocationEffectFlash({ message: "场所效果失败，本回合无法再使用", until: Date.now() + 2000 });
+    }, [roomCode, locationEffectErrorMessage]);
+
+    const handleLocationEffectSuccess = useCallback(async (effect: { location: JokerLocation; targetSessionId?: string }) => {
+        if (!roomCode) return;
+        let resp: any = null;
+        if (effect.location === "监控室") {
+            resp = await rt.emitAck("intent", { room: roomCode, action: "joker:location_monitor" });
+        } else if (effect.location === "发电室") {
+            resp = await rt.emitAck("intent", { room: roomCode, action: "joker:location_power" });
+        } else if (effect.location === "厨房") {
+            resp = await rt.emitAck("intent", { room: roomCode, action: "joker:location_kitchen" });
+        } else if (effect.location === "仓库") {
+            resp = await rt.emitAck("intent", { room: roomCode, action: "joker:location_warehouse" });
+        } else if (effect.location === "医务室") {
+            if (!effect.targetSessionId) {
+                await alert("无效目标");
+                return;
+            }
+            resp = await rt.emitAck("intent", {
+                room: roomCode,
+                action: "joker:location_medical",
+                data: { targetSessionId: effect.targetSessionId },
+            });
+        }
+
+        if (!resp || !(resp as any)?.ok) {
+            await alert(locationEffectErrorMessage((resp as any)?.msg));
+            return;
+        }
+
+        if (effect.location === "监控室") {
+            const code = (resp as any)?.data?.lifeCode;
+            if (code) {
+                setMonitorPeek({ code, until: Date.now() + 5000 });
+            }
+        }
+
+        // Success feedback is handled by the effect UI itself (e.g. monitor code reveal).
+    }, [roomCode, locationEffectErrorMessage]);
 
     useEffect(() => {
         if (!sharedTask?.deadlineAt || sharedTask.status !== "active") {
@@ -1119,21 +1147,39 @@ export default function JokerRoom() {
         return () => clearTimeout(timer);
     }, [monitorPeek?.until]);
 
+    useEffect(() => {
+        if (!locationEffectFlash) return;
+        const delay = Math.max(0, locationEffectFlash.until - Date.now());
+        const timer = setTimeout(() => setLocationEffectFlash(null), delay);
+        return () => clearTimeout(timer);
+    }, [locationEffectFlash?.until]);
+
     const handleCompleteTask = useCallback(async () => {
         if (!roomCode) return;
         setShowMiniGame(false);
         setCurrentGameType(null);
+        if (pendingLocationEffect) {
+            const effect = pendingLocationEffect;
+            setPendingLocationEffect(null);
+            await handleLocationEffectSuccess(effect);
+            return;
+        }
         await rt.emitAck("intent", { room: roomCode, action: "joker:complete_task" });
         setTaskResultFlash({ result: "success", until: Date.now() + 2000 });
         setTaskCooldownSeconds(10);
-    }, [roomCode]);
+    }, [roomCode, pendingLocationEffect, handleLocationEffectSuccess]);
 
     const handleCloseTask = useCallback(() => {
         setShowMiniGame(false);
         setCurrentGameType(null);
+        if (pendingLocationEffect) {
+            setPendingLocationEffect(null);
+            handleLocationEffectFail();
+            return;
+        }
         setTaskResultFlash({ result: "fail", until: Date.now() + 2000 });
         setTaskCooldownSeconds(10);
-    }, []);
+    }, [pendingLocationEffect, handleLocationEffectFail]);
 
     // Render: No room
     if (!roomCode) {
@@ -1440,6 +1486,13 @@ export default function JokerRoom() {
                 <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
                     <div className="px-6 py-3 rounded-full border text-lg font-semibold bg-red-500/20 text-red-100 border-red-500/30">
                         {oxygenLeakFlash.message}
+                    </div>
+                </div>
+            )}
+            {locationEffectFlash && (
+                <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
+                    <div className="px-6 py-3 rounded-full border text-lg font-semibold bg-slate-500/20 text-slate-100 border-slate-400/40">
+                        {locationEffectFlash.message}
                     </div>
                 </div>
             )}
@@ -1962,7 +2015,7 @@ export default function JokerRoom() {
                                                             return (
                                                                 <Button
                                                                     onClick={handleMonitorPeek}
-                                                                    disabled={isInteractionDisabled || monitorUsed}
+                                                                    disabled={isInteractionDisabled || showMiniGame || monitorUsed}
                                                                     className="h-14 rounded-xl border border-white/10 bg-gradient-to-r from-slate-700 to-slate-600 hover:from-slate-600 hover:to-slate-500 text-sm font-bold flex flex-col gap-1 text-white"
                                                                 >
                                                                     <div className="flex items-center gap-2">
@@ -1979,7 +2032,7 @@ export default function JokerRoom() {
                                                             return (
                                                                 <Button
                                                                     onClick={handlePowerBoost}
-                                                                    disabled={isInteractionDisabled || powerBoostActive}
+                                                                    disabled={isInteractionDisabled || showMiniGame || powerBoostUsed}
                                                                     className="h-14 rounded-xl border border-white/10 bg-gradient-to-r from-amber-600 to-yellow-500 hover:from-amber-500 hover:to-yellow-400 text-sm font-bold flex flex-col gap-1 text-white"
                                                                 >
                                                                     <div className="flex items-center gap-2">
@@ -1987,7 +2040,7 @@ export default function JokerRoom() {
                                                                         超载推进
                                                                     </div>
                                                                     <span className="text-[11px] text-white/90">
-                                                                        {powerBoostActive ? "本回合已使用" : "个人任务+3%"}
+                                                                        {powerBoostUsed ? "本回合已使用" : "个人任务+3%"}
                                                                     </span>
                                                                 </Button>
                                                             );
@@ -1996,7 +2049,7 @@ export default function JokerRoom() {
                                                             return (
                                                                 <Button
                                                                     onClick={handleKitchenOxygen}
-                                                                    disabled={isInteractionDisabled || kitchenUsed}
+                                                                    disabled={isInteractionDisabled || showMiniGame || kitchenUsed}
                                                                     className="h-14 rounded-xl border border-white/10 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-sm font-bold flex flex-col gap-1 text-white"
                                                                 >
                                                                     <div className="flex items-center gap-2">
@@ -2013,7 +2066,7 @@ export default function JokerRoom() {
                                                             return (
                                                                 <Button
                                                                     onClick={handleMedicalOpen}
-                                                                    disabled={isInteractionDisabled || medicalUsed}
+                                                                    disabled={isInteractionDisabled || showMiniGame || medicalUsed}
                                                                     className="h-14 rounded-xl border border-white/10 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-sm font-bold flex flex-col gap-1 text-white"
                                                                 >
                                                                     <div className="flex items-center gap-2">
@@ -2029,7 +2082,7 @@ export default function JokerRoom() {
                                                         return (
                                                             <Button
                                                                 onClick={handleWarehouseOxygen}
-                                                                disabled={isInteractionDisabled || warehouseUsed}
+                                                                disabled={isInteractionDisabled || showMiniGame || warehouseUsed}
                                                                 className="h-14 rounded-xl border border-white/10 bg-gradient-to-r from-indigo-700 to-slate-700 hover:from-indigo-600 hover:to-slate-600 text-sm font-bold flex flex-col gap-1 text-white"
                                                             >
                                                                 <div className="flex items-center gap-2">
