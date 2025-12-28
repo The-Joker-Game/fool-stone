@@ -112,6 +112,7 @@ export interface JokerLifeCodeState {
     current: Record<string, string>;
     previous: Record<string, string>;
     version: number;
+    lastUpdatedAt: number;
 }
 
 export interface JokerRoundState {

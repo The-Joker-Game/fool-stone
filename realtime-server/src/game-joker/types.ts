@@ -119,6 +119,8 @@ export interface JokerLifeCodeState {
     previous: Record<string, string>;
     // Version tracker
     version: number;
+    // Last time codes were regenerated (ms)
+    lastUpdatedAt: number;
 }
 
 export interface JokerRoundState {

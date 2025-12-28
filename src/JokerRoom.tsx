@@ -93,6 +93,9 @@ const ROLE_LABELS: Record<JokerRole, string> = {
     hawk: "猎鹰",
 };
 
+const LIFE_CODE_REFRESH_MS = 70_000;
+const LIFE_CODE_WARNING_MS = 5_000;
+
 const ROLE_REVEAL_STYLES: Record<JokerRole, { ring: string; text: string; emoji: string; desc: string }> = {
     duck: {
         ring: "bg-orange-500/20 border-orange-500/50 shadow-orange-500/30",
@@ -340,6 +343,8 @@ export default function JokerRoom() {
     const [goldenRabbitResultFlash, setGoldenRabbitResultFlash] = useState<null | { result: "success" | "fail"; until: number; rabbitIndex?: number }>(null);
     const [sharedTaskResultFlash, setSharedTaskResultFlash] = useState<null | { result: "success" | "fail"; until: number }>(null);
     const [monitorPeek, setMonitorPeek] = useState<null | { code: string; until: number }>(null);
+    const [lifeCodeNextRefreshAt, setLifeCodeNextRefreshAt] = useState<number | null>(null);
+    const [lifeCodeRefreshCountdown, setLifeCodeRefreshCountdown] = useState(0);
     const [showMedicalDialog, setShowMedicalDialog] = useState(false);
     const [showReview, setShowReview] = useState(false);
     const [suppressPauseDialog, setSuppressPauseDialog] = useState(false);
@@ -399,6 +404,7 @@ export default function JokerRoom() {
     const lastGoldenRabbitResolvedAtRef = useRef<number | null>(null);
     const lastOxygenLeakStartedAtRef = useRef<number | null>(null);
     const lastOxygenLeakResolvedAtRef = useRef<number | null>(null);
+    const lastLifeCodeVersionRef = useRef<number | null>(null);
     const sameLocationCount = useMemo(() => {
         if (!me?.location) return 0;
         return jokerPlayers.filter(p => p.isAlive && p.location === me.location).length;
@@ -542,59 +548,6 @@ export default function JokerRoom() {
 
         return () => clearInterval(interval);
     }, [phase, myAlive, me?.oxygen, me?.oxygenLeakActive, isPaused]);
-
-    // Watermark randomization with responsive grid
-    const WATERMARK_ROWS = 3;
-    const [watermarkCols, setWatermarkCols] = useState(() => {
-        if (typeof window !== 'undefined') {
-            return window.innerWidth < 500 ? 2 : 3;
-        }
-        return 2;
-    });
-    const [watermarkIndices, setWatermarkIndices] = useState<string[]>(() => {
-        // Initialize with 5 random positions immediately
-        const cols = typeof window !== 'undefined' && window.innerWidth >= 500 ? 3 : 2;
-        const indices = new Set<string>();
-        const totalPositions = WATERMARK_ROWS * cols;
-        const count = Math.min(5, totalPositions);
-        while (indices.size < count) {
-            const r = Math.floor(Math.random() * WATERMARK_ROWS);
-            const c = Math.floor(Math.random() * cols);
-            indices.add(`${r}-${c}`);
-        }
-        return Array.from(indices);
-    });
-
-    useEffect(() => {
-        const handleResize = () => {
-            const newCols = window.innerWidth < 500 ? 2 : 3;
-            setWatermarkCols(newCols);
-        };
-        window.addEventListener('resize', handleResize);
-        return () => window.removeEventListener('resize', handleResize);
-    }, []);
-
-    useEffect(() => {
-        if (phase !== "red_light") {
-            return;
-        }
-
-        const tick = () => {
-            const indices = new Set<string>();
-            const totalPositions = WATERMARK_ROWS * watermarkCols;
-            const count = Math.min(5, totalPositions);
-            while (indices.size < count) {
-                const r = Math.floor(Math.random() * WATERMARK_ROWS);
-                const c = Math.floor(Math.random() * watermarkCols);
-                indices.add(`${r}-${c}`);
-            }
-            setWatermarkIndices(Array.from(indices));
-        };
-
-        tick();
-        const interval = setInterval(tick, 1000);
-        return () => clearInterval(interval);
-    }, [phase, watermarkCols]);
 
     // Socket initialization
     useEffect(() => {
@@ -1153,6 +1106,37 @@ export default function JokerRoom() {
     }, [me?.oxygenLeakResolvedAt]);
 
     useEffect(() => {
+        if (!jokerSnapshot?.lifeCodes) return;
+        const version = jokerSnapshot.lifeCodes.version;
+        if (lastLifeCodeVersionRef.current === version) return;
+        lastLifeCodeVersionRef.current = version;
+        const baseTime = jokerSnapshot.lifeCodes.lastUpdatedAt || Date.now();
+        setLifeCodeNextRefreshAt(baseTime + LIFE_CODE_REFRESH_MS);
+    }, [jokerSnapshot?.lifeCodes?.version, jokerSnapshot?.lifeCodes?.lastUpdatedAt]);
+
+    useEffect(() => {
+        if (!lifeCodeNextRefreshAt) {
+            setLifeCodeRefreshCountdown(0);
+            return;
+        }
+        const tick = () => {
+            const remainingMs = lifeCodeNextRefreshAt - Date.now();
+            if (remainingMs <= 0) {
+                setLifeCodeRefreshCountdown(0);
+                return;
+            }
+            if (remainingMs <= LIFE_CODE_WARNING_MS) {
+                setLifeCodeRefreshCountdown(Math.ceil(remainingMs / 1000));
+                return;
+            }
+            setLifeCodeRefreshCountdown(0);
+        };
+        tick();
+        const interval = setInterval(tick, 200);
+        return () => clearInterval(interval);
+    }, [lifeCodeNextRefreshAt]);
+
+    useEffect(() => {
         if (!goldenRabbitResultFlash) return;
         const delay = Math.max(0, goldenRabbitResultFlash.until - Date.now());
         const timer = setTimeout(() => setGoldenRabbitResultFlash(null), delay);
@@ -1215,7 +1199,7 @@ export default function JokerRoom() {
                                 <Crown className="w-8 h-8 text-white" />
                             </div>
                             <CardTitle className="text-3xl font-bold tracking-tight bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
-                                鹅鸭杀：生命密码
+                                鹅鸭杀：生命代码
                             </CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-6 pt-6">
@@ -1423,7 +1407,7 @@ export default function JokerRoom() {
                                 {"\n"}
                                 【游戏背景】
                                 {"\n"}在遥远的星际航线上，鹅族正在建造一艘承载新家园的巨型太空船。为了防止渗透与破坏，飞船启用了“红绿灯作业协议”：绿灯自由行动与沟通，黄灯强制分流到作业点，红灯全船锁定——所有工程师必须原地完成任务。
-                                {"\n"}但船上混入了伪装者：鸭族。它们外表与鹅无异，却以清除鹅、破坏工程为目标。更糟的是，飞船生命维持系统采用动态“生命密码”：每名成员都有一串的动态的氧气校验码，协作时可以互相输入以补充氧气；而鸭族只要在锁定时刻窥见并输入校验码，就能让对方的生命维持系统瞬间断开，制造无声的“事故”。
+                                {"\n"}但船上混入了伪装者：鸭族。它们外表与鹅无异，却以清除鹅、破坏工程为目标。更糟的是，飞船生命维持系统采用动态“生命代码”：每名成员都有一串的动态的氧气校验码，协作时可以互相输入以补充氧气；而鸭族只要在锁定时刻窥见并输入校验码，就能让对方的生命维持系统瞬间断开，制造无声的“事故”。
                                 {"\n"}当警报响起，船员只能召开紧急会议，用投票把怀疑者投入太空。工程进度、氧气余量、同伴的眼神与手机屏幕的反光，都会成为你判断真相的证据——在这艘尚未完工的星际方舟里，活下去与完工，必须同时做到。
                                 {"\n\n"}
                                 【胜利条件】
@@ -1434,15 +1418,15 @@ export default function JokerRoom() {
                                 {"\n\n"}
                                 【回合节奏】
                                 {"\n"}• 每回合90秒：绿灯15秒选地点 → 黄灯15秒移动 → 红灯60秒做任务/击杀。
-                                {"\n"}• 生命密码每隔一段时间（70秒左右）刷新一次。
+                                {"\n"}• 生命代码每隔一段时间（70秒左右）刷新一次。
                                 {"\n\n"}
-                                【生命密码与氧气】
-                                {"\n"}• 红灯显示2位生命密码，用于击杀/补氧。
-                                {"\n"}• 输入生命密码后，击杀/补氧都会进入10秒冷却。
+                                【生命代码与氧气】
+                                {"\n"}• 红灯显示2位生命代码，用于击杀/补氧。
+                                {"\n"}• 输入生命代码后，击杀/补氧都会进入10秒冷却。
                                 {"\n"}• 补氧：每次+90秒；同一回合对同一玩家仅一次。
                                 {"\n"}• 初始氧气每人270秒，耗尽死亡；鸭子和猎鹰氧气归零自动启用180秒备用氧气（整局1次）。
                                 {"\n"}• 鹅尝试击杀会犯规死亡。
-                                {"\n"}• 击杀时输入无效生命密码会罚扣30秒氧气。
+                                {"\n"}• 击杀时输入无效生命代码会罚扣30秒氧气。
                                 {"\n\n"}
                                 【会议与投票】
                                 {"\n"}• 讨论60秒（房主可跳过或延长30秒）。
@@ -1459,7 +1443,7 @@ export default function JokerRoom() {
                                 {"\n"}• 黄金兔子：8秒内加入捕兔队；九宫格捕捉，任一人选中即成功；奖励+8%进度。
                                 {"\n\n"}
                                 【场所效果】（独自一人时生效）
-                                {"\n"}• 监控室（调取影像）：随机窥视1名不同阵营玩家生命密码（显示5秒）。
+                                {"\n"}• 监控室（调取影像）：随机窥视1名不同阵营玩家生命代码（显示5秒）。
                                 {"\n"}• 发电室（超载推进）：本回合个人任务+3%。
                                 {"\n"}• 厨房（补氧配给）：自补氧+90秒。
                                 {"\n"}• 医务室（远程治疗）：给任意其他玩家补氧+90秒。
@@ -1478,7 +1462,7 @@ export default function JokerRoom() {
             {monitorPeek && (
                 <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
                     <div className="px-6 py-3 rounded-full border text-lg font-semibold bg-slate-500/20 text-slate-100 border-slate-400/40">
-                        窥视到生命密码 {monitorPeek.code}
+                        窥视到生命代码 {monitorPeek.code}
                     </div>
                 </div>
             )}
@@ -1536,32 +1520,6 @@ export default function JokerRoom() {
                             50% { opacity: 1; }
                         }
                     `}</style>
-                </div>
-            )}
-
-            {/* Life Code Watermark Overlay - Only in Red Light */}
-            {phase === "red_light" && me?.lifeCode && watermarkIndices.length > 0 && (
-                <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden grid grid-rows-3 gap-1 select-none">
-                    {/* Three rows */}
-                    {Array.from({ length: WATERMARK_ROWS }).map((_, row) => (
-                        <div key={row} className="flex items-center justify-around gap-1 overflow-hidden">
-                            {Array.from({ length: watermarkCols }).map((_, col) => {
-                                const isVisible = watermarkIndices.includes(`${row}-${col}`);
-                                return (
-                                    <div
-                                        key={col}
-                                        className={`transform -rotate-12 font-black whitespace-nowrap transition-opacity duration-300 ${isVisible ? "opacity-100" : "opacity-0"}`}
-                                        style={{
-                                            fontSize: watermarkCols === 2 ? 'min(28vh, 45vw)' : 'min(28vh, 30vw)',
-                                            color: 'rgba(255, 255, 255, 0.12)',
-                                        }}
-                                    >
-                                        {me.lifeCode}
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    ))}
                 </div>
             )}
 
@@ -1635,12 +1593,10 @@ export default function JokerRoom() {
                                         </div>
                                     </div>
 
-                                    {/* Life Code & Oxygen - Always Visible */}
                                     <div className="flex items-center gap-4">
-                                        {/* Life Code */}
                                         <div className="text-center">
                                             <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1 flex items-center gap-1">
-                                                <Fingerprint className="w-3 h-3" />生命密码
+                                                <Fingerprint className="w-3 h-3" />生命代码
                                             </div>
                                             <div className="text-3xl font-mono font-black tracking-widest text-white">
                                                 {me.lifeCode ?? "??"}
@@ -1898,8 +1854,13 @@ export default function JokerRoom() {
                                             <div className="space-y-4">
                                                 <label className="text-center flex items-center justify-center gap-2 text-xs font-bold text-white/40 uppercase tracking-widest">
                                                     <Target className="w-4 h-4" />
-                                                    目标生命密码
+                                                    目标生命代码
                                                 </label>
+                                                {phase === "red_light" && myAlive && lifeCodeRefreshCountdown > 0 && !isPaused && (
+                                                    <div className="text-center text-xs font-semibold text-amber-200/90 bg-amber-500/10 border border-amber-500/20 rounded-full py-1">
+                                                        生命代码即将刷新 {lifeCodeRefreshCountdown}s
+                                                    </div>
+                                                )}
                                                 <div className="flex justify-center">
                                                     <InputOTP
                                                         maxLength={2}
@@ -2074,7 +2035,7 @@ export default function JokerRoom() {
                                                                         调取影像
                                                                     </div>
                                                                     <span className="text-[11px] text-white/80">
-                                                                        {monitorUsed ? "本回合已使用" : "生命密码 5秒"}
+                                                                        {monitorUsed ? "本回合已使用" : "生命代码 5秒"}
                                                                     </span>
                                                                 </Button>
                                                             );

@@ -84,6 +84,7 @@ function createEmptyLifeCodeState(): JokerLifeCodeState {
         current: {},
         previous: {},
         version: 0,
+        lastUpdatedAt: Date.now(),
     };
 }
 
@@ -404,6 +405,7 @@ function generateUniqueLifeCodes(count: number): string[] {
 }
 
 export function generateAllLifeCodes(snapshot: JokerSnapshot): void {
+    const now = Date.now();
     // Rotate: current becomes previous
     snapshot.lifeCodes.previous = { ...snapshot.lifeCodes.current };
     snapshot.lifeCodes.current = {};
@@ -419,7 +421,8 @@ export function generateAllLifeCodes(snapshot: JokerSnapshot): void {
     });
 
     snapshot.lifeCodes.version++;
-    snapshot.updatedAt = Date.now();
+    snapshot.lifeCodes.lastUpdatedAt = now;
+    snapshot.updatedAt = now;
 }
 
 function findPlayerByLifeCode(
