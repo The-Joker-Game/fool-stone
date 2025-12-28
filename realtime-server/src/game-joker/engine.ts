@@ -33,8 +33,8 @@ export const GOLDEN_RABBIT_JOIN_MS = 8_000;
 // Phase durations in milliseconds
 export const PHASE_DURATIONS = {
     role_reveal: 10_000,
-    green_light: 20_000,
-    yellow_light: 10_000,
+    green_light: 15_000,
+    yellow_light: 15_000,
     red_light: 60_000,
     meeting: 60_000,
     voting: 120_000,
@@ -94,6 +94,7 @@ function createEmptyRoundState(): JokerRoundState {
         redLightHalf: "first",
         oxygenGivenThisRound: {},
         goldenRabbitTriggeredLocations: [],
+        arrivedBySession: {},
         powerBoostBySession: {},
         powerBoostActiveBySession: {},
         warehouseUsedBySession: {},
@@ -330,6 +331,27 @@ export function assignLocations(snapshot: JokerSnapshot): ActionResult {
     return { ok: true };
 }
 
+export function confirmArrival(snapshot: JokerSnapshot, sessionId: string): ActionResult {
+    if (snapshot.phase !== "yellow_light") {
+        return { ok: false, error: "Arrival only available during yellow light" };
+    }
+
+    const player = snapshot.players.find(p => p.sessionId === sessionId);
+    if (!player || !player.isAlive) {
+        return { ok: false, error: "Invalid player" };
+    }
+    if (!player.location) {
+        return { ok: false, error: "Player has no location" };
+    }
+
+    ensureRoundTracking(snapshot);
+    if (!snapshot.round.arrivedBySession[sessionId]) {
+        snapshot.round.arrivedBySession[sessionId] = true;
+        snapshot.updatedAt = Date.now();
+    }
+    return { ok: true };
+}
+
 // ============ Location Effects ============
 
 type JokerCamp = "goose" | "duck" | "neutral";
@@ -354,6 +376,7 @@ function isSoloInLocation(snapshot: JokerSnapshot, sessionId: string, location: 
 }
 
 function ensureRoundTracking(snapshot: JokerSnapshot): void {
+    if (!snapshot.round.arrivedBySession) snapshot.round.arrivedBySession = {};
     if (!snapshot.round.powerBoostBySession) snapshot.round.powerBoostBySession = {};
     if (!snapshot.round.powerBoostActiveBySession) snapshot.round.powerBoostActiveBySession = {};
     if (!snapshot.round.warehouseUsedBySession) snapshot.round.warehouseUsedBySession = {};
@@ -1779,6 +1802,7 @@ export function transitionToGreenLight(snapshot: JokerSnapshot): void {
     }
     snapshot.round.oxygenGivenThisRound = {};
     snapshot.round.goldenRabbitTriggeredLocations = [];
+    snapshot.round.arrivedBySession = {};
     snapshot.round.powerBoostBySession = {};
     snapshot.round.powerBoostActiveBySession = {};
     snapshot.round.warehouseUsedBySession = {};

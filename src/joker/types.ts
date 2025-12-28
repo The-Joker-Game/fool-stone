@@ -120,6 +120,7 @@ export interface JokerRoundState {
     redLightHalf: "first" | "second";
     oxygenGivenThisRound: Record<string, Record<string, boolean>>;
     goldenRabbitTriggeredLocations: JokerLocation[];
+    arrivedBySession: Record<string, boolean>;
     powerBoostBySession: Record<string, boolean>;
     powerBoostActiveBySession: Record<string, boolean>;
     warehouseUsedBySession: Record<string, boolean>;

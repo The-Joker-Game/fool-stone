@@ -177,6 +177,9 @@ export function JokerGameReview({ deaths, votingHistory, players, locationHistor
                     const executedSeat = round.executedSessionId
                         ? getPlayerSeat(round.executedSessionId)
                         : 0;
+                    const executedLabel = executedName
+                        ? `${executedSeat ? `${executedSeat}号 ` : ""}${executedName}`
+                        : null;
 
                     return (
                         <Card key={`vote-${idx}`} className="bg-blue-500/5 backdrop-blur-xl border-blue-500/20">
@@ -195,8 +198,8 @@ export function JokerGameReview({ deaths, votingHistory, players, locationHistor
                                                         : "bg-gray-500/20 text-gray-300 border-gray-500/30"
                                             }
                                         >
-                                            {round.reason === "vote" && executedName
-                                                ? `${executedName} 被淘汰`
+                                            {round.reason === "vote" && executedLabel
+                                                ? `${executedLabel} 被淘汰`
                                                 : round.reason === "tie"
                                                     ? "平票"
                                                     : "弃票过多"}

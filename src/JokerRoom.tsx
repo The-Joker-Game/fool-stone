@@ -337,6 +337,8 @@ export default function JokerRoom() {
     const actionCooldown = cooldownSeconds > 0;
     const [taskCooldownSeconds, setTaskCooldownSeconds] = useState(0);
     const taskCooldown = taskCooldownSeconds > 0;
+    const [goldenRabbitResultFlash, setGoldenRabbitResultFlash] = useState<null | { result: "success" | "fail"; until: number; rabbitIndex?: number }>(null);
+    const [sharedTaskResultFlash, setSharedTaskResultFlash] = useState<null | { result: "success" | "fail"; until: number }>(null);
     const [monitorPeek, setMonitorPeek] = useState<null | { code: string; until: number }>(null);
     const [showMedicalDialog, setShowMedicalDialog] = useState(false);
     const [showReview, setShowReview] = useState(false);
@@ -370,8 +372,13 @@ export default function JokerRoom() {
         () => jokerPlayers.find(p => p.sessionId === getSessionId()) ?? null,
         [jokerPlayers]
     );
+    const rulesVersion = import.meta.env.VITE_BUILD_VERSION || "unknown";
     const myRole = (me?.role ?? "goose") as JokerRole;
     const myAlive = me?.isAlive ?? false;
+    const executedPlayer = useMemo(() => {
+        if (!jokerSnapshot?.execution?.executedSessionId) return null;
+        return jokerPlayers.find(p => p.sessionId === jokerSnapshot.execution?.executedSessionId) ?? null;
+    }, [jokerSnapshot?.execution?.executedSessionId, jokerPlayers]);
     const isPaused = jokerSnapshot?.paused ?? false;
     const showPauseDialog = isPaused && !suppressPauseDialog;
     const isInteractionDisabled = isPaused;
@@ -396,6 +403,15 @@ export default function JokerRoom() {
         if (!me?.location) return 0;
         return jokerPlayers.filter(p => p.isAlive && p.location === me.location).length;
     }, [jokerPlayers, me?.location]);
+    const yellowLocationPlayers = useMemo(() => {
+        if (!me?.location) return [];
+        return jokerPlayers.filter(p =>
+            p.isAlive &&
+            p.sessionId &&
+            !p.isDisconnected &&
+            p.location === me.location
+        );
+    }, [jokerPlayers, me?.location]);
     const soloLocation = !!me?.location && sameLocationCount === 1;
     const soloLocationEffect = myAlive && phase === "red_light" && soloLocation ? me.location : null;
     const powerBoostUsed = !!jokerSnapshot?.round?.powerBoostBySession?.[mySessionId];
@@ -404,6 +420,8 @@ export default function JokerRoom() {
     const monitorUsed = !!jokerSnapshot?.round?.monitorUsedBySession?.[mySessionId];
     const kitchenUsed = !!jokerSnapshot?.round?.kitchenUsedBySession?.[mySessionId];
     const medicalUsed = !!jokerSnapshot?.round?.medicalUsedBySession?.[mySessionId];
+    const arrivalMap = jokerSnapshot?.round?.arrivedBySession ?? {};
+    const meArrived = !!arrivalMap[mySessionId];
     const personalTaskProgressLabel =
         soloLocationEffect === "发电室" && powerBoostActive ? "+3%进度" : "+2%进度";
     const medicalTargets = useMemo(
@@ -738,9 +756,15 @@ export default function JokerRoom() {
         setCooldownSeconds(10);
         const res = await submitAction(lifeCodeInput, action);
         if (!res.ok) {
+            const isKillPenalty =
+                action === "kill" &&
+                (myRole === "duck" || myRole === "hawk") &&
+                res.error === "Invalid life code";
             const msg =
-                res.error === "Invalid life code" || res.error === "No player with this code"
-                    ? "无效代码"
+                isKillPenalty
+                    ? "错误代码，损失30秒氧气"
+                    : res.error === "Invalid life code" || res.error === "No player with this code"
+                        ? "无效代码"
                     : res.error === "Not in same location"
                         ? "该玩家与你不在同一场所"
                         : res.error === "Cannot give oxygen to yourself"
@@ -765,7 +789,7 @@ export default function JokerRoom() {
             await alert(msg);
         }
         setLifeCodeInput("");
-    }, [lifeCodeInput, actionCooldown, isInteractionDisabled, submitAction]);
+    }, [lifeCodeInput, actionCooldown, isInteractionDisabled, submitAction, myRole]);
 
     const handleVote = useCallback(async (targetSessionId: string | null) => {
         if (isInteractionDisabled) return;
@@ -785,6 +809,25 @@ export default function JokerRoom() {
     const handleMeetingExtend = useCallback(async () => {
         if (!roomCode || isInteractionDisabled) return;
         await rt.emitAck("intent", { room: roomCode, action: "joker:meeting_extend" });
+    }, [roomCode, isInteractionDisabled]);
+
+    const handleConfirmArrival = useCallback(async () => {
+        if (!roomCode || isInteractionDisabled) return;
+        const resp = await rt.emitAck("intent", { room: roomCode, action: "joker:confirm_arrival" });
+        if (!(resp as any)?.ok) {
+            const err = (resp as any)?.msg;
+            const msg =
+                err === "Arrival only available during yellow light"
+                    ? "只能在黄灯阶段确认"
+                    : err === "Player has no location"
+                        ? "当前没有分配位置"
+                        : err === "Invalid player"
+                            ? "操作无效"
+                            : err
+                                ? `确认失败：${err}`
+                                : "确认失败";
+            await alert(msg);
+        }
     }, [roomCode, isInteractionDisabled]);
 
     const handleTogglePause = useCallback(async () => {
@@ -1073,8 +1116,11 @@ export default function JokerRoom() {
         if (sharedTask?.status !== "resolved" || !sharedTask.result || !sharedTask.resolvedAt) return;
         if (lastSharedResolvedAtRef.current === sharedTask.resolvedAt) return;
         lastSharedResolvedAtRef.current = sharedTask.resolvedAt;
-        toast[sharedTask.result === "success" ? "success" : "error"](`共同任务${sharedTask.result === "success" ? "成功" : "失败"}`);
         if (isSharedParticipant) {
+            setSharedTaskResultFlash({
+                result: sharedTask.result,
+                until: Date.now() + 2500,
+            });
             setTaskCooldownSeconds(10);
         }
     }, [sharedTask?.status, sharedTask?.result, sharedTask?.resolvedAt, isSharedParticipant]);
@@ -1084,7 +1130,11 @@ export default function JokerRoom() {
         if (lastGoldenRabbitResolvedAtRef.current === goldenRabbitTask.resolvedAt) return;
         lastGoldenRabbitResolvedAtRef.current = goldenRabbitTask.resolvedAt;
         if (isGoldenRabbitParticipant) {
-            toast[goldenRabbitTask.result === "success" ? "success" : "error"](`捕兔${goldenRabbitTask.result === "success" ? "成功！" : "失败"}`);
+            setGoldenRabbitResultFlash({
+                result: goldenRabbitTask.result,
+                until: Date.now() + 2500,
+                rabbitIndex: goldenRabbitTask.rabbitIndex,
+            });
         }
     }, [goldenRabbitTask?.status, goldenRabbitTask?.result, goldenRabbitTask?.resolvedAt, isGoldenRabbitParticipant]);
 
@@ -1101,6 +1151,20 @@ export default function JokerRoom() {
         lastOxygenLeakResolvedAtRef.current = me.oxygenLeakResolvedAt;
         toast.success("氧气瓶修复完毕！");
     }, [me?.oxygenLeakResolvedAt]);
+
+    useEffect(() => {
+        if (!goldenRabbitResultFlash) return;
+        const delay = Math.max(0, goldenRabbitResultFlash.until - Date.now());
+        const timer = setTimeout(() => setGoldenRabbitResultFlash(null), delay);
+        return () => clearTimeout(timer);
+    }, [goldenRabbitResultFlash?.until]);
+
+    useEffect(() => {
+        if (!sharedTaskResultFlash) return;
+        const delay = Math.max(0, sharedTaskResultFlash.until - Date.now());
+        const timer = setTimeout(() => setSharedTaskResultFlash(null), delay);
+        return () => clearTimeout(timer);
+    }, [sharedTaskResultFlash?.until]);
 
     useEffect(() => {
         if (!monitorPeek) return;
@@ -1151,7 +1215,7 @@ export default function JokerRoom() {
                                 <Crown className="w-8 h-8 text-white" />
                             </div>
                             <CardTitle className="text-3xl font-bold tracking-tight bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
-                                鹅鸭杀
+                                鹅鸭杀：生命密码
                             </CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-6 pt-6">
@@ -1355,9 +1419,11 @@ export default function JokerRoom() {
                         <div className="text-xl font-black tracking-wide text-white">游戏规则</div>
                         <ScrollArea className="mt-3 max-h-[70vh] pr-2">
                             <div className="text-sm text-white/70 leading-relaxed whitespace-pre-line">
+                                【版本】{rulesVersion}
+                                {"\n"}
                                 【游戏背景】
-                                {"\n"}在遥远的星际航线上，鹅族正在建造一艘承载新家园的巨型太空船。为了防止渗透与破坏，工程系统被设计成“红绿灯作业协议”：绿灯允许人员调度与沟通，黄灯强制分流到各个作业点，红灯则全船锁定——所有工程师必须原地完成关键维修与校准任务。
-                                {"\n"}但这艘船上混入了伪装者：鸭族。它们外表与鹅无异，却以破坏与清除为目标。更糟的是，飞船采用了生命维持的“命门代码”机制：每名成员都有一串的动态的氧气校验码，协作时可以互相输入以补充氧气；而鸭族只要在锁定时刻窥见并输入校验码，就能让对方的生命维持系统瞬间断开，制造无声的“事故”。
+                                {"\n"}在遥远的星际航线上，鹅族正在建造一艘承载新家园的巨型太空船。为了防止渗透与破坏，飞船启用了“红绿灯作业协议”：绿灯自由行动与沟通，黄灯强制分流到作业点，红灯全船锁定——所有工程师必须原地完成任务。
+                                {"\n"}但船上混入了伪装者：鸭族。它们外表与鹅无异，却以清除鹅、破坏工程为目标。更糟的是，飞船生命维持系统采用动态“生命密码”：每名成员都有一串的动态的氧气校验码，协作时可以互相输入以补充氧气；而鸭族只要在锁定时刻窥见并输入校验码，就能让对方的生命维持系统瞬间断开，制造无声的“事故”。
                                 {"\n"}当警报响起，船员只能召开紧急会议，用投票把怀疑者投入太空。工程进度、氧气余量、同伴的眼神与手机屏幕的反光，都会成为你判断真相的证据——在这艘尚未完工的星际方舟里，活下去与完工，必须同时做到。
                                 {"\n\n"}
                                 【胜利条件】
@@ -1367,15 +1433,16 @@ export default function JokerRoom() {
                                 {"\n"}• 猎鹰（中立）：可杀任何人，存活到最后（只剩你或你+1只鹅）。
                                 {"\n\n"}
                                 【回合节奏】
-                                {"\n"}• 每回合90秒：绿灯20秒选地点 → 黄灯10秒移动 → 红灯60秒做任务/击杀。
-                                {"\n"}• 命门代码每隔一段时间（70秒左右）刷新一次。
+                                {"\n"}• 每回合90秒：绿灯15秒选地点 → 黄灯15秒移动 → 红灯60秒做任务/击杀。
+                                {"\n"}• 生命密码每隔一段时间（70秒左右）刷新一次。
                                 {"\n\n"}
-                                【命门代码与氧气】
-                                {"\n"}• 红灯显示2位命门码，用于击杀/补氧。
-                                {"\n"}• 输入命门码后，击杀/补氧都会进入10秒冷却。
+                                【生命密码与氧气】
+                                {"\n"}• 红灯显示2位生命密码，用于击杀/补氧。
+                                {"\n"}• 输入生命密码后，击杀/补氧都会进入10秒冷却。
                                 {"\n"}• 补氧：每次+90秒；同一回合对同一玩家仅一次。
                                 {"\n"}• 初始氧气每人270秒，耗尽死亡；鸭子和猎鹰氧气归零自动启用180秒备用氧气（整局1次）。
                                 {"\n"}• 鹅尝试击杀会犯规死亡。
+                                {"\n"}• 击杀时输入无效生命密码会罚扣30秒氧气。
                                 {"\n\n"}
                                 【会议与投票】
                                 {"\n"}• 讨论60秒（房主可跳过或延长30秒）。
@@ -1392,7 +1459,7 @@ export default function JokerRoom() {
                                 {"\n"}• 黄金兔子：8秒内加入捕兔队；九宫格捕捉，任一人选中即成功；奖励+8%进度。
                                 {"\n\n"}
                                 【场所效果】（独自一人时生效）
-                                {"\n"}• 监控室（调取影像）：随机窥视1名不同阵营玩家命门码（显示5秒）。
+                                {"\n"}• 监控室（调取影像）：随机窥视1名不同阵营玩家生命密码（显示5秒）。
                                 {"\n"}• 发电室（超载推进）：本回合个人任务+3%。
                                 {"\n"}• 厨房（补氧配给）：自补氧+90秒。
                                 {"\n"}• 医务室（远程治疗）：给任意其他玩家补氧+90秒。
@@ -1411,7 +1478,45 @@ export default function JokerRoom() {
             {monitorPeek && (
                 <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
                     <div className="px-6 py-3 rounded-full border text-lg font-semibold bg-slate-500/20 text-slate-100 border-slate-400/40">
-                        窥视到命门代码 {monitorPeek.code}
+                        窥视到生命密码 {monitorPeek.code}
+                    </div>
+                </div>
+            )}
+            {sharedTaskResultFlash && (
+                <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
+                    <div className={`inline-flex items-center px-6 py-4 rounded-2xl border text-lg font-semibold ${sharedTaskResultFlash.result === "success"
+                        ? "bg-emerald-500/20 text-emerald-100 border-emerald-400/40"
+                        : "bg-red-500/20 text-red-200 border-red-500/30"
+                        }`}>
+                        共同任务{sharedTaskResultFlash.result === "success" ? "成功" : "失败"}
+                    </div>
+                </div>
+            )}
+            {goldenRabbitResultFlash && (
+                <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
+                    <div className={`inline-flex flex-col items-center px-6 py-4 rounded-2xl border text-lg font-semibold ${goldenRabbitResultFlash.result === "success"
+                        ? "bg-amber-400/20 text-amber-100 border-amber-400/40"
+                        : "bg-red-500/20 text-red-200 border-red-500/30"
+                        }`}>
+                        <div className="text-center">
+                            捕兔{goldenRabbitResultFlash.result === "success" ? "成功" : "失败"}
+                        </div>
+                        {goldenRabbitResultFlash.rabbitIndex !== undefined && (
+                            <div className="mt-3 grid grid-cols-3 gap-1">
+                                {Array.from({ length: 9 }, (_, idx) => {
+                                    const isRabbit = idx === goldenRabbitResultFlash.rabbitIndex;
+                                    return (
+                                        <div
+                                            key={idx}
+                                            className={`w-7 h-7 rounded-md border ${isRabbit
+                                                ? "bg-amber-300/80 border-amber-200"
+                                                : "bg-white/5 border-white/20"
+                                                }`}
+                                        />
+                                    );
+                                })}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -1535,7 +1640,7 @@ export default function JokerRoom() {
                                         {/* Life Code */}
                                         <div className="text-center">
                                             <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1 flex items-center gap-1">
-                                                <Fingerprint className="w-3 h-3" />生命码
+                                                <Fingerprint className="w-3 h-3" />生命密码
                                             </div>
                                             <div className="text-3xl font-mono font-black tracking-widest text-white">
                                                 {me.lifeCode ?? "??"}
@@ -1741,6 +1846,47 @@ export default function JokerRoom() {
                                         <p className="text-white/50 uppercase tracking-widest text-sm">目的地已分配</p>
                                         <h2 className="text-5xl font-black text-white drop-shadow-lg">{me?.location ?? "..."}</h2>
                                     </div>
+                                    <Card className="w-full max-w-sm bg-black/20 backdrop-blur-xl border-white/10 text-left">
+                                        <CardHeader className="pb-2">
+                                            <CardTitle className="text-xs uppercase tracking-widest text-white/50">
+                                                同场所玩家
+                                            </CardTitle>
+                                        </CardHeader>
+                                        <CardContent className="space-y-2">
+                                            {yellowLocationPlayers.map(p => {
+                                                const arrived = !!arrivalMap[p.sessionId ?? ""];
+                                                return (
+                                                    <div
+                                                        key={p.sessionId}
+                                                        className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2"
+                                                    >
+                                                        <div className="flex items-center gap-2">
+                                                            <Avvvatars value={String(p.seat)} size={26} />
+                                                            <span className="text-sm text-white">
+                                                                {p.name || `玩家${p.seat}`}
+                                                            </span>
+                                                            <span className="text-[11px] text-white/40">座位 {p.seat}</span>
+                                                        </div>
+                                                        {arrived ? (
+                                                            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                                                        ) : (
+                                                            <Circle className="w-4 h-4 text-white/30" />
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                            {yellowLocationPlayers.length === 0 && (
+                                                <div className="text-center text-xs text-white/40">等待分配...</div>
+                                            )}
+                                            <Button
+                                                onClick={handleConfirmArrival}
+                                                disabled={isInteractionDisabled || meArrived}
+                                                className="mt-2 w-full h-11 bg-white text-black hover:bg-white/90"
+                                            >
+                                                {meArrived ? "已确认抵达" : "确认抵达"}
+                                            </Button>
+                                        </CardContent>
+                                    </Card>
                                 </motion.div>
                             )}
 
@@ -1752,7 +1898,7 @@ export default function JokerRoom() {
                                             <div className="space-y-4">
                                                 <label className="text-center flex items-center justify-center gap-2 text-xs font-bold text-white/40 uppercase tracking-widest">
                                                     <Target className="w-4 h-4" />
-                                                    目标生命码
+                                                    目标生命密码
                                                 </label>
                                                 <div className="flex justify-center">
                                                     <InputOTP
@@ -1928,7 +2074,7 @@ export default function JokerRoom() {
                                                                         调取影像
                                                                     </div>
                                                                     <span className="text-[11px] text-white/80">
-                                                                        {monitorUsed ? "本回合已使用" : "命门代码 5秒"}
+                                                                        {monitorUsed ? "本回合已使用" : "生命密码 5秒"}
                                                                     </span>
                                                                 </Button>
                                                             );
@@ -2018,7 +2164,7 @@ export default function JokerRoom() {
                                                         任务冷却中 {taskCooldownSeconds}s
                                                     </div>
                                                 )}
-                                                {sharedTask && isSharedParticipant && (
+                                                {sharedTask && isSharedParticipant && sharedTask.status !== "resolved" && (
                                                     <div className="mt-2 rounded-lg border border-white/10 bg-white/5 p-3 text-center text-sm text-white/70">
                                                         {sharedTask.status === "waiting" && (
                                                             <div>
@@ -2084,12 +2230,6 @@ export default function JokerRoom() {
                                                                 {sharedTask.type === "nine_grid" && mySharedSelection !== undefined && (
                                                                     <div className="text-xs text-white/60">已选择，请等待其他玩家</div>
                                                                 )}
-                                                            </div>
-                                                        )}
-                                                        {sharedTask.status === "resolved" && (
-                                                            <div>
-                                                                共同任务
-                                                                {sharedTask.result === "success" ? "成功" : "失败"}
                                                             </div>
                                                         )}
                                                     </div>
@@ -2291,7 +2431,7 @@ export default function JokerRoom() {
                                     {jokerSnapshot.execution.executedSessionId ? (
                                         <div className="space-y-6">
                                             <div className="relative inline-block">
-                                                <Avvvatars value={String(jokerPlayers.find(p => p.sessionId === jokerSnapshot.execution?.executedSessionId)?.seat ?? "?")} size={120} />
+                                                <Avvvatars value={String(executedPlayer?.seat ?? "?")} size={120} />
                                                 <motion.div
                                                     initial={{ opacity: 0, scale: 2 }}
                                                     animate={{ opacity: 1, scale: 1 }}
@@ -2302,7 +2442,8 @@ export default function JokerRoom() {
                                             </div>
                                             <div>
                                                 <h3 className="text-2xl font-bold mb-1 text-white">
-                                                    {jokerPlayers.find(p => p.sessionId === jokerSnapshot.execution?.executedSessionId)?.name}
+                                                    {executedPlayer?.name}
+                                                    {executedPlayer?.seat ? `（座位${executedPlayer.seat}）` : ""}
                                                 </h3>
                                                 <p className="text-red-400 font-mono uppercase tracking-widest text-lg">
                                                     身份是 {jokerSnapshot.execution.executedRole

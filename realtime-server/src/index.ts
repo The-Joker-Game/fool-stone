@@ -36,6 +36,7 @@ import {
   extendMeeting,
   extendVoting,
   resetToLobby as jokerResetToLobby,
+  confirmArrival as jokerConfirmArrival,
   checkWinCondition as jokerCheckWin,
   finalizeGame as jokerFinalizeGame,
   startTask as jokerStartTask,
@@ -960,6 +961,11 @@ io.on("connection", (socket: Socket) => {
 
           case "joker:select_location":
             res = selectLocation(jokerSnapshot, data);
+            shouldBroadcast = true;
+            break;
+
+          case "joker:confirm_arrival":
+            res = jokerConfirmArrival(jokerSnapshot, socket.data.sessionId);
             shouldBroadcast = true;
             break;
 
