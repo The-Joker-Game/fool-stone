@@ -1,20 +1,23 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
-import { execSync } from 'node:child_process'
 
 // https://vite.dev/config/
-const buildVersion = (() => {
-  try {
-    return execSync('git log -1 --format=%cd --date=format:%Y-%m-%d %H:%M:%S', {
-      stdio: ['ignore', 'pipe', 'ignore'],
-    })
-      .toString()
-      .trim()
-  } catch {
-    return 'unknown'
-  }
-})()
+const formatBuildTime = (date: Date) => {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Singapore',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date)
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${map.year}-${map.month}-${map.day} ${map.hour}:${map.minute}:${map.second}`
+}
+const buildVersion = (process.env.VITE_BUILD_VERSION || '').trim() || formatBuildTime(new Date())
 
 export default defineConfig({
   plugins: [react()],
