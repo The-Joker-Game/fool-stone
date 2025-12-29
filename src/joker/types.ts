@@ -38,6 +38,13 @@ export interface JokerDeathRecord {
     revealedAt?: number;
 }
 
+// Oxygen state for client-side interpolation
+export interface JokerOxygenState {
+    baseOxygen: number;      // base oxygen value (seconds)
+    drainRate: number;       // drain rate (1=normal, 3=leak, 0=paused)
+    baseTimestamp: number;   // server timestamp when state was set (ms)
+}
+
 export interface JokerPlayerState {
     seat: number;
     sessionId: string | null;
@@ -55,8 +62,7 @@ export interface JokerPlayerState {
     lifeCode: string;
     lifeCodeVersion: number;
 
-    oxygen: number;
-    oxygenUpdatedAt: number;
+    oxygenState: JokerOxygenState;
     duckEmergencyUsed: boolean;
     hawkEmergencyUsed: boolean;
     oxygenLeakActive: boolean;

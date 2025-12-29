@@ -22,6 +22,7 @@ import {
     initGoldenRabbitTask,
     startGoldenRabbitHunt,
     resolveGoldenRabbitTask,
+    setOxygenDrainRate,
 } from "./engine.js";
 
 // Track active timers per room
@@ -267,7 +268,8 @@ function scheduleOxygenLeakEvents(
             target.oxygenLeakStartedAt = Date.now();
             target.oxygenLeakResolvedAt = undefined;
             target.oxygenLeakRound = snap.round.roundCount;
-            target.oxygenUpdatedAt = Date.now();
+            // Set drain rate to leak rate (3 per second)
+            setOxygenDrainRate(target, 3);
             snap.updatedAt = Date.now();
             broadcastSnapshot(room, io);
         }, delay);

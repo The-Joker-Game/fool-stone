@@ -1,6 +1,8 @@
 // src/JokerRoom.tsx
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
+import { useTranslation } from "react-i18next";
+import i18n from "./i18n";
 import { rt, getSessionId, type PresenceState } from "./realtime/socket";
 import type {
     JokerPlayerState,
@@ -59,6 +61,7 @@ import {
     Play as PlayIcon,
     BookOpen,
     Eye,
+    Languages,
 } from "lucide-react";
 import Avvvatars from "avvvatars-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -74,52 +77,29 @@ function randName() {
     return `Player-${a}${b}`;
 }
 
-const PHASE_LABELS: Record<JokerPhase, string> = {
-    lobby: "等待大厅",
-    role_reveal: "身份揭晓",
-    green_light: "绿灯",
-    yellow_light: "黄灯",
-    red_light: "红灯",
-    meeting: "会议",
-    voting: "投票",
-    execution: "处决",
-    game_over: "游戏结束",
-};
-
-const ROLE_LABELS: Record<JokerRole, string> = {
-    duck: "鸭子",
-    goose: "鹅",
-    dodo: "呆呆鸟",
-    hawk: "猎鹰",
-};
-
 const LIFE_CODE_REFRESH_MS = 70_000;
 const LIFE_CODE_WARNING_MS = 5_000;
 
-const ROLE_REVEAL_STYLES: Record<JokerRole, { ring: string; text: string; emoji: string; desc: string }> = {
+const ROLE_REVEAL_STYLES: Record<JokerRole, { ring: string; text: string; emoji: string }> = {
     duck: {
         ring: "bg-orange-500/20 border-orange-500/50 shadow-orange-500/30",
         text: "text-orange-400",
         emoji: "🦆",
-        desc: "你的目标是消灭鹅，不要被发现！",
     },
     goose: {
         ring: "bg-white/20 border-white/50 shadow-white/30",
         text: "text-white",
         emoji: "🪿",
-        desc: "你的目标是找出鸭子并投票淘汰他们！",
     },
     dodo: {
         ring: "bg-amber-500/20 border-amber-400/50 shadow-amber-500/30",
         text: "text-amber-200",
         emoji: "🦤",
-        desc: "你的目标是在会议投票中被投出去！",
     },
     hawk: {
         ring: "bg-sky-500/20 border-sky-400/50 shadow-sky-500/30",
         text: "text-sky-200",
         emoji: "🦅",
-        desc: "你可以击杀任何玩家，活到最后获胜！",
     },
 };
 
@@ -276,6 +256,7 @@ function renderDigitSegments(segmentsOn: number[]): ReactElement {
 }
 
 export default function JokerRoom() {
+    const { t } = useTranslation();
     const [connected, setConnected] = useState(false);
     const [roomCode, setRoomCode] = useState<string | null>(null);
     const [isHost, setIsHost] = useState(false);
@@ -289,6 +270,11 @@ export default function JokerRoom() {
         return randName();
     });
     const autoJoinAttempted = useRef(false);
+
+    // —— 浏览器标题跟随语言切换 —— //
+    useEffect(() => {
+        document.title = t('home.pageTitle');
+    }, [t, i18n.language]);
 
     // —— 屏幕常亮功能 —— //
     useEffect(() => {
@@ -429,18 +415,18 @@ export default function JokerRoom() {
     const arrivalMap = jokerSnapshot?.round?.arrivedBySession ?? {};
     const meArrived = !!arrivalMap[mySessionId];
     const personalTaskProgressLabel =
-        soloLocationEffect === "发电室" && powerBoostActive ? "+3%进度" : "+2%进度";
+        soloLocationEffect === "发电室" && powerBoostActive ? t('task.progress3') : t('task.progress2');
     const medicalTargets = useMemo(
         () => jokerPlayers.filter(p => p.isAlive && p.sessionId && p.sessionId !== me?.sessionId),
         [jokerPlayers, me?.sessionId]
     );
     const myVoteLabel = useMemo(() => {
         if (!me?.hasVoted) return null;
-        if (me.voteTarget === null) return "弃票";
+        if (me.voteTarget === null) return t('voting.abstain');
         const target = jokerPlayers.find(p => p.sessionId === me.voteTarget);
-        if (!target) return "未知";
-        return `${target.name || `玩家${target.seat}`}（${target.seat}）`;
-    }, [me?.hasVoted, me?.voteTarget, jokerPlayers]);
+        if (!target) return t('common.unknown');
+        return `${target.name || `${t('game.player')}${target.seat}`}（${target.seat}）`;
+    }, [me?.hasVoted, me?.voteTarget, jokerPlayers, t]);
 
     // Auto-close mini-game when phase changes away from red_light
     useEffect(() => {
@@ -497,57 +483,51 @@ export default function JokerRoom() {
         return () => clearInterval(interval);
     }, [jokerSnapshot?.deadline, jokerSnapshot?.paused, jokerSnapshot?.pauseRemainingMs]);
 
-    // Local oxygen display (interpolates between server updates)
-    const [displayOxygen, setDisplayOxygen] = useState(me?.oxygen ?? 270);
-    const lastServerOxygenRef = useRef(me?.oxygen ?? 270);
-    const lastServerOxygenTimeRef = useRef(me?.oxygenUpdatedAt ?? Date.now());
+    // Local oxygen display (calculates from oxygenState)
+    const [displayOxygen, setDisplayOxygen] = useState(270);
+    const oxygenStateRef = useRef(me?.oxygenState);
 
-    // Update references when server sends new oxygen value
+    // Keep ref in sync with server state
     useEffect(() => {
-        if (me?.oxygen !== undefined && me?.oxygenUpdatedAt !== undefined) {
-            lastServerOxygenRef.current = me.oxygen;
-            lastServerOxygenTimeRef.current = me.oxygenUpdatedAt;
-            if (!isPaused) {
-                setDisplayOxygen(me.oxygen);
-            }
+        if (me?.oxygenState) {
+            oxygenStateRef.current = me.oxygenState;
         }
-    }, [me?.oxygen, me?.oxygenUpdatedAt, isPaused]);
+    }, [me?.oxygenState?.baseOxygen, me?.oxygenState?.drainRate, me?.oxygenState?.baseTimestamp]);
 
-    useEffect(() => {
-        if (displayOxygen === undefined) return;
-        if (isPaused) {
-            lastServerOxygenRef.current = displayOxygen;
-            lastServerOxygenTimeRef.current = Date.now();
-        } else {
-            lastServerOxygenRef.current = displayOxygen;
-            lastServerOxygenTimeRef.current = Date.now();
-        }
-    }, [isPaused, displayOxygen]);
+    // Calculate current oxygen from oxygenState
+    const calculateOxygen = useCallback(() => {
+        const state = oxygenStateRef.current;
+        if (!state) return 270;
+        const elapsed = (Date.now() - state.baseTimestamp) / 1000;
+        // Use Math.ceil: only decrease after a full second (269.1 → 270, 269.0 → 269)
+        return Math.max(0, Math.ceil(state.baseOxygen - state.drainRate * elapsed));
+    }, []);
 
     // Local oxygen tick during active phases
     useEffect(() => {
         const isActivePhase = ["green_light", "yellow_light", "red_light"].includes(phase);
         if (!isActivePhase || !myAlive) {
-            // Non-active phase: just show server value directly
-            if (me?.oxygen !== undefined) {
-                setDisplayOxygen(me.oxygen);
-            }
+            // Non-active phase: calculate once from state
+            setDisplayOxygen(calculateOxygen());
             return;
         }
 
         if (isPaused) {
+            // When paused, show current value but don't tick
+            setDisplayOxygen(calculateOxygen());
             return;
         }
 
-        const drainRate = me?.oxygenLeakActive ? 3 : 1;
+        // Run immediately then every second
+        // IMPORTANT: Interval does NOT depend on oxygenState, only on phase/alive/paused
+        // This prevents interval recreation on every server update
+        setDisplayOxygen(calculateOxygen());
         const interval = setInterval(() => {
-            const elapsed = Math.floor((Date.now() - lastServerOxygenTimeRef.current) / 1000);
-            const interpolatedOxygen = Math.max(0, lastServerOxygenRef.current - elapsed * drainRate);
-            setDisplayOxygen(interpolatedOxygen);
+            setDisplayOxygen(calculateOxygen());
         }, 1000);
 
         return () => clearInterval(interval);
-    }, [phase, myAlive, me?.oxygen, me?.oxygenLeakActive, isPaused]);
+    }, [phase, myAlive, isPaused, calculateOxygen]);
 
     // Socket initialization
     useEffect(() => {
@@ -649,7 +629,7 @@ export default function JokerRoom() {
                 localStorage.setItem("name", nick);
                 localStorage.setItem("joker_lastRoomCode", joinCodeInput.trim());
             } else {
-                await alert(resp?.msg || "游戏已经开始，无法加入");
+                await alert(resp?.msg || t('error.gameAlreadyStarted'));
             }
         } catch (e) {
             console.error(e);
@@ -686,19 +666,19 @@ export default function JokerRoom() {
         if (!res.ok) {
             const msg =
                 res.error === "Need at least 5 players to start"
-                    ? "至少需要5位玩家才能开始游戏！"
+                    ? t('error.needPlayers')
                     : res.error === "All players must be ready to start"
-                        ? "所有玩家准备后才能开始游戏！"
+                        ? t('error.allReady')
                         : res.error === "Only host can start game"
-                            ? "只有房主可以开始游戏"
+                            ? t('error.hostOnly')
                             : res.error === "Game paused"
-                                ? "游戏已暂停"
+                                ? t('error.gamePaused')
                                 : res.error === "No snapshot"
-                                    ? "暂无游戏快照"
-                                    : res.error || "开始游戏失败";
+                                    ? t('error.noSnapshot')
+                                    : res.error || t('error.startFailed');
             await alert(msg);
         }
-    }, [startGame]);
+    }, [startGame, t]);
 
     const handleSelectLocation = useCallback(async (loc: JokerLocation) => {
         await selectLocation(loc);
@@ -715,34 +695,34 @@ export default function JokerRoom() {
                 res.error === "Invalid life code";
             const msg =
                 isKillPenalty
-                    ? "错误代码，损失30秒氧气"
+                    ? t('error.wrongCodePenalty')
                     : res.error === "Invalid life code" || res.error === "No player with this code"
-                        ? "无效代码"
-                    : res.error === "Not in same location"
-                        ? "该玩家与你不在同一场所"
-                        : res.error === "Cannot give oxygen to yourself"
-                            ? "不能给自己补氧"
-                            : res.error === "Already gave oxygen to this player this round"
-                                ? "本回合已对该玩家补氧"
-                                : res.error === "Actions only available during red light"
-                                    ? "只能在红灯阶段操作"
-                                    : res.error === "Invalid actor"
-                                        ? "操作无效"
-                                        : res.error === "Unknown action"
-                                            ? "未知操作"
-                                            : res.error === "foul_death" || res.error === "foul"
-                                                ? "犯规死亡"
-                                                : res.error === "Game paused"
-                                                    ? "游戏已暂停"
-                                                    : res.error === "No snapshot"
-                                                        ? "暂无游戏快照"
-                                                        : res.error === "Player not found"
-                                                            ? "未找到玩家"
-                                                            : "操作失败";
+                        ? t('error.invalidCode')
+                        : res.error === "Not in same location"
+                            ? t('error.notSameLocation')
+                            : res.error === "Cannot give oxygen to yourself"
+                                ? t('error.cantOxygenSelf')
+                                : res.error === "Already gave oxygen to this player this round"
+                                    ? t('error.alreadyGaveOxygen')
+                                    : res.error === "Actions only available during red light"
+                                        ? t('error.redLightOnly')
+                                        : res.error === "Invalid actor"
+                                            ? t('error.invalidActor')
+                                            : res.error === "Unknown action"
+                                                ? t('error.unknownAction')
+                                                : res.error === "foul_death" || res.error === "foul"
+                                                    ? t('error.foulDeath')
+                                                    : res.error === "Game paused"
+                                                        ? t('error.gamePaused')
+                                                        : res.error === "No snapshot"
+                                                            ? t('error.noSnapshot')
+                                                            : res.error === "Player not found"
+                                                                ? t('error.playerNotFound')
+                                                                : t('error.operationFailed');
             await alert(msg);
         }
         setLifeCodeInput("");
-    }, [lifeCodeInput, actionCooldown, isInteractionDisabled, submitAction, myRole]);
+    }, [lifeCodeInput, actionCooldown, isInteractionDisabled, submitAction, myRole, t]);
 
     const handleVote = useCallback(async (targetSessionId: string | null) => {
         if (isInteractionDisabled) return;
@@ -771,17 +751,17 @@ export default function JokerRoom() {
             const err = (resp as any)?.msg;
             const msg =
                 err === "Arrival only available during yellow light"
-                    ? "只能在黄灯阶段确认"
+                    ? t('error.yellowLightOnly')
                     : err === "Player has no location"
-                        ? "当前没有分配位置"
+                        ? t('error.noLocation')
                         : err === "Invalid player"
-                            ? "操作无效"
+                            ? t('error.invalidActor')
                             : err
-                                ? `确认失败：${err}`
-                                : "确认失败";
+                                ? `${t('error.confirmFailed')}: ${err}`
+                                : t('error.confirmFailed');
             await alert(msg);
         }
-    }, [roomCode, isInteractionDisabled]);
+    }, [roomCode, isInteractionDisabled, t]);
 
     const handleTogglePause = useCallback(async () => {
         if (!roomCode) return;
@@ -798,27 +778,27 @@ export default function JokerRoom() {
         if (!res.ok) {
             const msg =
                 res.error === "Only host can reset game"
-                    ? "只有房主可以重启"
+                    ? t('error.hostOnly')
                     : res.error === "Game paused"
-                        ? "游戏已暂停"
+                        ? t('error.gamePaused')
                         : res.error === "No snapshot"
-                            ? "暂无游戏快照"
+                            ? t('error.noSnapshot')
                             : res.error === "Joker game not initialized"
-                                ? "房间尚未初始化"
+                                ? t('error.roomNotInit')
                                 : res.error
-                                    ? `重启失败：${res.error}`
-                                    : "重启失败";
+                                    ? `${t('error.restartFailed')}: ${res.error}`
+                                    : t('error.restartFailed');
             await alert(msg);
         }
-    }, [resetGame]);
+    }, [resetGame, t]);
 
     const handleRestartGame = useCallback(async () => {
         setSuppressPauseDialog(true);
         const confirmed = await confirm({
-            title: "确认重启游戏？",
-            description: "这会直接结束当前对局，所有人回到大厅重新准备。",
-            confirmText: "确认重启",
-            cancelText: "取消",
+            title: t('confirm.restartTitle'),
+            description: t('confirm.restartDesc'),
+            confirmText: t('confirm.restartConfirm'),
+            cancelText: t('common.cancel'),
             variant: "destructive",
         });
         try {
@@ -827,22 +807,22 @@ export default function JokerRoom() {
             if (!res.ok) {
                 const msg =
                     res.error === "Only host can reset game"
-                        ? "只有房主可以重启"
+                        ? t('error.hostOnly')
                         : res.error === "Game paused"
-                            ? "游戏已暂停"
+                            ? t('error.gamePaused')
                             : res.error === "No snapshot"
-                                ? "暂无游戏快照"
+                                ? t('error.noSnapshot')
                                 : res.error === "Joker game not initialized"
-                                    ? "房间尚未初始化"
+                                    ? t('error.roomNotInit')
                                     : res.error
-                                        ? `重启失败：${res.error}`
-                                        : "重启失败";
+                                        ? `${t('error.restartFailed')}: ${res.error}`
+                                        : t('error.restartFailed');
                 await alert(msg);
             }
         } finally {
             setSuppressPauseDialog(false);
         }
-    }, [confirm, resetGame]);
+    }, [confirm, resetGame, t]);
 
     // Task handlers
     const handleStartTask = useCallback(async () => {
@@ -868,27 +848,27 @@ export default function JokerRoom() {
             const err = (resp as any)?.msg;
             const msg =
                 err === "Shared tasks only available during red light"
-                    ? "只能在红灯阶段发起共同任务"
+                    ? t('error.redLightOnly')
                     : err === "Player has no location"
-                        ? "当前没有分配位置"
+                        ? t('error.noLocation')
                         : err === "Shared task already active in another location"
-                            ? "其他地点正在进行共同任务"
+                            ? t('error.sharedTaskActive')
                             : err === "Not enough players for shared task"
-                                ? "同场所至少需要2人才能进行共同任务"
+                                ? t('error.notEnoughPlayers')
                                 : err === "Game paused"
-                                    ? "游戏已暂停"
+                                    ? t('error.gamePaused')
                                     : err === "Invalid player"
-                                        ? "操作无效（玩家不存在或已死亡）"
+                                        ? t('error.invalidActor')
                                         : err === "Joker game not initialized"
-                                            ? "房间尚未初始化"
+                                            ? t('error.roomNotInit')
                                             : err === "Unknown action"
-                                                ? "未知指令"
+                                                ? t('error.unknownAction')
                                                 : err
-                                                    ? `无法发起共同任务：${err}`
-                                                    : "无法发起共同任务";
+                                                    ? `${t('error.cannotStartShared')}: ${err}`
+                                                    : t('error.cannotStartShared');
             await alert(msg);
         }
-    }, [roomCode, isInteractionDisabled, taskCooldown]);
+    }, [roomCode, isInteractionDisabled, taskCooldown, t]);
 
     const handleSharedTaskSubmit = useCallback(async (index: number) => {
         if (!roomCode || isInteractionDisabled) return;
@@ -917,28 +897,28 @@ export default function JokerRoom() {
     }, [roomCode, isInteractionDisabled]);
 
     const locationEffectErrorMessage = useCallback((err?: string) => {
-        if (!err) return "操作失败";
+        if (!err) return t('error.operationFailed');
         const map: Record<string, string> = {
-            "Location effects only available during red light": "只能在红灯阶段操作",
-            "Invalid player": "操作无效",
-            "Not in monitoring room": "必须在监控室使用",
-            "Not in power room": "必须在发电室使用",
-            "Not in kitchen": "必须在厨房使用",
-            "Not in medical room": "必须在医务室使用",
-            "Not in warehouse": "必须在仓库使用",
-            "Not alone in location": "该场所需单人状态",
-            "No eligible target": "无可用目标",
-            "Already gave oxygen to this player this round": "本回合已对该玩家补氧",
-            "Invalid target": "无效目标",
-            "Warehouse already used this round": "本回合已使用应急供氧",
-            "Monitoring already used this round": "本回合已使用调取影像",
-            "Power boost already used this round": "本回合已使用超载推进",
-            "Kitchen already used this round": "本回合已使用补氧配给",
-            "Medical already used this round": "本回合已使用远程治疗",
-            "Invalid location": "无效场所",
+            "Location effects only available during red light": t('error.locationEffectRedLightOnly'),
+            "Invalid player": t('error.invalidActor'),
+            "Not in monitoring room": t('error.notInMonitorRoom'),
+            "Not in power room": t('error.notInPowerRoom'),
+            "Not in kitchen": t('error.notInKitchen'),
+            "Not in medical room": t('error.notInMedicalRoom'),
+            "Not in warehouse": t('error.notInWarehouse'),
+            "Not alone in location": t('error.notAlone'),
+            "No eligible target": t('error.noTarget'),
+            "Already gave oxygen to this player this round": t('error.alreadyGaveOxygen'),
+            "Invalid target": t('error.invalidTarget'),
+            "Warehouse already used this round": t('error.warehouseUsed'),
+            "Monitoring already used this round": t('error.monitorUsed'),
+            "Power boost already used this round": t('error.powerUsed'),
+            "Kitchen already used this round": t('error.kitchenUsed'),
+            "Medical already used this round": t('error.medicalUsed'),
+            "Invalid location": t('error.invalidLocation'),
         };
-        return map[err] ?? "操作失败";
-    }, []);
+        return map[err] ?? t('error.operationFailed');
+    }, [t]);
 
     const startLocationEffectTask = useCallback((location: JokerLocation, targetSessionId?: string) => {
         if (!roomCode || showMiniGame) return;
@@ -970,11 +950,11 @@ export default function JokerRoom() {
     const handleMedicalOpen = useCallback(() => {
         if (isInteractionDisabled) return;
         if (medicalUsed) {
-            alert("本回合已使用远程治疗");
+            alert(t('error.medicalUsed'));
             return;
         }
         if (medicalTargets.length === 0) {
-            alert("暂无可补氧目标");
+            alert(t('error.noOxygenTargets'));
             return;
         }
         setShowMedicalDialog(true);
@@ -996,8 +976,8 @@ export default function JokerRoom() {
             await alert(locationEffectErrorMessage((resp as any)?.msg));
             return;
         }
-        toast.error("场所效果失败，本回合无法再使用");
-    }, [roomCode, locationEffectErrorMessage]);
+        toast.error(t('toast.locationEffectFailed'));
+    }, [roomCode, locationEffectErrorMessage, t]);
 
     const handleLocationEffectSuccess = useCallback(async (effect: { location: JokerLocation; targetSessionId?: string }) => {
         if (!roomCode) return;
@@ -1012,7 +992,7 @@ export default function JokerRoom() {
             resp = await rt.emitAck("intent", { room: roomCode, action: "joker:location_warehouse" });
         } else if (effect.location === "医务室") {
             if (!effect.targetSessionId) {
-                await alert("无效目标");
+                await alert(t('error.invalidTarget'));
                 return;
             }
             resp = await rt.emitAck("intent", {
@@ -1095,14 +1075,14 @@ export default function JokerRoom() {
         if (!me?.oxygenLeakActive || !me.oxygenLeakStartedAt) return;
         if (lastOxygenLeakStartedAtRef.current === me.oxygenLeakStartedAt) return;
         lastOxygenLeakStartedAtRef.current = me.oxygenLeakStartedAt;
-        toast.error("氧气瓶泄漏！立刻找身边玩家进行补氧，协助维修！", { duration: 3000 });
+        toast.error(t('toast.oxygenLeak'), { duration: 3000 });
     }, [me?.oxygenLeakActive, me?.oxygenLeakStartedAt]);
 
     useEffect(() => {
         if (!me?.oxygenLeakResolvedAt) return;
         if (lastOxygenLeakResolvedAtRef.current === me.oxygenLeakResolvedAt) return;
         lastOxygenLeakResolvedAtRef.current = me.oxygenLeakResolvedAt;
-        toast.success("氧气瓶修复完毕！");
+        toast.success(t('toast.oxygenFixed'));
     }, [me?.oxygenLeakResolvedAt]);
 
     useEffect(() => {
@@ -1168,7 +1148,7 @@ export default function JokerRoom() {
             return;
         }
         await rt.emitAck("intent", { room: roomCode, action: "joker:complete_task" });
-        toast.success("个人任务成功");
+        toast.success(t('toast.taskSuccess'));
         setTaskCooldownSeconds(10);
     }, [roomCode, pendingLocationEffect, handleLocationEffectSuccess]);
 
@@ -1180,7 +1160,7 @@ export default function JokerRoom() {
             handleLocationEffectFail();
             return;
         }
-        toast.error("个人任务失败");
+        toast.error(t('toast.taskFailed'));
         setTaskCooldownSeconds(10);
     }, [pendingLocationEffect, handleLocationEffectFail]);
 
@@ -1199,16 +1179,16 @@ export default function JokerRoom() {
                                 <Crown className="w-8 h-8 text-white" />
                             </div>
                             <CardTitle className="text-3xl font-bold tracking-tight bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
-                                鹅鸭杀：生命代码
+                                {t('home.title')}
                             </CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-6 pt-6">
                             <div className="space-y-4">
                                 <div className="space-y-2">
-                                    <label className="text-xs font-medium text-white/50 uppercase tracking-wider">你的身份</label>
+                                    <label className="text-xs font-medium text-white/50 uppercase tracking-wider">{t('home.identityLabel')}</label>
                                     <div className="relative">
                                         <Input
-                                            placeholder="输入昵称..."
+                                            placeholder={t('home.nicknamePlaceholder')}
                                             value={name}
                                             onChange={e => setName(e.target.value)}
                                             className="bg-white/5 border-white/10 h-12 text-lg focus-visible:ring-orange-500/50 focus-visible:border-orange-500/50 pl-11"
@@ -1221,31 +1201,31 @@ export default function JokerRoom() {
 
                                 <Button onClick={createRoom} className="w-full h-12 text-lg font-medium bg-gradient-to-r from-orange-500 to-pink-600 hover:from-orange-600 hover:to-pink-700 shadow-lg shadow-orange-900/20 border-0">
                                     <DoorOpen className="w-5 h-5 mr-2" />
-                                    创建新房间
+                                    {t('home.createRoom')}
                                 </Button>
 
                                 <div className="flex items-center gap-3">
                                     <span className="flex-1 border-t border-white/10" />
-                                    <span className="text-xs uppercase text-white/30">或加入已有房间</span>
+                                    <span className="text-xs uppercase text-white/30">{t('home.orJoinExisting')}</span>
                                     <span className="flex-1 border-t border-white/10" />
                                 </div>
 
                                 <div className="flex gap-3">
                                     <Input
-                                        placeholder="房间代码"
+                                        placeholder={t('home.roomCode')}
                                         value={joinCodeInput}
                                         onChange={e => setJoinCodeInput(e.target.value.toUpperCase())}
                                         className="bg-white/5 border-white/10 h-12 text-lg font-mono tracking-widest text-center uppercase focus-visible:ring-blue-500/50 focus-visible:border-blue-500/50"
                                         maxLength={4}
                                     />
                                     <Button onClick={joinRoom} variant="secondary" className="h-12 px-8 bg-white/10 hover:bg-white/20 text-white border-0">
-                                        加入
+                                        {t('home.join')}
                                     </Button>
                                 </div>
                             </div>
                             <p className="text-center text-xs text-white/30 flex items-center justify-center gap-2">
                                 <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-red-500'}`} />
-                                {connected ? "服务器已连接" : "连接中..."}
+                                {connected ? t('home.serverConnected') : t('home.connecting')}
                             </p>
                         </CardContent>
                     </Card>
@@ -1277,13 +1257,13 @@ export default function JokerRoom() {
                             <Skull className="w-16 h-16 text-red-400" />
                         </div>
                         <div className="space-y-3">
-                            <h1 className="text-5xl font-black tracking-tight text-red-200">你已死亡</h1>
-                            <p className="text-2xl text-red-100 font-bold mt-6">请原地蹲下或坐下</p>
-                            <p className="text-lg text-red-300/70">安静等待游戏结束</p>
+                            <h1 className="text-5xl font-black tracking-tight text-red-200">{t('dead.title')}</h1>
+                            <p className="text-2xl text-red-100 font-bold mt-6">{t('dead.crouchDown')}</p>
+                            <p className="text-lg text-red-300/70">{t('dead.waitForEnd')}</p>
                         </div>
                         <div className="pt-8 space-y-4">
-                            <div className="text-sm text-red-400/50 uppercase tracking-widest">当前阶段</div>
-                            <div className="text-2xl font-bold text-red-300">{PHASE_LABELS[phase]}</div>
+                            <div className="text-sm text-red-400/50 uppercase tracking-widest">{t('dead.currentPhase')}</div>
+                            <div className="text-2xl font-bold text-red-300">{t(`phases.${phase}`)}</div>
                             {timeLeft > 0 && (
                                 <div className="inline-flex items-center gap-2 bg-black/30 px-4 py-1.5 rounded-full border border-red-500/20">
                                     <RotateCcw className="w-3 h-3 text-red-400 animate-spin-reverse" style={{ animationDuration: '3s' }} />
@@ -1293,19 +1273,19 @@ export default function JokerRoom() {
                         </div>
                         {isHost && (
                             <div className="w-full max-w-sm mx-auto space-y-3 pt-4">
-                                <div className="text-xs text-red-200/70 uppercase tracking-widest text-center">房主控制</div>
+                                <div className="text-xs text-red-200/70 uppercase tracking-widest text-center">{t('host.controls')}</div>
                                 <Button
                                     onClick={handleTogglePause}
                                     className="w-full h-11 bg-white text-black hover:bg-white/90"
                                 >
-                                    {isPaused ? "恢复游戏" : "暂停游戏"}
+                                    {isPaused ? t('game.resume') : t('game.pause')}
                                 </Button>
                                 <Button
                                     onClick={handleRestartGame}
                                     className="w-full h-11 bg-white/10 text-white hover:bg-white/20 border border-white/20"
                                 >
                                     <RotateCcw className="w-4 h-4 mr-2" />
-                                    重启
+                                    {t('game.restart')}
                                 </Button>
                                 {phase === "meeting" && (
                                     <div className="grid grid-cols-2 gap-3">
@@ -1314,14 +1294,14 @@ export default function JokerRoom() {
                                             disabled={isInteractionDisabled}
                                             className="h-11 bg-white text-black hover:bg-white/90"
                                         >
-                                            开始投票
+                                            {t('meeting.startVote')}
                                         </Button>
                                         <Button
                                             onClick={handleMeetingExtend}
                                             disabled={isInteractionDisabled}
                                             className="h-11 bg-white/10 text-white hover:bg-white/20 border border-white/20"
                                         >
-                                            延长30秒
+                                            {t('meeting.extend30s')}
                                         </Button>
                                     </div>
                                 )}
@@ -1331,7 +1311,7 @@ export default function JokerRoom() {
                                         disabled={isInteractionDisabled}
                                         className="w-full h-11 bg-white/10 text-white hover:bg-white/20 border border-white/20"
                                     >
-                                        延长30秒
+                                        {t('meeting.extend30s')}
                                     </Button>
                                 )}
                             </div>
@@ -1342,7 +1322,7 @@ export default function JokerRoom() {
                             className="mt-12 text-red-400 hover:text-red-300 hover:bg-red-900/30"
                         >
                             <LogOut className="w-4 h-4 mr-2" />
-                            离开房间
+                            {t('pause.leaveRoom')}
                         </Button>
                     </div>
                 </div>
@@ -1362,14 +1342,14 @@ export default function JokerRoom() {
             {showPauseDialog && (
                 <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm">
                     <div className="w-[90%] max-w-sm rounded-2xl border border-white/10 bg-slate-950/90 p-6 text-center">
-                        <div className="text-2xl font-black tracking-wide text-white">游戏已暂停</div>
-                        <div className="mt-2 text-sm text-white/60">等待房主恢复游戏</div>
+                        <div className="text-2xl font-black tracking-wide text-white">{t('pause.title')}</div>
+                        <div className="mt-2 text-sm text-white/60">{t('pause.waitHost')}</div>
                         {isHost && (
                             <Button
                                 onClick={handleTogglePause}
                                 className="mt-6 h-12 w-full bg-white text-black hover:bg-white/90"
                             >
-                                恢复游戏
+                                {t('pause.resume')}
                             </Button>
                         )}
                         {isHost && (
@@ -1378,7 +1358,7 @@ export default function JokerRoom() {
                                 className="mt-3 h-11 w-full bg-white/10 text-white hover:bg-white/20 border border-white/20"
                             >
                                 <RotateCcw className="w-4 h-4 mr-2" />
-                                重启
+                                {t('game.restart')}
                             </Button>
                         )}
                         <Button
@@ -1386,7 +1366,7 @@ export default function JokerRoom() {
                             onClick={leaveRoom}
                             className="mt-3 h-10 w-full text-white/60 hover:text-white hover:bg-white/10"
                         >
-                            离开房间
+                            {t('pause.leaveRoom')}
                         </Button>
                     </div>
                 </div>
@@ -1400,61 +1380,19 @@ export default function JokerRoom() {
                         className="w-full max-w-md rounded-2xl border border-white/10 bg-slate-950/90 p-6 text-left"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <div className="text-xl font-black tracking-wide text-white">游戏规则</div>
+                        <div className="text-xl font-black tracking-wide text-white">{t('rules.title')}</div>
                         <ScrollArea className="mt-3 max-h-[70vh] pr-2">
                             <div className="text-sm text-white/70 leading-relaxed whitespace-pre-line">
-                                【版本】{rulesVersion}
+                                【{t('rules.version')}】{rulesVersion}
                                 {"\n"}
-                                【游戏背景】
-                                {"\n"}在遥远的星际航线上，鹅族正在建造一艘承载新家园的巨型太空船。为了防止渗透与破坏，飞船启用了“红绿灯作业协议”：绿灯自由行动与沟通，黄灯强制分流到作业点，红灯全船锁定——所有工程师必须原地完成任务。
-                                {"\n"}但船上混入了伪装者：鸭族。它们外表与鹅无异，却以清除鹅、破坏工程为目标。更糟的是，飞船生命维持系统采用动态“生命代码”：每名成员都有一串的动态的氧气校验码，协作时可以互相输入以补充氧气；而鸭族只要在锁定时刻窥见并输入校验码，就能让对方的生命维持系统瞬间断开，制造无声的“事故”。
-                                {"\n"}当警报响起，船员只能召开紧急会议，用投票把怀疑者投入太空。工程进度、氧气余量、同伴的眼神与手机屏幕的反光，都会成为你判断真相的证据——在这艘尚未完工的星际方舟里，活下去与完工，必须同时做到。
-                                {"\n\n"}
-                                【胜利条件】
-                                {"\n"}• 鹅：任务进度100% 或投票放逐所有鸭子。
-                                {"\n"}• 鸭：杀光鹅，或鸭子数 ≥ 非鸭子数。
-                                {"\n"}• 呆呆鸟（中立）：被投票放逐获胜。
-                                {"\n"}• 猎鹰（中立）：可杀任何人，存活到最后（只剩你或你+1只鹅）。
-                                {"\n\n"}
-                                【回合节奏】
-                                {"\n"}• 每回合90秒：绿灯15秒选地点 → 黄灯15秒移动 → 红灯60秒做任务/击杀。
-                                {"\n"}• 生命代码每隔一段时间（70秒左右）刷新一次。
-                                {"\n\n"}
-                                【生命代码与氧气】
-                                {"\n"}• 红灯显示2位生命代码，用于击杀/补氧。
-                                {"\n"}• 输入生命代码后，击杀/补氧都会进入10秒冷却。
-                                {"\n"}• 补氧：每次+90秒；同一回合对同一玩家仅一次。
-                                {"\n"}• 初始氧气每人270秒，耗尽死亡；鸭子和猎鹰氧气归零自动启用180秒备用氧气（整局1次）。
-                                {"\n"}• 鹅尝试击杀会犯规死亡。
-                                {"\n"}• 击杀时输入无效生命代码会罚扣30秒氧气。
-                                {"\n\n"}
-                                【会议与投票】
-                                {"\n"}• 讨论60秒（房主可跳过或延长30秒）。
-                                {"\n"}• 投票30秒（房主可延长30秒，全员投完即结束）。
-                                {"\n"}• 可投自己或弃票；结果显示每人得票。
-                                {"\n\n"}
-                                【任务机制】
-                                {"\n"}• 个人任务：成功+2%进度，失败不加；每次消耗10秒氧气。
-                                {"\n"}• 共同任务：同场所所有人都点击后才开始；成功按参与人数每人+3%进度；失败不加进度但照扣氧气。
-                                {"\n"}• 类型：九宫寻宝、数字拼图（限时10秒）。
-                                {"\n\n"}
-                                【突发任务】（红灯随机5-50秒）
-                                {"\n"}• 氧气泄漏：耗氧变为-3/秒；任一玩家对你补氧即修复；不额外扣氧。
-                                {"\n"}• 黄金兔子：8秒内加入捕兔队；九宫格捕捉，任一人选中即成功；奖励+8%进度。
-                                {"\n\n"}
-                                【场所效果】（独自一人时生效）
-                                {"\n"}• 监控室（调取影像）：随机窥视1名不同阵营玩家生命代码（显示5秒）。
-                                {"\n"}• 发电室（超载推进）：本回合个人任务+3%。
-                                {"\n"}• 厨房（补氧配给）：自补氧+90秒。
-                                {"\n"}• 医务室（远程治疗）：给任意其他玩家补氧+90秒。
-                                {"\n"}• 仓库（应急供氧）：全场补氧+60秒。
+                                {t('rules.content')}
                             </div>
                         </ScrollArea>
                         <Button
                             onClick={() => setShowRules(false)}
                             className="mt-6 h-11 w-full bg-white text-black hover:bg-white/90"
                         >
-                            关闭
+                            {t('rules.close')}
                         </Button>
                     </div>
                 </div>
@@ -1462,7 +1400,7 @@ export default function JokerRoom() {
             {monitorPeek && (
                 <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
                     <div className="px-6 py-3 rounded-full border text-lg font-semibold bg-slate-500/20 text-slate-100 border-slate-400/40">
-                        窥视到生命代码 {monitorPeek.code}
+                        {t('toast.peekLifeCode')} {monitorPeek.code}
                     </div>
                 </div>
             )}
@@ -1472,7 +1410,7 @@ export default function JokerRoom() {
                         ? "bg-emerald-500/20 text-emerald-100 border-emerald-400/40"
                         : "bg-red-500/20 text-red-200 border-red-500/30"
                         }`}>
-                        共同任务{sharedTaskResultFlash.result === "success" ? "成功" : "失败"}
+                        {sharedTaskResultFlash.result === "success" ? t('sharedTask.success') : t('sharedTask.fail')}
                     </div>
                 </div>
             )}
@@ -1483,7 +1421,7 @@ export default function JokerRoom() {
                         : "bg-red-500/20 text-red-200 border-red-500/30"
                         }`}>
                         <div className="text-center">
-                            捕兔{goldenRabbitResultFlash.result === "success" ? "成功" : "失败"}
+                            {goldenRabbitResultFlash.result === "success" ? t('emergency.captureSuccess') : t('emergency.captureFail')}
                         </div>
                         {goldenRabbitResultFlash.rabbitIndex !== undefined && (
                             <div className="mt-3 grid grid-cols-3 gap-1">
@@ -1506,7 +1444,7 @@ export default function JokerRoom() {
             )}
 
             {/* Low Oxygen Vignette Effect */}
-            {myAlive && displayOxygen < 60 && phase !== "game_over" && (
+            {myAlive && displayOxygen < 60 && phase !== "game_over" && phase !== "lobby" && (
                 <div
                     className="fixed inset-0 z-[9998] pointer-events-none"
                     style={{
@@ -1526,7 +1464,7 @@ export default function JokerRoom() {
             <div className="relative z-10 max-w-md mx-auto flex flex-col h-screen">
 
                 {/* Header / Nav */}
-                <header className="p-4 flex items-center justify-between shrink-0">
+                <header className="p-4 flex items-center shrink-0">
                     <div className="flex items-center gap-3">
                         <div className="h-10 px-3 bg-white/5 rounded-xl flex items-center justify-center border border-white/10 backdrop-blur-sm">
                             <span className="font-mono font-bold tracking-widest text-white">{roomCode}</span>
@@ -1534,7 +1472,7 @@ export default function JokerRoom() {
                         {isHost && (
                             <>
                                 <Badge className="bg-yellow-500/20 text-yellow-200 border-yellow-500/30 hover:bg-yellow-500/30">
-                                    <Crown className="w-3 h-3 mr-1" /> 房主
+                                    <Crown className="w-3 h-3 mr-1" /> {t('lobby.host')}
                                 </Badge>
                                 <Button
                                     variant="ghost"
@@ -1543,7 +1481,7 @@ export default function JokerRoom() {
                                     className="h-8 px-2 text-white/70 hover:text-white hover:bg-white/10"
                                 >
                                     {isPaused ? <PlayIcon className="w-4 h-4 mr-1" /> : <Pause className="w-4 h-4 mr-1" />}
-                                    {isPaused ? "继续" : "暂停"}
+                                    {isPaused ? t('game.continue') : t('game.pause')}
                                 </Button>
                             </>
                         )}
@@ -1554,12 +1492,26 @@ export default function JokerRoom() {
                             className="h-8 px-2 text-white/70 hover:text-white hover:bg-white/10"
                         >
                             <BookOpen className="w-4 h-4 mr-1" />
-                            规则
+                            {t('game.rules')}
                         </Button>
                     </div>
-                    <Button variant="ghost" size="icon" onClick={leaveRoom} className="text-white/60 hover:text-white hover:bg-white/10 rounded-full">
-                        <LogOut className="w-5 h-5" />
-                    </Button>
+                    <div className="flex-1" />
+                    <div className="flex items-center gap-1">
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                                const newLang = i18n.language.startsWith('zh') ? 'en' : 'zh';
+                                i18n.changeLanguage(newLang);
+                            }}
+                            className="h-8 w-8 text-white/60 hover:text-white hover:bg-white/10 rounded-full"
+                        >
+                            <Languages className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={leaveRoom} className="text-white/60 hover:text-white hover:bg-white/10 rounded-full">
+                            <LogOut className="w-5 h-5" />
+                        </Button>
+                    </div>
                 </header>
 
                 {/* Main Content Area - Scrollable */}
@@ -1596,7 +1548,7 @@ export default function JokerRoom() {
                                     <div className="flex items-center gap-4">
                                         <div className="text-center">
                                             <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1 flex items-center gap-1">
-                                                <Fingerprint className="w-3 h-3" />生命代码
+                                                <Fingerprint className="w-3 h-3" />{t('game.lifeCode')}
                                             </div>
                                             <div className="text-3xl font-mono font-black tracking-widest text-white">
                                                 {me.lifeCode ?? "??"}
@@ -1606,7 +1558,7 @@ export default function JokerRoom() {
                                         {/* Oxygen */}
                                         <div className="text-center">
                                             <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1 flex items-center gap-1">
-                                                <Wind className="w-3 h-3" />氧气
+                                                <Wind className="w-3 h-3" />{t('game.oxygen')}
                                             </div>
                                             <div className={`text-2xl font-mono font-bold tabular-nums ${displayOxygen < 60 ? 'text-red-400' : displayOxygen < 120 ? 'text-yellow-400' : 'text-emerald-400'}`}>
                                                 {displayOxygen}s
@@ -1635,7 +1587,7 @@ export default function JokerRoom() {
                                 animate={{ opacity: 1, y: 0 }}
                             >
                                 <h1 className="text-4xl font-black italic tracking-tighter uppercase text-transparent bg-clip-text bg-gradient-to-b from-white to-white/60 drop-shadow-[0_2px_10px_rgba(255,255,255,0.2)]">
-                                    {PHASE_LABELS[phase]}
+                                    {t(`phases.${phase}`)}
                                 </h1>
                                 {timeLeft > 0 && phase !== "game_over" && phase !== "lobby" && (
                                     <div className="inline-flex items-center gap-2 bg-black/30 px-4 py-1.5 rounded-full border border-white/10 backdrop-blur-md">
@@ -1652,7 +1604,7 @@ export default function JokerRoom() {
                                         <CardHeader className="pb-2">
                                             <CardTitle className="text-sm font-medium text-white/50 uppercase tracking-wider flex items-center gap-2">
                                                 <Users className="w-4 h-4" />
-                                                玩家 ({users.length})
+                                                {t('lobby.players')} ({users.length})
                                             </CardTitle>
                                         </CardHeader>
                                         <CardContent className="space-y-3">
@@ -1671,12 +1623,12 @@ export default function JokerRoom() {
                                                                 {u.isBot && <Bot className="w-3 h-3 text-blue-400" />}
                                                             </span>
                                                             {u.sessionId === getSessionId() && (
-                                                                <span className="text-[10px] text-white/40 uppercase tracking-wider">你</span>
+                                                                <span className="text-[10px] text-white/40 uppercase tracking-wider">{t('lobby.you')}</span>
                                                             )}
                                                         </div>
                                                     </div>
                                                     <Badge variant={u.ready ? "default" : "secondary"} className={`shrink-0 ${u.ready ? "bg-green-500/20 text-green-300 hover:bg-green-500/30 border-green-500/20" : "bg-white/10 text-white/50 hover:bg-white/15"}`}>
-                                                        {u.ready ? <><CheckCircle2 className="w-3 h-3 mr-1" />已准备</> : <><Circle className="w-3 h-3 mr-1" />等待</>}
+                                                        {u.ready ? <><CheckCircle2 className="w-3 h-3 mr-1" />{t('lobby.ready')}</> : <><Circle className="w-3 h-3 mr-1" />{t('lobby.waiting')}</>}
                                                     </Badge>
                                                 </div>
                                             ))}
@@ -1691,7 +1643,7 @@ export default function JokerRoom() {
                                                     : "bg-white text-black hover:bg-white/90"
                                                     }`}
                                             >
-                                                {users.find(u => u.sessionId === getSessionId())?.ready ? "取消准备" : "准备"}
+                                                {users.find(u => u.sessionId === getSessionId())?.ready ? t('lobby.cancelReady') : t('lobby.readyUp')}
                                             </Button>
 
                                             {isHost && (
@@ -1699,7 +1651,7 @@ export default function JokerRoom() {
                                                     onClick={handleStartGame}
                                                     className="flex-1 h-12 text-lg font-bold bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 shadow-lg shadow-green-900/20 text-white border-0"
                                                 >
-                                                    <Play className="w-5 h-5 mr-2 fill-current" /> 开始
+                                                    <Play className="w-5 h-5 mr-2 fill-current" /> {t('lobby.start')}
                                                 </Button>
                                             )}
                                         </div>
@@ -1722,16 +1674,16 @@ export default function JokerRoom() {
                                     </div>
                                     <div className="text-center space-y-3">
                                         <h2 className="text-4xl font-black tracking-tight">
-                                            你是 <span className={ROLE_REVEAL_STYLES[myRole].text}>
-                                                {ROLE_LABELS[myRole]}
+                                            {t('game.youAre')} <span className={ROLE_REVEAL_STYLES[myRole].text}>
+                                                {t(`roles.${myRole}`)}
                                             </span>
                                         </h2>
                                         <p className="text-white/60 text-lg max-w-xs mx-auto">
-                                            {ROLE_REVEAL_STYLES[myRole].desc}
+                                            {t(`roleDesc.${myRole}`)}
                                         </p>
                                         {myRole === "duck" && (
                                             <div className="pt-3 space-y-2">
-                                                <p className="text-xs uppercase tracking-widest text-orange-200/70">你的同伴</p>
+                                                <p className="text-xs uppercase tracking-widest text-orange-200/70">{t('game.yourCompanions')}</p>
                                                 <div className="flex flex-wrap items-center justify-center gap-2">
                                                     {jokerPlayers
                                                         .filter(p => p.sessionId && p.role === "duck" && p.sessionId !== me.sessionId)
@@ -1740,12 +1692,12 @@ export default function JokerRoom() {
                                                                 key={p.sessionId}
                                                                 className="bg-orange-500/20 text-orange-200 border-orange-500/30 hover:bg-orange-500/30"
                                                             >
-                                                                {p.name || `玩家${p.seat}`}（{p.seat}）
+                                                                {p.name || `${t('game.player')}${p.seat}`}（{p.seat}）
                                                             </Badge>
                                                         ))}
                                                     {jokerPlayers.filter(p => p.sessionId && p.role === "duck" && p.sessionId !== me.sessionId).length === 0 && (
                                                         <Badge className="bg-white/10 text-white/60 border-white/10 hover:bg-white/10">
-                                                            暂无同伴
+                                                            {t('game.noCompanions')}
                                                         </Badge>
                                                     )}
                                                 </div>
@@ -1753,8 +1705,8 @@ export default function JokerRoom() {
                                         )}
                                     </div>
                                     <div className="text-center">
-                                        <p className="text-white/40 text-sm">请记住你的身份</p>
-                                        <p className="text-white/40 text-sm">游戏即将开始...</p>
+                                        <p className="text-white/40 text-sm">{t('game.rememberRole')}</p>
+                                        <p className="text-white/40 text-sm">{t('game.gameStarting')}</p>
                                     </div>
                                 </motion.div>
                             )}
@@ -1781,7 +1733,7 @@ export default function JokerRoom() {
                                             );
                                         })}
                                     </div>
-                                    <p className="text-center text-white/50 mt-6 text-sm">点击位置前往</p>
+                                    <p className="text-center text-white/50 mt-6 text-sm">{t('game.clickToGo')}</p>
                                 </motion.div>
                             )}
 
@@ -1799,13 +1751,13 @@ export default function JokerRoom() {
                                         )}
                                     </div>
                                     <div className="text-center space-y-2">
-                                        <p className="text-white/50 uppercase tracking-widest text-sm">目的地已分配</p>
+                                        <p className="text-white/50 uppercase tracking-widest text-sm">{t('yellow.destinationAssigned')}</p>
                                         <h2 className="text-5xl font-black text-white drop-shadow-lg">{me?.location ?? "..."}</h2>
                                     </div>
                                     <Card className="w-full max-w-sm bg-black/20 backdrop-blur-xl border-white/10 text-left">
                                         <CardHeader className="pb-2">
                                             <CardTitle className="text-xs uppercase tracking-widest text-white/50">
-                                                同场所玩家
+                                                {t('yellow.sameLocationPlayers')}
                                             </CardTitle>
                                         </CardHeader>
                                         <CardContent className="space-y-2">
@@ -1819,9 +1771,9 @@ export default function JokerRoom() {
                                                         <div className="flex items-center gap-2">
                                                             <Avvvatars value={String(p.seat)} size={26} />
                                                             <span className="text-sm text-white">
-                                                                {p.name || `玩家${p.seat}`}
+                                                                {p.name || `${t('game.player')}${p.seat}`}
                                                             </span>
-                                                            <span className="text-[11px] text-white/40">座位 {p.seat}</span>
+                                                            <span className="text-[11px] text-white/40">{t('game.seat')} {p.seat}</span>
                                                         </div>
                                                         {arrived ? (
                                                             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
@@ -1832,14 +1784,14 @@ export default function JokerRoom() {
                                                 );
                                             })}
                                             {yellowLocationPlayers.length === 0 && (
-                                                <div className="text-center text-xs text-white/40">等待分配...</div>
+                                                <div className="text-center text-xs text-white/40">{t('yellow.waitingAssignment')}</div>
                                             )}
                                             <Button
                                                 onClick={handleConfirmArrival}
                                                 disabled={isInteractionDisabled || meArrived}
                                                 className="mt-2 w-full h-11 bg-white text-black hover:bg-white/90"
                                             >
-                                                {meArrived ? "已确认抵达" : "确认抵达"}
+                                                {meArrived ? t('yellow.arrived') : t('yellow.confirmArrival')}
                                             </Button>
                                         </CardContent>
                                     </Card>
@@ -1854,11 +1806,11 @@ export default function JokerRoom() {
                                             <div className="space-y-4">
                                                 <label className="text-center flex items-center justify-center gap-2 text-xs font-bold text-white/40 uppercase tracking-widest">
                                                     <Target className="w-4 h-4" />
-                                                    目标生命代码
+                                                    {t('game.targetLifeCode')}
                                                 </label>
                                                 {phase === "red_light" && myAlive && lifeCodeRefreshCountdown > 0 && !isPaused && (
                                                     <div className="text-center text-xs font-semibold text-amber-200/90 bg-amber-500/10 border border-amber-500/20 rounded-full py-1">
-                                                        生命代码即将刷新 {lifeCodeRefreshCountdown}s
+                                                        {t('game.lifeCodeRefresh')} {lifeCodeRefreshCountdown}s
                                                     </div>
                                                 )}
                                                 <div className="flex justify-center">
@@ -1889,7 +1841,7 @@ export default function JokerRoom() {
                                                     className="h-20 rounded-2xl bg-gradient-to-br from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 disabled:opacity-50 border border-white/10 shadow-lg shadow-red-900/40 flex flex-col gap-1"
                                                 >
                                                     <Skull className="w-6 h-6" />
-                                                    <span className="text-xs font-bold uppercase tracking-widest">击杀</span>
+                                                    <span className="text-xs font-bold uppercase tracking-widest">{t('game.kill')}</span>
                                                 </Button>
                                                 <Button
                                                     onClick={() => handleSubmitAction("oxygen")}
@@ -1897,7 +1849,7 @@ export default function JokerRoom() {
                                                     className="h-20 rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-800 hover:from-emerald-500 hover:to-emerald-700 disabled:opacity-50 border border-white/10 shadow-lg shadow-emerald-900/40 flex flex-col gap-1"
                                                 >
                                                     <Zap className="w-6 h-6 fill-current" />
-                                                    <span className="text-xs font-bold uppercase tracking-widest">补氧</span>
+                                                    <span className="text-xs font-bold uppercase tracking-widest">{t('game.giveOxygen')}</span>
                                                 </Button>
                                             </div>
 
@@ -1907,7 +1859,7 @@ export default function JokerRoom() {
                                                     animate={{ opacity: 1, y: 0 }}
                                                     className="text-center p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20"
                                                 >
-                                                    <p className="text-yellow-400 text-sm font-medium">冷却中 {cooldownSeconds}s</p>
+                                                    <p className="text-yellow-400 text-sm font-medium">{t('game.cooldown')} {cooldownSeconds}s</p>
                                                 </motion.div>
                                             )}
 
@@ -1916,26 +1868,26 @@ export default function JokerRoom() {
                                                 <div className="space-y-3 pt-2 border-t border-white/10">
                                                     <div className="flex items-center gap-2 text-xs text-white/50 uppercase tracking-widest">
                                                         <Siren className="w-3 h-3" />
-                                                        突发任务
+                                                        {t('emergency.title')}
                                                     </div>
                                                     {me?.oxygenLeakActive && (
                                                         <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
-                                                            <div className="font-semibold">氧气瓶泄漏！立刻找身边玩家进行补氧，协助维修！</div>
-                                                            <div className="mt-1 text-xs text-red-200/70">耗氧速度提升至每秒-3</div>
+                                                            <div className="font-semibold">{t('emergency.oxygenLeak')}</div>
+                                                            <div className="mt-1 text-xs text-red-200/70">{t('emergency.oxygenLeakRate')}</div>
                                                         </div>
                                                     )}
                                                     {goldenRabbitTask && me?.location === goldenRabbitTask.location && goldenRabbitTask.status !== "resolved" && (
                                                         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-100 space-y-2">
                                                             {goldenRabbitTask.status === "waiting" && (
                                                                 <>
-                                                                    <div className="font-semibold">黄金兔子出没！立刻组队围捕！</div>
+                                                                    <div className="font-semibold">{t('emergency.goldenRabbit')}</div>
                                                                     <div className="space-y-2">
                                                                         <Button
                                                                             onClick={handleJoinGoldenRabbit}
                                                                             disabled={isInteractionDisabled || isGoldenRabbitParticipant || goldenRabbitJoinLeft <= 0}
                                                                             className="w-full h-10 rounded-lg bg-amber-500/80 hover:bg-amber-500 text-sm font-bold text-black disabled:opacity-50"
                                                                         >
-                                                                            {isGoldenRabbitParticipant ? "已加入捕兔队" : "加入捕兔队"}
+                                                                            {isGoldenRabbitParticipant ? t('emergency.joined') : t('emergency.joinHunt')}
                                                                         </Button>
                                                                         <div className="h-2 bg-white/10 rounded-full overflow-hidden">
                                                                             <div
@@ -1945,7 +1897,7 @@ export default function JokerRoom() {
                                                                                 }}
                                                                             />
                                                                         </div>
-                                                                        <div className="text-xs text-white/70">倒计时 {goldenRabbitJoinLeft}s</div>
+                                                                        <div className="text-xs text-white/70">{t('emergency.countdown')} {goldenRabbitJoinLeft}s</div>
                                                                     </div>
                                                                 </>
                                                             )}
@@ -1953,7 +1905,7 @@ export default function JokerRoom() {
                                                                 <>
                                                                     {isGoldenRabbitParticipant ? (
                                                                         <div className="space-y-2">
-                                                                            <div className="text-xs text-amber-300/90 bg-amber-500/10 px-2 py-1 rounded">对照彼此屏幕，排除X格，任意队员选中兔子藏身之格即成功！</div>
+                                                                            <div className="text-xs text-amber-300/90 bg-amber-500/10 px-2 py-1 rounded">{t('emergency.huntInstruction')}</div>
                                                                             <div className="grid grid-cols-3 gap-2">
                                                                                 {Array.from({ length: 9 }, (_, idx) => {
                                                                                     const blocked = myGoldenRabbitX.includes(idx);
@@ -1977,11 +1929,11 @@ export default function JokerRoom() {
                                                                                 })}
                                                                             </div>
                                                                             {myGoldenRabbitSelection !== undefined && (
-                                                                                <div className="text-xs text-white/70">已选择，等待其他玩家</div>
+                                                                                <div className="text-xs text-white/70">{t('emergency.selected')}</div>
                                                                             )}
                                                                         </div>
                                                                     ) : (
-                                                                        <div className="text-xs text-white/70">捕兔队进行中...</div>
+                                                                        <div className="text-xs text-white/70">{t('emergency.huntInProgress')}</div>
                                                                     )}
                                                                 </>
                                                             )}
@@ -1996,7 +1948,7 @@ export default function JokerRoom() {
                                                     <div className="flex items-center justify-between text-xs text-white/50">
                                                         <span className="flex items-center gap-1">
                                                             <ClipboardList className="w-3 h-3" />
-                                                            任务进度
+                                                            {t('game.taskProgress')}
                                                         </span>
                                                         <span className="font-mono">{jokerSnapshot?.taskProgress ?? 0}%</span>
                                                     </div>
@@ -2017,7 +1969,7 @@ export default function JokerRoom() {
                                                     >
                                                         <div className="flex items-center gap-2">
                                                             <ClipboardList className="w-4 h-4" />
-                                                            个人任务
+                                                            {t('game.personalTask')}
                                                         </div>
                                                         <span className="text-[11px] text-white/80">{personalTaskProgressLabel}</span>
                                                     </Button>
@@ -2032,10 +1984,10 @@ export default function JokerRoom() {
                                                                 >
                                                                     <div className="flex items-center gap-2">
                                                                         <LocationIcon className="w-4 h-4" />
-                                                                        调取影像
+                                                                        {t('locationEffect.monitor')}
                                                                     </div>
                                                                     <span className="text-[11px] text-white/80">
-                                                                        {monitorUsed ? "本回合已使用" : "生命代码 5秒"}
+                                                                        {monitorUsed ? t('locationEffect.usedThisRound') : t('locationEffect.monitorDesc')}
                                                                     </span>
                                                                 </Button>
                                                             );
@@ -2049,10 +2001,10 @@ export default function JokerRoom() {
                                                                 >
                                                                     <div className="flex items-center gap-2">
                                                                         <LocationIcon className="w-4 h-4" />
-                                                                        超载推进
+                                                                        {t('locationEffect.power')}
                                                                     </div>
                                                                     <span className="text-[11px] text-white/90">
-                                                                        {powerBoostUsed ? "本回合已使用" : "个人任务+3%"}
+                                                                        {powerBoostUsed ? t('locationEffect.usedThisRound') : t('locationEffect.powerDesc')}
                                                                     </span>
                                                                 </Button>
                                                             );
@@ -2066,10 +2018,10 @@ export default function JokerRoom() {
                                                                 >
                                                                     <div className="flex items-center gap-2">
                                                                         <LocationIcon className="w-4 h-4" />
-                                                                        补氧配给
+                                                                        {t('locationEffect.kitchen')}
                                                                     </div>
                                                                     <span className="text-[11px] text-white/90">
-                                                                        {kitchenUsed ? "本回合已使用" : "+90s 氧气"}
+                                                                        {kitchenUsed ? t('locationEffect.usedThisRound') : t('locationEffect.kitchenDesc')}
                                                                     </span>
                                                                 </Button>
                                                             );
@@ -2083,10 +2035,10 @@ export default function JokerRoom() {
                                                                 >
                                                                     <div className="flex items-center gap-2">
                                                                         <LocationIcon className="w-4 h-4" />
-                                                                        远程治疗
+                                                                        {t('locationEffect.medical')}
                                                                     </div>
                                                                     <span className="text-[11px] text-white/90">
-                                                                        {medicalUsed ? "本回合已使用" : "+90s 氧气"}
+                                                                        {medicalUsed ? t('locationEffect.usedThisRound') : t('locationEffect.medicalDesc')}
                                                                     </span>
                                                                 </Button>
                                                             );
@@ -2099,10 +2051,10 @@ export default function JokerRoom() {
                                                             >
                                                                 <div className="flex items-center gap-2">
                                                                     <LocationIcon className="w-4 h-4" />
-                                                                    应急供氧
+                                                                    {t('locationEffect.warehouse')}
                                                                 </div>
                                                                 <span className="text-[11px] text-white/90">
-                                                                    {warehouseUsed ? "本回合已使用" : "+60s 全员氧气"}
+                                                                    {warehouseUsed ? t('locationEffect.usedThisRound') : t('locationEffect.warehouseDesc')}
                                                                 </span>
                                                             </Button>
                                                         );
@@ -2114,33 +2066,33 @@ export default function JokerRoom() {
                                                         >
                                                             <div className="flex items-center gap-2">
                                                                 <Users className="w-4 h-4" />
-                                                                共同任务
+                                                                {t('game.sharedTask')}
                                                             </div>
-                                                            <span className="text-[11px] text-white/80">每人+3%进度</span>
+                                                            <span className="text-[11px] text-white/80">{t('sharedTask.eachPersonProgress')}</span>
                                                         </Button>
                                                     )}
                                                 </div>
                                                 {taskCooldown && (
                                                     <div className="text-center text-xs text-amber-200/80">
-                                                        任务冷却中 {taskCooldownSeconds}s
+                                                        {t('sharedTask.taskCooldown')} {taskCooldownSeconds}s
                                                     </div>
                                                 )}
                                                 {sharedTask && isSharedParticipant && sharedTask.status !== "resolved" && (
                                                     <div className="mt-2 rounded-lg border border-white/10 bg-white/5 p-3 text-center text-sm text-white/70">
                                                         {sharedTask.status === "waiting" && (
                                                             <div>
-                                                                等待其他同场所玩家加入
+                                                                {t('sharedTask.waitingOthers')}
                                                                 <div className="mt-1 text-xs text-white/50">
-                                                                    已加入 {sharedTask.joined.length}/{sharedTask.participants.length}
+                                                                    {t('sharedTask.joined')} {sharedTask.joined.length}/{sharedTask.participants.length}
                                                                 </div>
                                                             </div>
                                                         )}
                                                         {sharedTask.status === "active" && (
                                                             <div className="space-y-2">
-                                                                <div>共同任务进行中... 剩余 {sharedTimeLeft}s</div>
+                                                                <div>{t('sharedTask.inProgress')} {sharedTimeLeft}s</div>
                                                                 {sharedTask.type === "nine_grid" && mySharedGrid.length === 9 && (
                                                                     <>
-                                                                        <div className="text-xs text-amber-300/90 bg-amber-500/10 px-2 py-1 rounded">对照彼此屏幕，找出同位置的相同图标并点击！</div>
+                                                                        <div className="text-xs text-amber-300/90 bg-amber-500/10 px-2 py-1 rounded">{t('sharedTask.nineGridInstruction')}</div>
                                                                         <div className="grid grid-cols-3 gap-2 pt-2">
                                                                             {mySharedGrid.map((icon, idx) => {
                                                                                 const selected = mySharedSelection === idx;
@@ -2160,10 +2112,10 @@ export default function JokerRoom() {
                                                                 )}
                                                                 {sharedTask.type === "digit_puzzle" && (
                                                                     <div className="space-y-2 pt-2">
-                                                                        <div className="text-xs text-amber-300/90 bg-amber-500/10 px-2 py-1 rounded">对照彼此屏幕，拼出一个数字！</div>
+                                                                        <div className="text-xs text-amber-300/90 bg-amber-500/10 px-2 py-1 rounded">{t('sharedTask.digitInstruction')}</div>
                                                                         {renderDigitSegments(myDigitSegments)}
                                                                         {myDigitSegments.length === 0 && (
-                                                                            <div className="text-xs text-white/50">这次你没有亮段，观察他人屏幕</div>
+                                                                            <div className="text-xs text-white/50">{t('sharedTask.noSegments')}</div>
                                                                         )}
                                                                         <div className="grid grid-cols-5 gap-2 pt-1">
                                                                             {DIGIT_BUTTONS.map((digit) => {
@@ -2184,12 +2136,12 @@ export default function JokerRoom() {
                                                                             })}
                                                                         </div>
                                                                         <div className="text-xs text-white/60">
-                                                                            已选择：{myDigitSelection ?? "未选择"}
+                                                                            {t('sharedTask.selected')}{myDigitSelection ?? t('sharedTask.notSelected')}
                                                                         </div>
                                                                     </div>
                                                                 )}
                                                                 {sharedTask.type === "nine_grid" && mySharedSelection !== undefined && (
-                                                                    <div className="text-xs text-white/60">已选择，请等待其他玩家</div>
+                                                                    <div className="text-xs text-white/60">{t('sharedTask.waitingOtherPlayers')}</div>
                                                                 )}
                                                             </div>
                                                         )}
@@ -2203,7 +2155,7 @@ export default function JokerRoom() {
                                     {me?.location && (
                                         <div className="space-y-3">
                                             <p className="text-xs font-medium text-white/40 uppercase tracking-widest pl-2">
-                                                附近玩家 - {me.location}
+                                                {t('game.nearbyPlayers')} - {me.location}
                                             </p>
                                             <div className="grid grid-cols-1 gap-2">
                                                 {jokerPlayers
@@ -2216,7 +2168,7 @@ export default function JokerRoom() {
                                                     ))}
                                                 {jokerPlayers.filter(p => p.location === me.location && p.isAlive && p.sessionId !== me.sessionId).length === 0 && (
                                                     <div className="p-4 rounded-xl border border-white/5 bg-white/5 text-center text-white/30 text-sm italic">
-                                                        这里没有其他人...
+                                                        {t('game.noOneHere')}
                                                     </div>
                                                 )}
                                             </div>
@@ -2231,7 +2183,7 @@ export default function JokerRoom() {
                                         className="w-full h-14 border-red-500/30 bg-red-500/10 text-red-200 hover:bg-red-500/20 hover:border-red-500/50 hover:text-red-100"
                                     >
                                         <AlertTriangle className="w-5 h-5 mr-2" />
-                                        报告发现尸体
+                                        {t('game.reportBody')}
                                     </Button>
                                 </motion.div>
                             )}
@@ -2244,18 +2196,18 @@ export default function JokerRoom() {
                                     </div>
                                     <h2 className="text-3xl font-black italic uppercase tracking-tighter mb-4 flex items-center justify-center gap-3">
                                         <MessageCircle className="w-7 h-7" />
-                                        紧急会议
+                                        {t('meeting.title')}
                                     </h2>
                                     {/* 显示拉铃信息 */}
                                     <div className="mb-4 space-y-3">
                                         <div className="flex items-center justify-center gap-2 text-white/90 text-lg">
                                             <Siren className="w-5 h-5 text-blue-400" />
                                             {jokerSnapshot?.meeting?.triggerType === "system"
-                                                ? <span>系统自动触发</span>
+                                                ? <span>{t('meeting.systemTrigger')}</span>
                                                 : (
                                                     <div className="flex items-center gap-2">
                                                         <Avvvatars value={String(jokerSnapshot?.meeting?.triggerPlayerSeat ?? "?")} size={24} />
-                                                        <span>{jokerSnapshot?.meeting?.triggerPlayerName ?? "玩家"} 拉响了警铃</span>
+                                                        <span>{jokerSnapshot?.meeting?.triggerPlayerName ?? t('game.player')} {t('meeting.playerTrigger')}</span>
                                                     </div>
                                                 )}
                                         </div>
@@ -2263,7 +2215,7 @@ export default function JokerRoom() {
                                             <>
                                                 <div className="flex items-center justify-center gap-2 text-red-400 text-base font-medium">
                                                     <Skull className="w-4 h-4" />
-                                                    <span>本轮有 {jokerSnapshot?.meeting?.deathCount} 人死亡</span>
+                                                    <span>{t('meeting.deathCount', { count: jokerSnapshot?.meeting?.deathCount })}</span>
                                                 </div>
                                                 {/* 显示死亡玩家列表 */}
                                                 <div className="flex flex-wrap items-center justify-center gap-2 mt-2">
@@ -2281,11 +2233,11 @@ export default function JokerRoom() {
                                         {(jokerSnapshot?.meeting?.deathCount ?? 0) === 0 && (
                                             <div className="flex items-center justify-center gap-2 text-green-400/80 text-base">
                                                 <CheckCircle2 className="w-4 h-4" />
-                                                <span>本轮无人死亡</span>
+                                                <span>{t('meeting.noDeaths')}</span>
                                             </div>
                                         )}
                                     </div>
-                                    <p className="text-white/70 max-w-xs mx-auto">与其他玩家讨论。谁的行为可疑？</p>
+                                    <p className="text-white/70 max-w-xs mx-auto">{t('meeting.discussWho')}</p>
                                     {isHost && (
                                         <div className="mt-6 flex items-center justify-center gap-3">
                                             <Button
@@ -2293,7 +2245,7 @@ export default function JokerRoom() {
                                                 disabled={isInteractionDisabled}
                                                 className="h-12 px-5 bg-white text-black hover:bg-white/90"
                                             >
-                                                开始投票
+                                                {t('meeting.startVote')}
                                             </Button>
                                             <Button
                                                 onClick={handleMeetingExtend}
@@ -2301,7 +2253,7 @@ export default function JokerRoom() {
                                                 disabled={isInteractionDisabled}
                                                 className="h-12 px-5 border-white/20 bg-white/10 text-white hover:bg-white/20"
                                             >
-                                                延长30秒
+                                                {t('meeting.extend30s')}
                                             </Button>
                                         </div>
                                     )}
@@ -2315,7 +2267,7 @@ export default function JokerRoom() {
                                         <CardHeader>
                                             <div className="flex items-center justify-between gap-3">
                                                 <CardTitle className="flex items-center gap-2 text-lg text-white">
-                                                    <Hand className="w-5 h-5" /> 投出你的票
+                                                    <Hand className="w-5 h-5" /> {t('voting.castYourVote')}
                                                 </CardTitle>
                                                 {isHost && (
                                                     <Button
@@ -2324,7 +2276,7 @@ export default function JokerRoom() {
                                                         disabled={isInteractionDisabled}
                                                         className="h-9 px-3 border-white/20 bg-white/10 text-white hover:bg-white/20"
                                                     >
-                                                        延长30秒
+                                                        {t('meeting.extend30s')}
                                                     </Button>
                                                 )}
                                             </div>
@@ -2347,11 +2299,11 @@ export default function JokerRoom() {
                                                                     <span>{p.name}</span>
                                                                     {p.sessionId === me?.sessionId && (
                                                                         <Badge className="bg-white/10 text-white/60 border-white/10 hover:bg-white/10">
-                                                                            自己
+                                                                            {t('voting.self')}
                                                                         </Badge>
                                                                     )}
                                                                 </div>
-                                                                <div className="text-xs text-white/30 uppercase tracking-wider">投票</div>
+                                                                <div className="text-xs text-white/30 uppercase tracking-wider">{t('voting.vote')}</div>
                                                             </Button>
                                                         ))}
                                                 </div>
@@ -2365,18 +2317,18 @@ export default function JokerRoom() {
                                                     disabled={me?.hasVoted || isInteractionDisabled}
                                                 >
                                                     <SkipForward className="w-4 h-4" />
-                                                    弃票
+                                                    {t('voting.abstain')}
                                                 </Button>
                                             </div>
 
                                             {me?.hasVoted && (
                                                 <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="mt-4 p-4 bg-green-500/20 border border-green-500/30 rounded-xl text-center">
                                                     <span className="text-green-300 font-bold flex items-center justify-center gap-2">
-                                                        <Vote className="w-5 h-5 fill-current" /> 投票已记录
+                                                        <Vote className="w-5 h-5 fill-current" /> {t('voting.recorded')}
                                                     </span>
                                                     {myVoteLabel && (
                                                         <div className="text-xs text-white/70 mt-2">
-                                                            你的选择：{myVoteLabel}
+                                                            {t('voting.yourChoice')}{myVoteLabel}
                                                         </div>
                                                     )}
                                                 </motion.div>
@@ -2404,21 +2356,21 @@ export default function JokerRoom() {
                                             <div>
                                                 <h3 className="text-2xl font-bold mb-1 text-white">
                                                     {executedPlayer?.name}
-                                                    {executedPlayer?.seat ? `（座位${executedPlayer.seat}）` : ""}
+                                                    {executedPlayer?.seat ? `（${t('game.seat')}${executedPlayer.seat}）` : ""}
                                                 </h3>
                                                 <p className="text-red-400 font-mono uppercase tracking-widest text-lg">
-                                                    身份是 {jokerSnapshot.execution.executedRole
-                                                        ? ROLE_LABELS[jokerSnapshot.execution.executedRole]
-                                                        : "未知"}
+                                                    {t('execution.roleIs')} {jokerSnapshot.execution.executedRole
+                                                        ? t(`roles.${jokerSnapshot.execution.executedRole}`)
+                                                        : t('common.unknown')}
                                                 </p>
                                             </div>
                                         </div>
                                     ) : (
                                         <div className="p-8 bg-white/5 rounded-3xl border border-white/10">
                                             <p className="text-xl text-white/70 italic">
-                                                投票平局或弃票过多。
+                                                {t('execution.tieOrAbstain')}
                                                 <br />
-                                                <span className="font-bold text-white not-italic mt-2 block">没有人被驱逐。</span>
+                                                <span className="font-bold text-white not-italic mt-2 block">{t('execution.noOneEjected')}</span>
                                             </p>
                                         </div>
                                     )}
@@ -2426,7 +2378,7 @@ export default function JokerRoom() {
                                         <div className="mt-8">
                                             <Card className="bg-black/20 backdrop-blur-xl border-white/10 text-left">
                                                 <CardHeader>
-                                                    <CardTitle className="text-sm uppercase tracking-widest text-white/50">投票结果</CardTitle>
+                                                    <CardTitle className="text-sm uppercase tracking-widest text-white/50">{t('execution.votingResults')}</CardTitle>
                                                 </CardHeader>
                                                 <CardContent>
                                                     <div className="grid gap-2">
@@ -2448,16 +2400,16 @@ export default function JokerRoom() {
                                                                         <span className="font-medium text-white">{player.name}</span>
                                                                     </div>
                                                                     <span className="font-mono text-white/80">
-                                                                        {votes} 票
+                                                                        {votes} {t('voting.votes')}
                                                                     </span>
                                                                 </div>
                                                             ))}
                                                         <div className="flex items-center justify-between p-3 rounded-lg border border-white/10 bg-white/5">
                                                             <div className="flex items-center gap-3">
-                                                                <span className="font-medium text-white">弃票</span>
+                                                                <span className="font-medium text-white">{t('voting.abstain')}</span>
                                                             </div>
                                                             <span className="font-mono text-white/80">
-                                                                {jokerSnapshot.voting.skipCount} 票
+                                                                {jokerSnapshot.voting.skipCount} {t('voting.votes')}
                                                             </span>
                                                         </div>
                                                     </div>
@@ -2478,7 +2430,7 @@ export default function JokerRoom() {
                                             transition={{ type: "spring", bounce: 0.5 }}
                                         >
                                             <h1 className="text-6xl font-black uppercase italic tracking-tighter text-transparent bg-clip-text bg-gradient-to-b from-yellow-300 to-yellow-600 drop-shadow-[0_4px_0_rgba(0,0,0,0.5)]">
-                                                {ROLE_LABELS[jokerSnapshot.gameResult.winner]}获胜！
+                                                {t(`roles.${jokerSnapshot.gameResult.winner}`)}{t('gameOver.wins')}
                                             </h1>
                                         </motion.div>
                                         <p className="text-white/60 text-lg">{jokerSnapshot.gameResult.reason}</p>
@@ -2486,7 +2438,7 @@ export default function JokerRoom() {
 
                                     <Card className="bg-black/20 backdrop-blur-xl border-white/10 text-left">
                                         <CardHeader>
-                                            <CardTitle className="text-sm uppercase tracking-widest text-white/50">角色揭晓</CardTitle>
+                                            <CardTitle className="text-sm uppercase tracking-widest text-white/50">{t('gameOver.roleReveal')}</CardTitle>
                                         </CardHeader>
                                         <CardContent>
                                             <ScrollArea className="h-[300px] pr-4">
@@ -2505,10 +2457,10 @@ export default function JokerRoom() {
                                                             </div>
                                                             <div className="flex items-center gap-2">
                                                                 <Badge variant="outline" className={ROLE_CARD_STYLES[p.role ?? "goose"].badge}>
-                                                                    {ROLE_LABELS[p.role ?? "goose"]}
+                                                                    {t(`roles.${p.role ?? "goose"}`)}
                                                                 </Badge>
                                                                 <Badge className={p.isAlive ? "bg-emerald-500/20 text-emerald-200 border-emerald-500/30 hover:bg-emerald-500/30" : "bg-red-500/20 text-red-200 border-red-500/30 hover:bg-red-500/30"}>
-                                                                    {p.isAlive ? "存活" : "死亡"}
+                                                                    {p.isAlive ? t('gameOver.alive') : t('gameOver.dead')}
                                                                 </Badge>
                                                             </div>
                                                         </motion.div>
@@ -2525,11 +2477,11 @@ export default function JokerRoom() {
                                             size="lg"
                                             className="flex-1 h-14 text-lg font-bold rounded-xl border-white/20 bg-white/10 text-white hover:bg-white/20"
                                         >
-                                            <Eye className="w-5 h-5 mr-2" />复盘
+                                            <Eye className="w-5 h-5 mr-2" />{t('gameOver.review')}
                                         </Button>
                                         {isHost && (
                                             <Button onClick={handleResetGame} size="lg" className="flex-1 h-14 text-lg font-bold rounded-xl bg-white text-black hover:bg-white/90">
-                                                <RotateCcw className="w-5 h-5 mr-2" />再来一局
+                                                <RotateCcw className="w-5 h-5 mr-2" />{t('gameOver.playAgain')}
                                             </Button>
                                         )}
                                     </div>
@@ -2539,33 +2491,35 @@ export default function JokerRoom() {
                         </motion.div>
                     </AnimatePresence>
                 </ScrollArea>
-            </div>
+            </div >
 
             {/* Mini-Game Overlay */}
             <AnimatePresence>
-                {showMiniGame && currentGameType && (
-                    <motion.div
-                        initial={{ opacity: 0, y: 100 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: 100 }}
-                        className="fixed inset-x-0 bottom-0 z-50 p-4 pb-8"
-                    >
-                        <div className="max-w-md mx-auto">
-                            <MiniGame
-                                type={currentGameType}
-                                onComplete={handleCompleteTask}
-                                onClose={handleCloseTask}
-                            />
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+                {
+                    showMiniGame && currentGameType && (
+                        <motion.div
+                            initial={{ opacity: 0, y: 100 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: 100 }}
+                            className="fixed inset-x-0 bottom-0 z-50 p-4 pb-8"
+                        >
+                            <div className="max-w-md mx-auto">
+                                <MiniGame
+                                    type={currentGameType}
+                                    onComplete={handleCompleteTask}
+                                    onClose={handleCloseTask}
+                                />
+                            </div>
+                        </motion.div>
+                    )
+                }
+            </AnimatePresence >
             <Dialog open={showMedicalDialog} onOpenChange={setShowMedicalDialog}>
                 <DialogContent className="bg-slate-950/95 text-white border-white/10">
                     <DialogHeader>
-                        <DialogTitle>远程治疗</DialogTitle>
+                        <DialogTitle>{t('locationEffect.medical')}</DialogTitle>
                         <DialogDescription className="text-white/60">
-                            选择要补氧的玩家（+90秒）
+                            {t('medical.selectPlayer')}
                         </DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-2">
@@ -2578,14 +2532,14 @@ export default function JokerRoom() {
                                 <div className="flex items-center gap-2">
                                     <Avvvatars value={String(target.seat)} size={24} />
                                     <span className="font-medium text-white">
-                                        {target.name || `玩家${target.seat}`}
+                                        {target.name || `${t('game.player')}${target.seat}`}
                                     </span>
                                 </div>
-                                <span className="text-xs text-white/60">座位 {target.seat}</span>
+                                <span className="text-xs text-white/60">{t('game.seat')} {target.seat}</span>
                             </Button>
                         ))}
                         {medicalTargets.length === 0 && (
-                            <div className="text-center text-sm text-white/50">暂无可补氧目标</div>
+                            <div className="text-center text-sm text-white/50">{t('medical.noTargets')}</div>
                         )}
                     </div>
                 </DialogContent>
@@ -2596,10 +2550,10 @@ export default function JokerRoom() {
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Eye className="w-5 h-5" />
-                            游戏复盘
+                            {t('gameOver.reviewTitle')}
                         </DialogTitle>
                         <DialogDescription className="text-white/60">
-                            查看死亡时间线和投票历史
+                            {t('gameOver.reviewDescription')}
                         </DialogDescription>
                     </DialogHeader>
                     <ScrollArea className="flex-1 pr-4">
@@ -2614,6 +2568,6 @@ export default function JokerRoom() {
             </Dialog>
             {ConfirmDialogElement}
             <Toaster position="top-center" richColors theme="dark" />
-        </div>
+        </div >
     );
 }

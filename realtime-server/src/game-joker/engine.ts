@@ -13,6 +13,7 @@ import type {
     JokerSharedTaskState,
     JokerEmergencyTaskState,
     JokerTaskSystemState,
+    JokerOxygenState,
     SelectLocationPayload,
     SubmitLifeCodeActionPayload,
     SubmitVotePayload,
@@ -41,6 +42,51 @@ export const PHASE_DURATIONS = {
     execution: 10_000,
 };
 
+// ============ Oxygen State Helpers ============
+
+function createOxygenState(baseOxygen: number, drainRate: number, timestamp?: number): JokerOxygenState {
+    return {
+        baseOxygen,
+        drainRate,
+        baseTimestamp: timestamp ?? Date.now(),
+    };
+}
+
+/** Calculate current oxygen value from oxygen state */
+export function getCurrentOxygen(state: JokerOxygenState): number {
+    const elapsed = (Date.now() - state.baseTimestamp) / 1000;
+    return Math.max(0, Math.floor(state.baseOxygen - state.drainRate * elapsed));
+}
+
+/** Add oxygen to a player (e.g., +90s refill) */
+function addOxygen(player: JokerPlayerState, amount: number): void {
+    const current = getCurrentOxygen(player.oxygenState);
+    player.oxygenState = createOxygenState(
+        current + amount,
+        player.oxygenState.drainRate
+    );
+}
+
+/** Deduct oxygen from a player (e.g., -10s for task) */
+function deductOxygen(player: JokerPlayerState, amount: number): void {
+    const current = getCurrentOxygen(player.oxygenState);
+    player.oxygenState = createOxygenState(
+        Math.max(0, current - amount),
+        player.oxygenState.drainRate
+    );
+}
+
+/** Set oxygen drain rate (1=normal, 3=leak, 0=paused) */
+export function setOxygenDrainRate(player: JokerPlayerState, drainRate: number): void {
+    const current = getCurrentOxygen(player.oxygenState);
+    player.oxygenState = createOxygenState(current, drainRate);
+}
+
+/** Reset oxygen to a specific value with drain rate (default=0 for paused) */
+function resetOxygen(player: JokerPlayerState, oxygen: number, drainRate: number = 0): void {
+    player.oxygenState = createOxygenState(oxygen, drainRate);
+}
+
 // ============ Initialization ============
 
 export interface InitPlayer {
@@ -66,8 +112,7 @@ function createEmptyPlayer(seat: number): JokerPlayerState {
         targetLocation: null,
         lifeCode: generateLifeCode(),
         lifeCodeVersion: 1,
-        oxygen: INITIAL_OXYGEN,
-        oxygenUpdatedAt: Date.now(),
+        oxygenState: createOxygenState(INITIAL_OXYGEN, OXYGEN_DRAIN_NORMAL),
         duckEmergencyUsed: false,
         hawkEmergencyUsed: false,
         oxygenLeakActive: false,
@@ -197,8 +242,7 @@ export function assignJokerRoles(snapshot: JokerSnapshot): ActionResult {
         if (player) {
             player.role = shuffledRoles[i] ?? "goose";
             player.isAlive = true;
-            player.oxygen = INITIAL_OXYGEN;
-            player.oxygenUpdatedAt = Date.now();
+            resetOxygen(player, INITIAL_OXYGEN);
             player.duckEmergencyUsed = false;
             player.hawkEmergencyUsed = false;
         }
@@ -479,8 +523,7 @@ export function submitLifeCodeAction(
         // Duck or hawk loses 30s oxygen for incorrect kill code
         if (payload.action === "kill" && (actor.role === "duck" || actor.role === "hawk")) {
             const KILL_CODE_PENALTY = 30;
-            actor.oxygen -= KILL_CODE_PENALTY;
-            actor.oxygenUpdatedAt = now;
+            deductOxygen(actor, KILL_CODE_PENALTY);
             snapshot.updatedAt = now;
             return { ok: false, error: "Invalid life code", message: `错误代码，损失${KILL_CODE_PENALTY}秒氧气` };
         }
@@ -591,8 +634,7 @@ function handleOxygenAction(
     }
 
     // Apply oxygen
-    target.oxygen += OXYGEN_REFILL;
-    target.oxygenUpdatedAt = Date.now();
+    addOxygen(target, OXYGEN_REFILL);
     if (!snapshot.round.oxygenGivenThisRound[actorSessionId]) {
         snapshot.round.oxygenGivenThisRound[actorSessionId] = {};
     }
@@ -600,6 +642,8 @@ function handleOxygenAction(
     if (target.oxygenLeakActive) {
         target.oxygenLeakActive = false;
         target.oxygenLeakResolvedAt = Date.now();
+        // Reset drain rate to normal when leak is fixed
+        setOxygenDrainRate(target, OXYGEN_DRAIN_NORMAL);
     }
 
     snapshot.logs.push({
@@ -624,9 +668,8 @@ function markOxygenGivenThisRound(
     snapshot.round.oxygenGivenThisRound[actorSessionId][targetSessionId] = true;
 }
 
-function applyOxygenWithoutLeakFix(target: JokerPlayerState, amount: number, now: number): void {
-    target.oxygen += amount;
-    target.oxygenUpdatedAt = now;
+function applyOxygenWithoutLeakFix(target: JokerPlayerState, amount: number): void {
+    addOxygen(target, amount);
 }
 
 export function useMonitoringPeek(
@@ -739,7 +782,7 @@ export function useKitchenOxygen(
     }
 
     const now = Date.now();
-    applyOxygenWithoutLeakFix(actor, OXYGEN_REFILL, now);
+    applyOxygenWithoutLeakFix(actor, OXYGEN_REFILL);
     markOxygenGivenThisRound(snapshot, sessionId, sessionId);
     snapshot.round.kitchenUsedBySession[sessionId] = true;
 
@@ -794,7 +837,7 @@ export function useMedicalOxygen(
     }
 
     const now = Date.now();
-    applyOxygenWithoutLeakFix(target, OXYGEN_REFILL, now);
+    applyOxygenWithoutLeakFix(target, OXYGEN_REFILL);
     markOxygenGivenThisRound(snapshot, sessionId, targetSessionId);
     snapshot.round.medicalUsedBySession[sessionId] = true;
 
@@ -837,7 +880,7 @@ export function useWarehouseOxygen(
     const now = Date.now();
     for (const player of snapshot.players) {
         if (!player.isAlive || !player.sessionId) continue;
-        applyOxygenWithoutLeakFix(player, WAREHOUSE_OXYGEN_REFILL, now);
+        applyOxygenWithoutLeakFix(player, WAREHOUSE_OXYGEN_REFILL);
     }
 
     snapshot.round.warehouseUsedBySession[sessionId] = true;
@@ -911,16 +954,11 @@ export function failLocationEffect(
 
 // ============ Oxygen Tick ============
 
-export function tickOxygen(snapshot: JokerSnapshot): void {
-    const now = Date.now();
-    for (const player of snapshot.players) {
-        if (player.isAlive && player.sessionId) {
-            const drain = player.oxygenLeakActive ? OXYGEN_DRAIN_LEAK : OXYGEN_DRAIN_NORMAL;
-            player.oxygen = Math.max(0, player.oxygen - drain);
-            player.oxygenUpdatedAt = now;
-        }
-    }
-    snapshot.updatedAt = now;
+// Note: With oxygenState, we no longer need to modify oxygen values each tick.
+// The frontend calculates current oxygen from baseOxygen, drainRate, and baseTimestamp.
+// This function is kept for compatibility but is now a no-op.
+export function tickOxygen(_snapshot: JokerSnapshot): void {
+    // No-op: oxygen is now calculated on-demand from oxygenState
 }
 
 export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
@@ -930,11 +968,11 @@ export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
     for (const player of snapshot.players) {
         if (!player.isAlive || !player.sessionId) continue;
 
-        if (player.oxygen <= 0) {
+        const currentOxygen = getCurrentOxygen(player.oxygenState);
+        if (currentOxygen <= 0) {
             if (player.role === "duck" && !player.duckEmergencyUsed) {
                 // Duck gets emergency oxygen (one-time)
-                player.oxygen = DUCK_EMERGENCY_OXYGEN;
-                player.oxygenUpdatedAt = now;
+                resetOxygen(player, DUCK_EMERGENCY_OXYGEN, OXYGEN_DRAIN_NORMAL);
                 player.duckEmergencyUsed = true;
 
                 snapshot.logs.push({
@@ -944,8 +982,7 @@ export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
                 });
             } else if (player.role === "hawk" && !player.hawkEmergencyUsed) {
                 // Hawk gets emergency oxygen (one-time)
-                player.oxygen = HAWK_EMERGENCY_OXYGEN;
-                player.oxygenUpdatedAt = now;
+                resetOxygen(player, HAWK_EMERGENCY_OXYGEN, OXYGEN_DRAIN_NORMAL);
                 player.hawkEmergencyUsed = true;
 
                 snapshot.logs.push({
@@ -1032,10 +1069,14 @@ export function startMeeting(
         snapshot.tasks.emergencyByLocation = undefined;
     }
 
-    // Reset player vote state
+    // Reset player vote state and freeze oxygen
     for (const player of snapshot.players) {
         player.hasVoted = false;
         player.voteTarget = null;
+        // Freeze oxygen during meeting (drainRate=0)
+        if (player.isAlive && player.sessionId) {
+            setOxygenDrainRate(player, 0);
+        }
     }
 
     snapshot.deadline = snapshot.meeting.discussionEndAt;
@@ -1323,8 +1364,7 @@ export function startTask(snapshot: JokerSnapshot, sessionId: string): ActionRes
     }
 
     // Deduct oxygen
-    player.oxygen = Math.max(0, player.oxygen - TASK_OXYGEN_COST);
-    player.oxygenUpdatedAt = Date.now();
+    deductOxygen(player, TASK_OXYGEN_COST);
     snapshot.updatedAt = Date.now();
 
     return { ok: true, message: `Started task, -${TASK_OXYGEN_COST}s oxygen` };
@@ -1378,8 +1418,7 @@ export function joinSharedTask(
     if (existing && existing.status !== "resolved") {
         if (!existing.joined.includes(sessionId)) {
             existing.joined.push(sessionId);
-            player.oxygen = Math.max(0, player.oxygen - SHARED_TASK_OXYGEN_COST);
-            player.oxygenUpdatedAt = Date.now();
+            deductOxygen(player, SHARED_TASK_OXYGEN_COST);
         }
         snapshot.tasks.sharedByLocation = sharedByLocation as Record<JokerLocation, JokerSharedTaskState>;
         snapshot.updatedAt = Date.now();
@@ -1406,8 +1445,7 @@ export function joinSharedTask(
         joined: [sessionId],
     };
     snapshot.tasks.sharedByLocation = sharedByLocation as Record<JokerLocation, JokerSharedTaskState>;
-    player.oxygen = Math.max(0, player.oxygen - SHARED_TASK_OXYGEN_COST);
-    player.oxygenUpdatedAt = Date.now();
+    deductOxygen(player, SHARED_TASK_OXYGEN_COST);
     snapshot.updatedAt = Date.now();
 
     return { ok: true };
@@ -1792,12 +1830,13 @@ export function transitionToGreenLight(snapshot: JokerSnapshot): void {
     snapshot.activeLocations = computeLocations(aliveCount);
 
     // Reset round-specific player state
-    const now = Date.now();
     for (const player of snapshot.players) {
         player.targetLocation = null;
         player.location = null;
-        // Reset oxygen timestamp so frontend calculates from green light start
-        player.oxygenUpdatedAt = now;
+        // Reset oxygen drain rate to normal and refresh timestamp for new round
+        if (player.isAlive) {
+            setOxygenDrainRate(player, OXYGEN_DRAIN_NORMAL);
+        }
         player.oxygenLeakActive = false;
         player.oxygenLeakStartedAt = undefined;
         player.oxygenLeakResolvedAt = undefined;
@@ -1890,8 +1929,7 @@ export function resetToLobby(snapshot: JokerSnapshot): void {
         player.isReady = false;
         player.location = null;
         player.targetLocation = null;
-        player.oxygen = INITIAL_OXYGEN;
-        player.oxygenUpdatedAt = Date.now();
+        resetOxygen(player, INITIAL_OXYGEN);
         player.duckEmergencyUsed = false;
         player.hawkEmergencyUsed = false;
         player.oxygenLeakActive = false;

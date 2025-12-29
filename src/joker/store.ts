@@ -194,8 +194,11 @@ function createEmptyPlayer(seat: number): JokerPlayerState {
         targetLocation: null,
         lifeCode: "",
         lifeCodeVersion: 0,
-        oxygen: 270,
-        oxygenUpdatedAt: Date.now(),
+        oxygenState: {
+            baseOxygen: 270,
+            drainRate: 0,
+            baseTimestamp: Date.now(),
+        },
         duckEmergencyUsed: false,
         hawkEmergencyUsed: false,
         oxygenLeakActive: false,

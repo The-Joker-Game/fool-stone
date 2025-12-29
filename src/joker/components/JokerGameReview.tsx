@@ -5,6 +5,7 @@ import { Skull, Vote, Users } from "lucide-react";
 import type { JokerDeathRecord, JokerVotingRoundRecord, JokerPlayerState, JokerRole, JokerLocation } from "../types";
 import Avvvatars from "avvvatars-react";
 import { JokerVotingGraph } from "./JokerVotingGraph";
+import { useTranslation } from "react-i18next";
 
 interface JokerGameReviewProps {
     deaths: JokerDeathRecord[];
@@ -13,12 +14,6 @@ interface JokerGameReviewProps {
     locationHistory?: Record<number, Record<JokerLocation, number[]>>;
 }
 
-const ROLE_LABELS: Record<JokerRole, string> = {
-    duck: "鸭子",
-    goose: "鹅",
-    dodo: "呆呆鸟",
-    hawk: "老鹰",
-};
 
 const ROLE_COLORS: Record<JokerRole, string> = {
     duck: "bg-orange-500/20 text-orange-300 border-orange-500/30",
@@ -34,6 +29,7 @@ type TimelineEvent =
     | { type: "voting"; voting: JokerVotingRoundRecord };
 
 export function JokerGameReview({ deaths, votingHistory, players, locationHistory }: JokerGameReviewProps) {
+    const { t } = useTranslation();
     const getPlayerSeat = (sessionId: string | null) => {
         if (!sessionId) return 0;
         const player = players.find(p => p.sessionId === sessionId);
@@ -41,29 +37,29 @@ export function JokerGameReview({ deaths, votingHistory, players, locationHistor
     };
 
     const getPlayerName = (sessionId: string | null) => {
-        if (!sessionId) return "未知";
+        if (!sessionId) return t('common.unknown');
         const player = players.find(p => p.sessionId === sessionId);
-        return player?.name || `玩家${player?.seat || "?"}`;
+        return player?.name || `${t('game.player')}${player?.seat || "?"}`;
     };
 
-    // 格式化死亡描述
+    // Format death description
     const formatDeathDescription = (death: JokerDeathRecord): string => {
         if (death.reason === "kill" && death.killerSeat) {
             const killerLoc = death.killerLocation ? `（${death.killerLocation}）` : "";
             const victimLoc = death.location ? `（${death.location}）` : "";
-            return `${death.killerSeat}号${killerLoc} 击杀 ${death.seat}号${victimLoc}`;
+            return t('review.killedBy', { killerSeat: death.killerSeat, killerLoc, victimSeat: death.seat, victimLoc });
         }
         if (death.reason === "oxygen") {
-            return `${death.seat}号 缺氧而死`;
+            return t('review.oxygenDeath', { seat: death.seat });
         }
         if (death.reason === "foul") {
             const loc = death.location ? `（${death.location}）` : "";
-            return `${death.seat}号${loc} 犯规死亡`;
+            return t('review.foulDeath', { seat: death.seat, loc });
         }
         if (death.reason === "vote") {
-            return `${death.seat}号 被投票淘汰`;
+            return t('review.votedOut', { seat: death.seat });
         }
-        return `${death.seat}号 死亡`;
+        return t('review.died', { seat: death.seat });
     };
 
     // Build timeline
@@ -103,7 +99,7 @@ export function JokerGameReview({ deaths, votingHistory, players, locationHistor
 
     if (timeline.length === 0) {
         return (
-            <div className="text-center text-white/50 py-8">暂无复盘数据</div>
+            <div className="text-center text-white/50 py-8">{t('review.noData')}</div>
         );
     }
 
@@ -117,7 +113,7 @@ export function JokerGameReview({ deaths, votingHistory, players, locationHistor
                                 <span className="text-sm font-bold text-white/80">{event.round}</span>
                             </div>
                             <div className="flex-1 h-px bg-white/10" />
-                            <span className="text-xs text-white/40 uppercase tracking-wider">第 {event.round} 轮</span>
+                            <span className="text-xs text-white/40 uppercase tracking-wider">{t('review.round', { round: event.round })}</span>
                             <div className="flex-1 h-px bg-white/10" />
                         </div>
                     );
@@ -130,7 +126,7 @@ export function JokerGameReview({ deaths, votingHistory, players, locationHistor
                             <CardContent className="p-3">
                                 <div className="flex items-center gap-2 mb-2 text-sm text-white/70">
                                     <Users className="w-4 h-4" />
-                                    <span>场所分布</span>
+                                    <span>{t('review.locationDistribution')}</span>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2 text-xs">
                                     {Object.entries(locations).map(([loc, seats]) => (
@@ -138,7 +134,7 @@ export function JokerGameReview({ deaths, votingHistory, players, locationHistor
                                             <div key={loc} className="flex items-center justify-between bg-white/5 px-2 py-1 rounded">
                                                 <span className="text-white/60">{loc}</span>
                                                 <span className="text-white/90 font-mono">
-                                                    {seats.join(", ")}号
+                                                    {seats.join(", ")}{t('review.seatNumber')}
                                                 </span>
                                             </div>
                                         )
@@ -186,7 +182,7 @@ export function JokerGameReview({ deaths, votingHistory, players, locationHistor
                             <CardHeader className="p-3 pb-2">
                                 <CardTitle className="text-sm flex items-center gap-2 text-blue-300">
                                     <Vote className="w-4 h-4" />
-                                    会议投票
+                                    {t('review.votingMeeting')}
                                     {round.reason && (
                                         <Badge
                                             variant="outline"
@@ -199,10 +195,10 @@ export function JokerGameReview({ deaths, votingHistory, players, locationHistor
                                             }
                                         >
                                             {round.reason === "vote" && executedLabel
-                                                ? `${executedLabel} 被淘汰`
+                                                ? t('review.eliminated', { player: executedLabel })
                                                 : round.reason === "tie"
-                                                    ? "平票"
-                                                    : "弃票过多"}
+                                                    ? t('review.tie')
+                                                    : t('review.tooManyAbstain')}
                                         </Badge>
                                     )}
                                 </CardTitle>
@@ -218,9 +214,9 @@ export function JokerGameReview({ deaths, votingHistory, players, locationHistor
                                         <div className="flex items-center gap-2 justify-center text-sm">
                                             <Avvvatars value={String(executedSeat)} size={18} />
                                             <span className="text-white/70">{executedName}</span>
-                                            <span className="text-white/40">的身份是</span>
+                                            <span className="text-white/40">{t('review.roleWas')}</span>
                                             <Badge variant="outline" className={ROLE_COLORS[round.executedRole]}>
-                                                {ROLE_LABELS[round.executedRole]}
+                                                {t(`roles.${round.executedRole}`)}
                                             </Badge>
                                         </div>
                                     </div>

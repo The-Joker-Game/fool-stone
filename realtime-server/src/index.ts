@@ -52,6 +52,7 @@ import {
   submitSharedTaskChoice as jokerSubmitSharedTaskChoice,
   joinGoldenRabbitTask as jokerJoinGoldenRabbitTask,
   submitGoldenRabbitChoice as jokerSubmitGoldenRabbitChoice,
+  setOxygenDrainRate as jokerSetOxygenDrainRate,
 } from "./game-joker/engine.js";
 import type { ActionResult, JokerPlayerState, JokerSnapshot } from "./game-joker/types.js";
 import { checkAndScheduleActions as jokerScheduleActions, clearRoomTimeouts as jokerClearTimeouts, checkAllVoted } from "./game-joker/scheduler.js";
@@ -1031,6 +1032,7 @@ io.on("connection", (socket: Socket) => {
             }
             const now = Date.now();
             if (!jokerSnapshot.paused) {
+              // Pause: freeze oxygen for all alive players
               const remaining = jokerSnapshot.deadline ? Math.max(0, jokerSnapshot.deadline - now) : 0;
               jokerSnapshot.paused = true;
               jokerSnapshot.pauseRemainingMs = remaining;
@@ -1038,14 +1040,28 @@ io.on("connection", (socket: Socket) => {
               if (jokerSnapshot.phase === "meeting" && jokerSnapshot.meeting) {
                 jokerSnapshot.meeting.discussionEndAt = undefined;
               }
+              // Freeze oxygen (drainRate=0)
+              for (const player of jokerSnapshot.players) {
+                if (player.isAlive && player.sessionId) {
+                  jokerSetOxygenDrainRate(player, 0);
+                }
+              }
               jokerClearTimeouts(roomCode);
             } else {
+              // Resume: restore oxygen drain rate based on leak status
               jokerSnapshot.paused = false;
               const remaining = jokerSnapshot.pauseRemainingMs ?? 0;
               jokerSnapshot.deadline = Date.now() + remaining;
               jokerSnapshot.pauseRemainingMs = undefined;
               if (jokerSnapshot.phase === "meeting" && jokerSnapshot.meeting) {
                 jokerSnapshot.meeting.discussionEndAt = jokerSnapshot.deadline;
+              }
+              // Restore oxygen drain rate (1 for normal, 3 for leak)
+              for (const player of jokerSnapshot.players) {
+                if (player.isAlive && player.sessionId) {
+                  const drainRate = player.oxygenLeakActive ? 3 : 1;
+                  jokerSetOxygenDrainRate(player, drainRate);
+                }
               }
             }
             jokerSnapshot.updatedAt = Date.now();
