@@ -30,6 +30,9 @@ export interface JokerStore {
     report: () => Promise<{ ok: boolean; error?: string }>;
     vote: (targetSessionId: string | null) => Promise<{ ok: boolean; error?: string }>;
     resetGame: () => Promise<{ ok: boolean; error?: string }>;
+    // Ghost actions
+    ghostSelectLocation: (location: JokerLocation) => Promise<{ ok: boolean; error?: string }>;
+    ghostHaunt: (targetSessionId: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 export const useJokerStore = create<JokerStore>()(
@@ -175,6 +178,40 @@ export const useJokerStore = create<JokerStore>()(
                 return { ok: false, error: "Failed to reset game" };
             }
         },
+
+        async ghostSelectLocation(location) {
+            const snapshot = get().snapshot;
+            if (!snapshot) return { ok: false, error: "No snapshot" };
+
+            try {
+                const resp = await rt.emitAck("intent", {
+                    room: snapshot.roomCode,
+                    action: "joker:ghost_select_location",
+                    data: { location },
+                    from: getSessionId(),
+                }, 3000);
+                return { ok: (resp as any)?.ok ?? false, error: (resp as any)?.msg };
+            } catch (e) {
+                return { ok: false, error: "Failed to select ghost location" };
+            }
+        },
+
+        async ghostHaunt(targetSessionId) {
+            const snapshot = get().snapshot;
+            if (!snapshot) return { ok: false, error: "No snapshot" };
+
+            try {
+                const resp = await rt.emitAck("intent", {
+                    room: snapshot.roomCode,
+                    action: "joker:ghost_haunt",
+                    data: { targetSessionId },
+                    from: getSessionId(),
+                }, 3000);
+                return { ok: (resp as any)?.ok ?? false, error: (resp as any)?.msg };
+            } catch (e) {
+                return { ok: false, error: "Failed to haunt" };
+            }
+        },
     }))
 );
 
@@ -207,6 +244,11 @@ function createEmptyPlayer(seat: number): JokerPlayerState {
         oxygenLeakRound: undefined,
         hasVoted: false,
         voteTarget: null,
+        // Ghost fields
+        ghostTargetLocation: null,
+        ghostAssignedLocation: null,
+        hauntingTarget: null,
+        lastHauntTickAt: null,
     };
 }
 

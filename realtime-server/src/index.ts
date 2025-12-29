@@ -53,6 +53,9 @@ import {
   joinGoldenRabbitTask as jokerJoinGoldenRabbitTask,
   submitGoldenRabbitChoice as jokerSubmitGoldenRabbitChoice,
   setOxygenDrainRate as jokerSetOxygenDrainRate,
+  // Ghost system
+  ghostSelectLocation as jokerGhostSelectLocation,
+  ghostHaunt as jokerGhostHaunt,
 } from "./game-joker/engine.js";
 import type { ActionResult, JokerPlayerState, JokerSnapshot } from "./game-joker/types.js";
 import { checkAndScheduleActions as jokerScheduleActions, clearRoomTimeouts as jokerClearTimeouts, checkAllVoted } from "./game-joker/scheduler.js";
@@ -1211,6 +1214,36 @@ io.on("connection", (socket: Socket) => {
             shouldBroadcast = true;
             res = { ok: true };
             break;
+
+          case "joker:ghost_select_location": {
+            const ghost = jokerSnapshot.players.find(
+              (p: JokerPlayerState) => p.sessionId === socket.data.sessionId
+            );
+            if (!ghost) {
+              return cb({ ok: false, msg: "Player not found" });
+            }
+            res = jokerGhostSelectLocation(jokerSnapshot, {
+              seat: ghost.seat,
+              location: data?.location,
+            });
+            shouldBroadcast = true;
+            break;
+          }
+
+          case "joker:ghost_haunt": {
+            const ghost = jokerSnapshot.players.find(
+              (p: JokerPlayerState) => p.sessionId === socket.data.sessionId
+            );
+            if (!ghost) {
+              return cb({ ok: false, msg: "Player not found" });
+            }
+            res = jokerGhostHaunt(jokerSnapshot, {
+              seat: ghost.seat,
+              targetSessionId: data?.targetSessionId,
+            });
+            shouldBroadcast = true;
+            break;
+          }
 
           default:
             return cb({ ok: false, msg: "Unknown joker action" });

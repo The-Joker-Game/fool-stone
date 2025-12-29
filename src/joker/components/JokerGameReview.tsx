@@ -22,6 +22,14 @@ const ROLE_COLORS: Record<JokerRole, string> = {
     hawk: "bg-blue-500/20 text-blue-300 border-blue-500/30",
 };
 
+const LOCATION_KEY_MAP: Record<JokerLocation, string> = {
+    "厨房": "kitchen",
+    "医务室": "medical",
+    "发电室": "power",
+    "监控室": "monitor",
+    "仓库": "warehouse",
+};
+
 type TimelineEvent =
     | { type: "round_start"; round: number }
     | { type: "location_summary"; round: number; locations: Record<JokerLocation, number[]> }
@@ -45,15 +53,15 @@ export function JokerGameReview({ deaths, votingHistory, players, locationHistor
     // Format death description
     const formatDeathDescription = (death: JokerDeathRecord): string => {
         if (death.reason === "kill" && death.killerSeat) {
-            const killerLoc = death.killerLocation ? `（${death.killerLocation}）` : "";
-            const victimLoc = death.location ? `（${death.location}）` : "";
+            const killerLoc = death.killerLocation ? `（${t(`locations.${LOCATION_KEY_MAP[death.killerLocation]}`)}）` : "";
+            const victimLoc = death.location ? `（${t(`locations.${LOCATION_KEY_MAP[death.location]}`)}）` : "";
             return t('review.killedBy', { killerSeat: death.killerSeat, killerLoc, victimSeat: death.seat, victimLoc });
         }
         if (death.reason === "oxygen") {
             return t('review.oxygenDeath', { seat: death.seat });
         }
         if (death.reason === "foul") {
-            const loc = death.location ? `（${death.location}）` : "";
+            const loc = death.location ? `（${t(`locations.${LOCATION_KEY_MAP[death.location]}`)}）` : "";
             return t('review.foulDeath', { seat: death.seat, loc });
         }
         if (death.reason === "vote") {
@@ -132,7 +140,7 @@ export function JokerGameReview({ deaths, votingHistory, players, locationHistor
                                     {Object.entries(locations).map(([loc, seats]) => (
                                         seats.length > 0 && (
                                             <div key={loc} className="flex items-center justify-between bg-white/5 px-2 py-1 rounded">
-                                                <span className="text-white/60">{loc}</span>
+                                                <span className="text-white/60">{t(`locations.${LOCATION_KEY_MAP[loc as JokerLocation]}`)}</span>
                                                 <span className="text-white/90 font-mono">
                                                     {seats.join(", ")}{t('review.seatNumber')}
                                                 </span>

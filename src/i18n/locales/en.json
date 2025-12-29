@@ -35,6 +35,11 @@
         "hawk": "You can kill any player, survive to the end to win!"
     },
     "locations": {
+        "kitchen": "Kitchen",
+        "medical": "Medical Bay",
+        "power": "Power Room",
+        "monitor": "Monitor Room",
+        "warehouse": "Warehouse",
         "厨房": "Kitchen",
         "医务室": "Medical Bay",
         "发电室": "Power Room",
@@ -150,7 +155,9 @@
         "castYourVote": "Cast Your Vote",
         "vote": "Vote",
         "abstain": "Abstain",
-        "votes": "votes"
+        "votes": "votes",
+        "abstainLabel": "Skip",
+        "noVotes": "No votes recorded"
     },
     "execution": {
         "seat": "Seat",
@@ -174,7 +181,15 @@
         "playAgain": "Play Again",
         "reviewTitle": "Game Review",
         "reviewDesc": "View death timeline and voting history",
-        "reviewDescription": "View death timeline and voting history"
+        "reviewDescription": "View death timeline and voting history",
+        "reason": {
+            "hawk_survive": "Hawk survived until the end",
+            "task_complete": "Task progress reached 100%",
+            "all_ducks_eliminated": "All Ducks eliminated",
+            "all_geese_eliminated": "All Geese eliminated",
+            "duck_majority": "Duck count >= Non-Duck count",
+            "dodo_voted": "Dodo was voted out"
+        }
     },
     "dead": {
         "title": "You Are Dead",
@@ -295,5 +310,20 @@
     "common": {
         "unknown": "Unknown",
         "cancel": "Cancel"
+    },
+    "ghost": {
+        "title": "Ghost Mode",
+        "canHaunt": "You can now haunt living players",
+        "selectLocation": "Choose where your spirit goes",
+        "selectedLocation": "Selected",
+        "goingTo": "Going to",
+        "atLocation": "You are at",
+        "availableTargets": "Players to haunt",
+        "noTargets": "No living players at this location",
+        "haunting": "Haunting",
+        "hauntingEffect": "Deducts 3s oxygen every 10s (cannot change)",
+        "otherGhosts": "Other ghosts here",
+        "selectLocationFailed": "Failed to select location",
+        "hauntFailed": "Failed to haunt"
     }
 }

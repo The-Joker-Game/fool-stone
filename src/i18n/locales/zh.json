@@ -35,6 +35,11 @@
         "hawk": "你可以击杀任何玩家，活到最后获胜！"
     },
     "locations": {
+        "kitchen": "厨房",
+        "medical": "医务室",
+        "power": "发电室",
+        "monitor": "监控室",
+        "warehouse": "仓库",
         "厨房": "厨房",
         "医务室": "医务室",
         "发电室": "发电室",
@@ -150,7 +155,9 @@
         "castYourVote": "投出你的票",
         "vote": "投票",
         "abstain": "弃票",
-        "votes": "票"
+        "votes": "票",
+        "abstainLabel": "弃",
+        "noVotes": "无投票记录"
     },
     "execution": {
         "seat": "座位",
@@ -174,7 +181,15 @@
         "playAgain": "再来一局",
         "reviewTitle": "游戏复盘",
         "reviewDesc": "查看死亡时间线和投票历史",
-        "reviewDescription": "查看死亡时间线和投票历史"
+        "reviewDescription": "查看死亡时间线和投票历史",
+        "reason": {
+            "hawk_survive": "猎鹰存活到最后",
+            "task_complete": "任务完成度达到100%",
+            "all_ducks_eliminated": "所有鸭子已被淘汰",
+            "all_geese_eliminated": "所有鹅已被淘汰",
+            "duck_majority": "鸭子数量超过或等于非鸭子",
+            "dodo_voted": "呆呆鸟被投票淘汰"
+        }
     },
     "dead": {
         "title": "你已死亡",
@@ -185,6 +200,7 @@
         "crouchDown": "请原地蹲下或坐下"
     },
     "host": {
+        "controls": "房主控制",
         "pauseGame": "暂停游戏",
         "resumeGame": "恢复游戏",
         "restart": "重启",
@@ -294,5 +310,20 @@
     "common": {
         "unknown": "未知",
         "cancel": "取消"
+    },
+    "ghost": {
+        "title": "幽灵模式",
+        "canHaunt": "你可以作祟存活的玩家了",
+        "selectLocation": "选择灵魂前往的场所",
+        "selectedLocation": "已选择",
+        "goingTo": "正在前往",
+        "atLocation": "你在",
+        "availableTargets": "可作祟的玩家",
+        "noTargets": "该场所没有存活玩家",
+        "haunting": "正在作祟",
+        "hauntingEffect": "每10秒扣除目标3秒氧气（不可更改）",
+        "otherGhosts": "同场所幽灵",
+        "selectLocationFailed": "选择场所失败",
+        "hauntFailed": "作祟失败"
     }
 }

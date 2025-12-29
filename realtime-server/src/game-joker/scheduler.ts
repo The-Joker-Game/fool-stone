@@ -23,6 +23,11 @@ import {
     startGoldenRabbitHunt,
     resolveGoldenRabbitTask,
     setOxygenDrainRate,
+    // Ghost system
+    assignGhostLocations,
+    clearAllHauntings,
+    resetGhostLocations,
+    processHauntingTick,
 } from "./engine.js";
 
 // Track active timers per room
@@ -166,6 +171,8 @@ function schedulePhaseTransition(
     const timer = setTimeout(() => {
         if (nextPhase === "yellow_light") {
             transitionToYellowLight(snapshot);
+            // Assign ghost locations when entering yellow light
+            assignGhostLocations(snapshot);
         } else if (nextPhase === "red_light") {
             transitionToRedLight(snapshot);
         }
@@ -187,6 +194,8 @@ function scheduleRoleRevealToGreenLight(
     const delay = Math.max(0, snapshot.deadline - Date.now());
 
     const timer = setTimeout(() => {
+        // Reset ghost locations for new round
+        resetGhostLocations(snapshot);
         transitionToGreenLight(snapshot);
         broadcastSnapshot(room, io);
         checkAndScheduleActions(room, io);
@@ -315,6 +324,9 @@ function handleRedLightEnd(
     io: Server
 ): void {
     const snapshot = room.snapshot as JokerSnapshot;
+
+    // Clear ghost haunting state at end of red light
+    clearAllHauntings(snapshot);
 
     // Check win condition
     const result = checkWinCondition(snapshot);
@@ -493,6 +505,12 @@ function startOxygenTick(
 
         tickOxygen(snapshot);
         const deaths = checkOxygenDeath(snapshot);
+
+        // Process ghost haunting tick (deduct oxygen every 10s)
+        const hauntDeducted = processHauntingTick(snapshot);
+        if (hauntDeducted.length > 0) {
+            broadcastSnapshot(room, io);
+        }
 
         if (deaths.length > 0) {
             // Someone died from oxygen

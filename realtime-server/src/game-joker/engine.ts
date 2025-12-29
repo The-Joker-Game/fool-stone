@@ -17,6 +17,8 @@ import type {
     SelectLocationPayload,
     SubmitLifeCodeActionPayload,
     SubmitVotePayload,
+    GhostSelectLocationPayload,
+    GhostHauntPayload,
     ActionResult,
 } from "./types.js";
 
@@ -121,6 +123,11 @@ function createEmptyPlayer(seat: number): JokerPlayerState {
         oxygenLeakRound: undefined,
         hasVoted: false,
         voteTarget: null,
+        // Ghost fields
+        ghostTargetLocation: null,
+        ghostAssignedLocation: null,
+        hauntingTarget: null,
+        lastHauntTickAt: null,
     };
 }
 
@@ -1268,7 +1275,7 @@ export function resolveVotes(snapshot: JokerSnapshot): ActionResult {
 
 export function checkWinCondition(snapshot: JokerSnapshot): JokerGameResult | null {
     if (snapshot.execution?.executedRole === "dodo" && snapshot.execution.reason === "vote") {
-        return { winner: "dodo", reason: "呆呆鸟被投票淘汰" };
+        return { winner: "dodo", reason: "dodo_voted" };
     }
 
     const alivePlayers = snapshot.players.filter(p => p.isAlive && p.sessionId);
@@ -1279,7 +1286,7 @@ export function checkWinCondition(snapshot: JokerSnapshot): JokerGameResult | nu
 
     if (aliveHawks.length === 1) {
         if (alivePlayers.length === 1) {
-            return { winner: "hawk", reason: "猎鹰存活到最后" };
+            return { winner: "hawk", reason: "hawk_survive" };
         }
         if (
             alivePlayers.length === 2 &&
@@ -1287,29 +1294,29 @@ export function checkWinCondition(snapshot: JokerSnapshot): JokerGameResult | nu
             aliveDucks.length === 0 &&
             aliveDodos.length === 0
         ) {
-            return { winner: "hawk", reason: "猎鹰存活到最后" };
+            return { winner: "hawk", reason: "hawk_survive" };
         }
     }
 
     // Goose win: task progress reaches 100%
     if (snapshot.taskProgress >= 100 && aliveGeese.length > 0) {
-        return { winner: "goose", reason: "任务完成度达到100%" };
+        return { winner: "goose", reason: "task_complete" };
     }
 
     // Goose win: all ducks dead
     if (aliveDucks.length === 0 && aliveGeese.length > 0) {
-        return { winner: "goose", reason: "所有鸭子已被淘汰" };
+        return { winner: "goose", reason: "all_ducks_eliminated" };
     }
 
     // Duck win: all geese dead
     if (aliveDucks.length > 0 && aliveGeese.length === 0) {
-        return { winner: "duck", reason: "所有鹅已被淘汰" };
+        return { winner: "duck", reason: "all_geese_eliminated" };
     }
 
     // Duck win: ducks >= non-ducks
     const nonDuckCount = alivePlayers.length - aliveDucks.length;
     if (aliveDucks.length > 0 && aliveDucks.length >= nonDuckCount) {
-        return { winner: "duck", reason: "鸭子数量超过或等于非鸭子" };
+        return { winner: "duck", reason: "duck_majority" };
     }
 
     return null;
@@ -1940,7 +1947,215 @@ export function resetToLobby(snapshot: JokerSnapshot): void {
         player.voteTarget = null;
         player.lifeCode = resetCodes[idx];
         player.lifeCodeVersion = 1;
+        // Reset ghost fields
+        player.ghostTargetLocation = null;
+        player.ghostAssignedLocation = null;
+        player.hauntingTarget = null;
+        player.lastHauntTickAt = null;
     }
 
     snapshot.updatedAt = Date.now();
 }
+
+// ============ Ghost System ============
+
+const MAX_GHOSTS_PER_TARGET = 3;
+const HAUNT_TICK_INTERVAL_MS = 10_000;
+const HAUNT_OXYGEN_DEDUCT = 3;
+
+/** 判断玩家是否为可作祟的幽灵（死亡且已公开） */
+export function isActiveGhost(player: JokerPlayerState, deaths: JokerDeathRecord[]): boolean {
+    if (player.isAlive) return false;
+    if (!player.sessionId) return false;
+    const death = deaths.find(d => d.sessionId === player.sessionId);
+    return death?.revealed === true;
+}
+
+/** 获取所有可作祟的幽灵 */
+export function getActiveGhosts(snapshot: JokerSnapshot): JokerPlayerState[] {
+    return snapshot.players.filter(p => isActiveGhost(p, snapshot.deaths));
+}
+
+/** 幽灵选择目标场所（绿灯阶段） */
+export function ghostSelectLocation(
+    snapshot: JokerSnapshot,
+    payload: GhostSelectLocationPayload
+): ActionResult {
+    if (snapshot.phase !== "green_light") {
+        return { ok: false, error: "Can only select location during green light" };
+    }
+
+    const player = snapshot.players.find(p => p.seat === payload.seat);
+    if (!player || !player.sessionId) {
+        return { ok: false, error: "Invalid player" };
+    }
+
+    if (!isActiveGhost(player, snapshot.deaths)) {
+        return { ok: false, error: "Player is not an active ghost" };
+    }
+
+    if (!snapshot.activeLocations.includes(payload.location)) {
+        return { ok: false, error: "Invalid location" };
+    }
+
+    player.ghostTargetLocation = payload.location;
+    snapshot.updatedAt = Date.now();
+
+    return { ok: true };
+}
+
+/** 分配幽灵到场所（黄灯阶段开始时调用） */
+export function assignGhostLocations(snapshot: JokerSnapshot): void {
+    const ghosts = getActiveGhosts(snapshot);
+
+    for (const ghost of ghosts) {
+        // 幽灵必定去到所选场所，如果没选则不分配
+        ghost.ghostAssignedLocation = ghost.ghostTargetLocation;
+    }
+
+    snapshot.updatedAt = Date.now();
+}
+
+/** 获取幽灵可作祟的存活玩家列表（同场所） */
+export function getHauntablePlayers(
+    snapshot: JokerSnapshot,
+    ghostSessionId: string
+): JokerPlayerState[] {
+    const ghost = snapshot.players.find(p => p.sessionId === ghostSessionId);
+    if (!ghost || !ghost.ghostAssignedLocation) return [];
+
+    return snapshot.players.filter(p =>
+        p.isAlive &&
+        p.sessionId &&
+        p.location === ghost.ghostAssignedLocation
+    );
+}
+
+/** 统计某玩家被几个幽灵作祟 */
+export function getHauntingCount(
+    snapshot: JokerSnapshot,
+    playerSessionId: string
+): number {
+    return snapshot.players.filter(p =>
+        !p.isAlive &&
+        p.hauntingTarget === playerSessionId
+    ).length;
+}
+
+/** 幽灵开始作祟（红灯阶段，选定后本回合不可更改） */
+export function ghostHaunt(
+    snapshot: JokerSnapshot,
+    payload: GhostHauntPayload
+): ActionResult {
+    if (snapshot.phase !== "red_light") {
+        return { ok: false, error: "Can only haunt during red light" };
+    }
+
+    const ghost = snapshot.players.find(p => p.seat === payload.seat);
+    if (!ghost || !ghost.sessionId) {
+        return { ok: false, error: "Invalid player" };
+    }
+
+    if (!isActiveGhost(ghost, snapshot.deaths)) {
+        return { ok: false, error: "Player is not an active ghost" };
+    }
+
+    // 已选择作祟目标则不可更改
+    if (ghost.hauntingTarget) {
+        return { ok: false, error: "Already haunting a target this round" };
+    }
+
+    // 检查目标是否在同场所且存活
+    const target = snapshot.players.find(p => p.sessionId === payload.targetSessionId);
+    if (!target || !target.isAlive) {
+        return { ok: false, error: "Invalid target" };
+    }
+
+    if (target.location !== ghost.ghostAssignedLocation) {
+        return { ok: false, error: "Target not in same location" };
+    }
+
+    // 检查作祟上限
+    const currentHauntCount = getHauntingCount(snapshot, payload.targetSessionId);
+    if (currentHauntCount >= MAX_GHOSTS_PER_TARGET) {
+        return { ok: false, error: "Target already has maximum ghosts" };
+    }
+
+    const now = Date.now();
+    ghost.hauntingTarget = payload.targetSessionId;
+    ghost.lastHauntTickAt = now;
+    snapshot.updatedAt = now;
+
+    return { ok: true };
+}
+
+/** 处理作祟 tick - 每秒调用，满10秒则扣氧 */
+export function processHauntingTick(snapshot: JokerSnapshot): string[] {
+    if (snapshot.phase !== "red_light") return [];
+
+    const now = Date.now();
+    const hauntedPlayers: Map<string, number> = new Map(); // sessionId -> ghost count
+
+    // 统计每个被作祟玩家的幽灵数量
+    for (const ghost of snapshot.players) {
+        if (!ghost.isAlive && ghost.hauntingTarget && ghost.lastHauntTickAt) {
+            // 检查是否满10秒
+            if (now - ghost.lastHauntTickAt >= HAUNT_TICK_INTERVAL_MS) {
+                const count = hauntedPlayers.get(ghost.hauntingTarget) || 0;
+                hauntedPlayers.set(ghost.hauntingTarget, count + 1);
+            }
+        }
+    }
+
+    const deductedPlayers: string[] = [];
+
+    // 对每个被作祟的玩家扣氧
+    for (const [targetSessionId, ghostCount] of hauntedPlayers) {
+        const target = snapshot.players.find(p => p.sessionId === targetSessionId);
+        if (!target || !target.isAlive) continue;
+
+        // 扣氧（最多3个幽灵效果）
+        const effectiveCount = Math.min(ghostCount, MAX_GHOSTS_PER_TARGET);
+        const amount = effectiveCount * HAUNT_OXYGEN_DEDUCT;
+        deductOxygen(target, amount);
+        deductedPlayers.push(targetSessionId);
+
+        // 更新所有作祟该目标的幽灵的 lastHauntTickAt
+        for (const ghost of snapshot.players) {
+            if (!ghost.isAlive && ghost.hauntingTarget === targetSessionId) {
+                ghost.lastHauntTickAt = now;
+            }
+        }
+    }
+
+    if (deductedPlayers.length > 0) {
+        snapshot.updatedAt = now;
+    }
+
+    return deductedPlayers;
+}
+
+/** 清除所有幽灵的作祟状态（红灯结束时调用） */
+export function clearAllHauntings(snapshot: JokerSnapshot): void {
+    for (const player of snapshot.players) {
+        if (!player.isAlive) {
+            player.hauntingTarget = null;
+            player.lastHauntTickAt = null;
+        }
+    }
+    snapshot.updatedAt = Date.now();
+}
+
+/** 重置幽灵场所选择（新回合绿灯开始时调用） */
+export function resetGhostLocations(snapshot: JokerSnapshot): void {
+    for (const player of snapshot.players) {
+        if (!player.isAlive) {
+            player.ghostTargetLocation = null;
+            player.ghostAssignedLocation = null;
+        }
+    }
+    snapshot.updatedAt = Date.now();
+}
+
+// Import JokerDeathRecord for ghost type checking
+import type { JokerDeathRecord } from "./types.js";

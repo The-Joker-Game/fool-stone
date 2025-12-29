@@ -3,6 +3,8 @@ import { useMemo, useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
 import Avvvatars from "avvvatars-react";
 import type { JokerPlayerState, JokerVoteEntry, JokerRole } from "../types";
+import { useTranslation } from "react-i18next";
+import { GiDuck, GiGoose, GiChicken, GiEagleHead } from "react-icons/gi";
 
 interface JokerVotingGraphProps {
     players: JokerPlayerState[];
@@ -10,12 +12,7 @@ interface JokerVotingGraphProps {
     showRole?: boolean;
 }
 
-const ROLE_LABELS: Record<JokerRole, string> = {
-    duck: "鸭子",
-    goose: "鹅",
-    dodo: "呆呆鸟",
-    hawk: "老鹰",
-};
+// Removed ROLE_LABELS, using translation instead
 
 const ROLE_COLORS: Record<JokerRole, string> = {
     duck: "bg-orange-500 text-white border-orange-600",
@@ -24,7 +21,15 @@ const ROLE_COLORS: Record<JokerRole, string> = {
     hawk: "bg-blue-500 text-white border-blue-600",
 };
 
+const ROLE_ICONS: Record<JokerRole, React.ElementType> = {
+    duck: GiDuck,
+    goose: GiGoose,
+    dodo: GiChicken,
+    hawk: GiEagleHead,
+};
+
 export function JokerVotingGraph({ players, votes, showRole = false }: JokerVotingGraphProps) {
+    const { t } = useTranslation();
     const [hoveredState, setHoveredState] = useState<{ sessionId: string; side: "voter" | "target" } | null>(null);
     const [focusedState, setFocusedState] = useState<{ sessionId: string; side: "voter" | "target" } | null>(null);
     const [middleWidth, setMiddleWidth] = useState(100);
@@ -114,7 +119,7 @@ export function JokerVotingGraph({ players, votes, showRole = false }: JokerVoti
     };
 
     if (voterSessionIds.length === 0) {
-        return <div className="text-center text-white/50 py-4 text-sm">无投票记录</div>;
+        return <div className="text-center text-white/50 py-4 text-sm">{t('voting.noVotes')}</div>;
     }
 
     return (
@@ -147,13 +152,16 @@ export function JokerVotingGraph({ players, votes, showRole = false }: JokerVoti
                                 <div className={`relative rounded-full transition-all duration-200 ${isFocused ? "ring-2 ring-offset-1 ring-blue-500 ring-offset-transparent" : ""}`}>
                                     <Avvvatars value={String(player?.seat || sessionId)} size={AVATAR_SIZE} />
                                     {showRole && player?.role && (
-                                        <div className={`absolute -bottom-1 -right-1 text-[7px] px-1 py-0 rounded-full border ${ROLE_COLORS[player.role]} z-20`}>
-                                            {ROLE_LABELS[player.role][0]}
+                                        <div className={`absolute -bottom-1 -right-1 p-0.5 rounded-full border ${ROLE_COLORS[player.role]} z-20 bg-gray-900`}>
+                                            {(() => {
+                                                const Icon = ROLE_ICONS[player.role];
+                                                return <Icon className="w-2.5 h-2.5" />;
+                                            })()}
                                         </div>
                                     )}
                                 </div>
                                 <div className="text-[9px] truncate max-w-full opacity-70 text-center px-0.5">
-                                    {player?.name || `玩家`}
+                                    {player?.name || t('game.player')}
                                 </div>
                             </div>
                         );
@@ -234,8 +242,11 @@ export function JokerVotingGraph({ players, votes, showRole = false }: JokerVoti
                                 <div className={`relative rounded-full transition-all duration-200 ${isFocused ? "ring-2 ring-offset-1 ring-blue-500 ring-offset-transparent" : ""}`}>
                                     <Avvvatars value={String(player?.seat || sessionId)} size={AVATAR_SIZE} />
                                     {showRole && player?.role && (
-                                        <div className={`absolute -bottom-1 -right-1 text-[7px] px-1 py-0 rounded-full border ${ROLE_COLORS[player.role]} z-30`}>
-                                            {ROLE_LABELS[player.role][0]}
+                                        <div className={`absolute -bottom-1 -right-1 p-0.5 rounded-full border ${ROLE_COLORS[player.role]} z-30 bg-gray-900`}>
+                                            {(() => {
+                                                const Icon = ROLE_ICONS[player.role];
+                                                return <Icon className="w-2.5 h-2.5" />;
+                                            })()}
                                         </div>
                                     )}
                                     <div className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[8px] w-3.5 h-3.5 flex items-center justify-center rounded-full shadow-sm z-20">
@@ -243,7 +254,7 @@ export function JokerVotingGraph({ players, votes, showRole = false }: JokerVoti
                                     </div>
                                 </div>
                                 <div className="text-[9px] truncate max-w-full opacity-70 text-center px-0.5">
-                                    {player?.name || `玩家`}
+                                    {player?.name || t('game.player')}
                                 </div>
                             </div>
                         );
@@ -255,9 +266,9 @@ export function JokerVotingGraph({ players, votes, showRole = false }: JokerVoti
                             style={{ top: getY(targetSessionIds.length) - ROW_HEIGHT / 2, height: ROW_HEIGHT }}
                         >
                             <div className="w-7 h-7 rounded-full bg-gray-500/30 flex items-center justify-center">
-                                <span className="text-[10px] text-white/70">弃</span>
+                                <span className="text-[10px] text-white/70">{t('voting.abstainLabel')}</span>
                             </div>
-                            <div className="text-[9px] text-white/50">{skipCount} 票</div>
+                            <div className="text-[9px] text-white/50">{skipCount} {t('voting.votes')}</div>
                         </div>
                     )}
                 </div>

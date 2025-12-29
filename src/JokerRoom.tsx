@@ -15,7 +15,7 @@ import { useJokerStore } from "./joker/store";
 import type { JokerStore } from "./joker/store";
 import { MiniGame, getRandomGame, type MiniGameType } from "./joker/mini-games";
 import { JokerGameReview } from "./joker/components/JokerGameReview";
-import { GiKitchenKnives, GiMedicalPack, GiElectric, GiCctvCamera, GiCardboardBox } from "react-icons/gi";
+import { GiKitchenKnives, GiMedicalPack, GiElectric, GiCctvCamera, GiCardboardBox, GiGhost, GiDuck, GiGoose, GiChicken, GiEagleHead } from "react-icons/gi";
 import {
     Card,
     CardContent,
@@ -80,26 +80,26 @@ function randName() {
 const LIFE_CODE_REFRESH_MS = 70_000;
 const LIFE_CODE_WARNING_MS = 5_000;
 
-const ROLE_REVEAL_STYLES: Record<JokerRole, { ring: string; text: string; emoji: string }> = {
+const ROLE_REVEAL_STYLES: Record<JokerRole, { ring: string; text: string; icon: React.ElementType }> = {
     duck: {
         ring: "bg-orange-500/20 border-orange-500/50 shadow-orange-500/30",
         text: "text-orange-400",
-        emoji: "🦆",
+        icon: GiDuck,
     },
     goose: {
         ring: "bg-white/20 border-white/50 shadow-white/30",
         text: "text-white",
-        emoji: "🪿",
+        icon: GiGoose,
     },
     dodo: {
         ring: "bg-amber-500/20 border-amber-400/50 shadow-amber-500/30",
         text: "text-amber-200",
-        emoji: "🦤",
+        icon: GiChicken,
     },
     hawk: {
         ring: "bg-sky-500/20 border-sky-400/50 shadow-sky-500/30",
         text: "text-sky-200",
-        emoji: "🦅",
+        icon: GiEagleHead,
     },
 };
 
@@ -123,6 +123,15 @@ const ROLE_CARD_STYLES: Record<JokerRole, { card: string; badge: string }> = {
 };
 
 // Location icons mapping
+// 场所 -> 英文key 映射
+const LOCATION_KEY_MAP: Record<JokerLocation, string> = {
+    "厨房": "kitchen",
+    "医务室": "medical",
+    "发电室": "power",
+    "监控室": "monitor",
+    "仓库": "warehouse",
+};
+
 const LOCATION_ICONS: Record<JokerLocation, React.ElementType> = {
     "厨房": GiKitchenKnives,
     "医务室": GiMedicalPack,
@@ -797,7 +806,7 @@ export default function JokerRoom() {
         const confirmed = await confirm({
             title: t('confirm.restartTitle'),
             description: t('confirm.restartDesc'),
-            confirmText: t('confirm.restartConfirm'),
+            confirmText: t('confirm.confirmRestart'),
             cancelText: t('common.cancel'),
             variant: "destructive",
         });
@@ -1236,9 +1245,41 @@ export default function JokerRoom() {
 
     // Render: Dead player - exclusive screen
     if (roomCode && phase !== "lobby" && phase !== "game_over" && me && !me.isAlive) {
+        // Check if player is an active ghost (death revealed)
+        const myDeath = jokerSnapshot?.deaths?.find(d => d.sessionId === me.sessionId);
+        const isActiveGhost = myDeath?.revealed === true;
+
+        // Get players at ghost's assigned location for haunting
+        const hauntablePlayers = isActiveGhost && me.ghostAssignedLocation
+            ? jokerPlayers.filter(p => p.isAlive && p.sessionId && p.location === me.ghostAssignedLocation)
+            : [];
+
+        // Get other ghosts at same location
+        const ghostsAtSameLocation = isActiveGhost && me.ghostAssignedLocation
+            ? jokerPlayers.filter(p => !p.isAlive && p.sessionId !== me.sessionId && p.ghostAssignedLocation === me.ghostAssignedLocation)
+            : [];
+
+        // Handle ghost location selection
+        const handleGhostSelectLocation = async (location: JokerLocation) => {
+            const { ghostSelectLocation } = useJokerStore.getState();
+            const result = await ghostSelectLocation(location);
+            if (!result.ok) {
+                toast.error(result.error || t('ghost.selectLocationFailed'));
+            }
+        };
+
+        // Handle ghost haunt
+        const handleGhostHaunt = async (targetSessionId: string) => {
+            const { ghostHaunt } = useJokerStore.getState();
+            const result = await ghostHaunt(targetSessionId);
+            if (!result.ok) {
+                toast.error(result.error || t('ghost.hauntFailed'));
+            }
+        };
+
         return (
             <>
-                <div className="min-h-screen relative flex flex-col items-center justify-center text-white p-6 bg-gradient-to-br from-red-950 via-red-900 to-black">
+                <div className="min-h-screen relative flex flex-col items-center justify-between text-white p-6 bg-gradient-to-br from-red-950 via-red-900 to-black">
                     {/* Dark overlay that pulses */}
                     <div
                         className="absolute inset-0 bg-black"
@@ -1252,16 +1293,29 @@ export default function JokerRoom() {
                         50% { opacity: 0.5; }
                     }
                 `}</style>
-                    <div className="relative z-10 text-center space-y-8">
+                    <div className="relative z-10 text-center space-y-6 flex-1 flex flex-col items-center justify-center">
                         <div className="w-32 h-32 mx-auto rounded-full bg-red-800/50 flex items-center justify-center border-4 border-red-600/50 shadow-2xl shadow-red-900/50">
-                            <Skull className="w-16 h-16 text-red-400" />
+                            {isActiveGhost ? (
+                                <GiGhost className="w-16 h-16 text-purple-300" />
+                            ) : (
+                                <Skull className="w-16 h-16 text-red-400" />
+                            )}
                         </div>
                         <div className="space-y-3">
-                            <h1 className="text-5xl font-black tracking-tight text-red-200">{t('dead.title')}</h1>
-                            <p className="text-2xl text-red-100 font-bold mt-6">{t('dead.crouchDown')}</p>
-                            <p className="text-lg text-red-300/70">{t('dead.waitForEnd')}</p>
+                            <h1 className="text-5xl font-black tracking-tight text-red-200">
+                                {isActiveGhost ? t('ghost.title') : t('dead.title')}
+                            </h1>
+                            {!isActiveGhost && (
+                                <>
+                                    <p className="text-2xl text-red-100 font-bold mt-6">{t('dead.crouchDown')}</p>
+                                    <p className="text-lg text-red-300/70">{t('dead.waitForEnd')}</p>
+                                </>
+                            )}
+                            {isActiveGhost && (
+                                <p className="text-lg text-purple-300/80">{t('ghost.canHaunt')}</p>
+                            )}
                         </div>
-                        <div className="pt-8 space-y-4">
+                        <div className="pt-4 space-y-4">
                             <div className="text-sm text-red-400/50 uppercase tracking-widest">{t('dead.currentPhase')}</div>
                             <div className="text-2xl font-bold text-red-300">{t(`phases.${phase}`)}</div>
                             {timeLeft > 0 && (
@@ -1271,8 +1325,131 @@ export default function JokerRoom() {
                                 </div>
                             )}
                         </div>
+                    </div>
+
+                    {/* Ghost Interaction Area */}
+                    {isActiveGhost && (
+                        <div className="relative z-10 w-full max-w-lg mx-auto space-y-4 pb-4">
+                            {/* Green Light: Location Selection Carousel */}
+                            {phase === "green_light" && (
+                                <div className="bg-purple-900/30 rounded-xl p-4 border border-purple-500/20">
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <GiGhost className="w-5 h-5 text-purple-300" />
+                                        <span className="text-sm text-purple-200">{t('ghost.selectLocation')}</span>
+                                    </div>
+                                    <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+                                        {(jokerSnapshot?.activeLocations ?? []).map((loc) => {
+                                            const LocationIcon = LOCATION_ICONS[loc];
+                                            return (
+                                                <button
+                                                    key={loc}
+                                                    onClick={() => handleGhostSelectLocation(loc)}
+                                                    className={`flex-shrink-0 px-4 py-3 rounded-lg transition-all ${me.ghostTargetLocation === loc
+                                                        ? 'bg-purple-600 text-white border-2 border-purple-400'
+                                                        : 'bg-black/30 text-purple-200 border border-purple-500/30 hover:bg-purple-800/40'
+                                                        }`}
+                                                >
+                                                    <LocationIcon className="w-4 h-4 inline" />
+                                                    <span className="ml-2 text-sm font-medium">{t(`locations.${LOCATION_KEY_MAP[loc]}`)}</span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                    {me.ghostTargetLocation && (
+                                        <div className="text-sm text-purple-300 mt-2">
+                                            {t('ghost.selectedLocation')}: {t(`locations.${me.ghostTargetLocation}`)}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Yellow Light: Show destination */}
+                            {phase === "yellow_light" && me.ghostAssignedLocation && (
+                                <div className="bg-yellow-900/30 rounded-xl p-4 border border-yellow-500/20">
+                                    <div className="flex items-center gap-2">
+                                        <GiGhost className="w-5 h-5 text-yellow-300" />
+                                        <span className="text-sm text-yellow-200">{t('ghost.goingTo')}</span>
+                                        <span className="font-bold text-yellow-100">{t(`locations.${me.ghostAssignedLocation}`)}</span>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Red Light: Haunt Target Carousel */}
+                            {phase === "red_light" && me.ghostAssignedLocation && (
+                                <div className="bg-red-900/30 rounded-xl p-4 border border-red-500/20">
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <GiGhost className="w-5 h-5 text-red-300" />
+                                        <span className="text-sm text-red-200">
+                                            {t('ghost.atLocation')}: {t(`locations.${LOCATION_KEY_MAP[me.ghostAssignedLocation]}`)}
+                                        </span>
+                                    </div>
+
+                                    {/* Hauntable Players */}
+                                    {hauntablePlayers.length > 0 ? (
+                                        <div className="space-y-3">
+                                            <div className="text-xs text-red-400 uppercase tracking-wider">{t('ghost.availableTargets')}</div>
+                                            <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+                                                {hauntablePlayers.map((player) => (
+                                                    <button
+                                                        key={player.sessionId}
+                                                        onClick={() => player.sessionId && handleGhostHaunt(player.sessionId)}
+                                                        disabled={!!me.hauntingTarget}
+                                                        className={`flex-shrink-0 flex items-center px-4 py-3 rounded-lg transition-all ${me.hauntingTarget === player.sessionId
+                                                            ? 'bg-red-600 text-white border-2 border-red-400'
+                                                            : me.hauntingTarget
+                                                                ? 'bg-gray-800/50 text-gray-500 border border-gray-600/30 cursor-not-allowed'
+                                                                : 'bg-black/30 text-red-200 border border-red-500/30 hover:bg-red-800/40'
+                                                            }`}
+                                                    >
+                                                        <div className="mr-2">
+                                                            <Avvvatars value={String(player.seat)} size={24} />
+                                                        </div>
+                                                        <span className="text-sm font-medium">{player.name}</span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="text-sm text-red-400/70">{t('ghost.noTargets')}</div>
+                                    )}
+
+                                    {/* Current haunting status */}
+                                    {me.hauntingTarget && (
+                                        <div className="mt-3 p-3 bg-red-800/40 rounded-lg border border-red-500/40">
+                                            <div className="flex items-center gap-2 text-red-200">
+                                                <GiGhost className="w-4 h-4 animate-pulse" />
+                                                <span>{t('ghost.haunting')}: </span>
+                                                <div className="flex items-center gap-2 font-bold">
+                                                    {(() => {
+                                                        const target = jokerPlayers.find(p => p.sessionId === me.hauntingTarget);
+                                                        return target ? (
+                                                            <>
+                                                                <Avvvatars value={String(target.seat)} size={20} />
+                                                                <span>{target.name}</span>
+                                                            </>
+                                                        ) : null;
+                                                    })()}
+                                                </div>
+                                            </div>
+                                            <div className="text-xs text-red-400/70 mt-1">{t('ghost.hauntingEffect')}</div>
+                                        </div>
+                                    )}
+
+                                    {/* Other ghosts at same location */}
+                                    {ghostsAtSameLocation.length > 0 && (
+                                        <div className="mt-3 text-sm text-red-300/70">
+                                            {t('ghost.otherGhosts')}: {ghostsAtSameLocation.map(g => g.name).join(', ')}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Host controls and Leave button */}
+                    <div className="relative z-10 w-full max-w-sm mx-auto space-y-3">
                         {isHost && (
-                            <div className="w-full max-w-sm mx-auto space-y-3 pt-4">
+                            <div className="space-y-3 pt-4">
                                 <div className="text-xs text-red-200/70 uppercase tracking-widest text-center">{t('host.controls')}</div>
                                 <Button
                                     onClick={handleTogglePause}
@@ -1319,7 +1496,7 @@ export default function JokerRoom() {
                         <Button
                             variant="ghost"
                             onClick={leaveRoom}
-                            className="mt-12 text-red-400 hover:text-red-300 hover:bg-red-900/30"
+                            className="w-full mt-4 text-red-400 hover:text-red-300 hover:bg-red-900/30"
                         >
                             <LogOut className="w-4 h-4 mr-2" />
                             {t('pause.leaveRoom')}
@@ -1465,7 +1642,7 @@ export default function JokerRoom() {
 
                 {/* Header / Nav */}
                 <header className="p-4 flex items-center shrink-0">
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 sm:gap-3">
                         <div className="h-10 px-3 bg-white/5 rounded-xl flex items-center justify-center border border-white/10 backdrop-blur-sm">
                             <span className="font-mono font-bold tracking-widest text-white">{roomCode}</span>
                         </div>
@@ -1480,8 +1657,8 @@ export default function JokerRoom() {
                                     onClick={handleTogglePause}
                                     className="h-8 px-2 text-white/70 hover:text-white hover:bg-white/10"
                                 >
-                                    {isPaused ? <PlayIcon className="w-4 h-4 mr-1" /> : <Pause className="w-4 h-4 mr-1" />}
-                                    {isPaused ? t('game.continue') : t('game.pause')}
+                                    {isPaused ? <PlayIcon className="w-4 h-4 sm:mr-1" /> : <Pause className="w-4 h-4 sm:mr-1" />}
+                                    <span className="hidden sm:inline">{isPaused ? t('game.continue') : t('game.pause')}</span>
                                 </Button>
                             </>
                         )}
@@ -1491,8 +1668,8 @@ export default function JokerRoom() {
                             onClick={() => setShowRules(true)}
                             className="h-8 px-2 text-white/70 hover:text-white hover:bg-white/10"
                         >
-                            <BookOpen className="w-4 h-4 mr-1" />
-                            {t('game.rules')}
+                            <BookOpen className="w-4 h-4 sm:mr-1" />
+                            <span className="hidden sm:inline">{t('game.rules')}</span>
                         </Button>
                     </div>
                     <div className="flex-1" />
@@ -1538,7 +1715,7 @@ export default function JokerRoom() {
                                             <div className="text-xs text-white/50 mt-0.5">
                                                 {me.location && (
                                                     <span className="flex items-center gap-1">
-                                                        <MapPin className="w-3 h-3" />{me.location}
+                                                        <MapPin className="w-3 h-3" />{t(`locations.${LOCATION_KEY_MAP[me.location]}`)}
                                                     </span>
                                                 )}
                                             </div>
@@ -1667,10 +1844,13 @@ export default function JokerRoom() {
                                     animate="visible"
                                     className="flex flex-col items-center justify-center py-10 space-y-8"
                                 >
-                                    <div className={`w-32 h-32 rounded-full flex items-center justify-center border-4 shadow-2xl ${ROLE_REVEAL_STYLES[myRole].ring}`}>
-                                        <span className="text-6xl">
-                                            {ROLE_REVEAL_STYLES[myRole].emoji}
-                                        </span>
+                                    <div className="flex justify-center mb-8">
+                                        <div className={`w-32 h-32 rounded-full border-4 flex items-center justify-center text-7xl shadow-[0_0_50px_rgba(0,0,0,0.5)] ${ROLE_REVEAL_STYLES[myRole].ring}`}>
+                                            {(() => {
+                                                const Icon = ROLE_REVEAL_STYLES[myRole].icon;
+                                                return <Icon className="w-20 h-20" />;
+                                            })()}
+                                        </div>
                                     </div>
                                     <div className="text-center space-y-3">
                                         <h2 className="text-4xl font-black tracking-tight">
@@ -1728,7 +1908,7 @@ export default function JokerRoom() {
                                                         }`}
                                                 >
                                                     <LocationIcon className={`w-6 h-6 ${me?.targetLocation === loc ? "text-green-400" : "text-white/70"}`} />
-                                                    <span className="font-bold text-lg">{loc}</span>
+                                                    <span className="font-bold text-lg">{t(`locations.${LOCATION_KEY_MAP[loc]}`)}</span>
                                                 </button>
                                             );
                                         })}
@@ -2155,7 +2335,7 @@ export default function JokerRoom() {
                                     {me?.location && (
                                         <div className="space-y-3">
                                             <p className="text-xs font-medium text-white/40 uppercase tracking-widest pl-2">
-                                                {t('game.nearbyPlayers')} - {me.location}
+                                                {t('game.nearbyPlayers')} - {t(`locations.${LOCATION_KEY_MAP[me.location]}`)}
                                             </p>
                                             <div className="grid grid-cols-1 gap-2">
                                                 {jokerPlayers
@@ -2433,7 +2613,7 @@ export default function JokerRoom() {
                                                 {t(`roles.${jokerSnapshot.gameResult.winner}`)}{t('gameOver.wins')}
                                             </h1>
                                         </motion.div>
-                                        <p className="text-white/60 text-lg">{jokerSnapshot.gameResult.reason}</p>
+                                        <p className="text-white/60 text-lg">{t(`gameOver.reason.${jokerSnapshot.gameResult.reason}`)}</p>
                                     </div>
 
                                     <Card className="bg-black/20 backdrop-blur-xl border-white/10 text-left">

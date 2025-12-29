@@ -76,6 +76,12 @@ export interface JokerPlayerState {
     // Voting
     hasVoted: boolean;
     voteTarget: string | null; // sessionId of target, or "skip"
+
+    // Ghost fields (only used when isAlive === false AND death is revealed)
+    ghostTargetLocation: JokerLocation | null;   // 绿灯选择的目标场所
+    ghostAssignedLocation: JokerLocation | null; // 黄灯后确定的场所
+    hauntingTarget: string | null;               // 作祟目标 sessionId
+    lastHauntTickAt: number | null;              // 上次作祟扣氧时间戳
 }
 
 export interface JokerVoteEntry {
@@ -281,6 +287,16 @@ export interface SubmitVotePayload {
 
 export interface ReportPayload {
     reporterSeat: number;
+}
+
+export interface GhostSelectLocationPayload {
+    seat: number;
+    location: JokerLocation;
+}
+
+export interface GhostHauntPayload {
+    seat: number;
+    targetSessionId: string;
 }
 
 // Result types

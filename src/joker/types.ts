@@ -72,6 +72,12 @@ export interface JokerPlayerState {
 
     hasVoted: boolean;
     voteTarget: string | null;
+
+    // Ghost fields (only used when isAlive === false AND death is revealed)
+    ghostTargetLocation: JokerLocation | null;
+    ghostAssignedLocation: JokerLocation | null;
+    hauntingTarget: string | null;
+    lastHauntTickAt: number | null;
 }
 
 export interface JokerVoteEntry {
