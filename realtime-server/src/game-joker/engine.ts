@@ -44,6 +44,33 @@ export const PHASE_DURATIONS = {
     execution: 10_000,
 };
 
+// ============ Life Code Refresh Timing ============
+
+const LIFE_CODE_MARGIN_MS = 5000; // 头尾各留 5 秒
+const LIFE_CODE_DRIFT_RANGE = 10;
+
+/** 计算刷新时刻范围（基于红灯时长动态计算） */
+function getLifeCodeRefreshRange(): { min: number; max: number } {
+    const redLightMs = PHASE_DURATIONS.red_light;
+    const minSecond = Math.ceil(LIFE_CODE_MARGIN_MS / 1000);
+    const maxSecond = Math.floor((redLightMs - LIFE_CODE_MARGIN_MS) / 1000);
+    return { min: minSecond, max: maxSecond };
+}
+
+/** 计算下一轮的生命代码刷新时刻（红灯开始后的秒数） */
+export function computeNextLifeCodeRefreshSecond(prevSecond: number): number {
+    const { min, max } = getLifeCodeRefreshRange();
+    const drift = Math.floor(Math.random() * (LIFE_CODE_DRIFT_RANGE * 2 + 1)) - LIFE_CODE_DRIFT_RANGE;
+    let next = prevSecond + drift;
+    return Math.max(min, Math.min(max, next));
+}
+
+/** 生成首轮随机刷新时刻 */
+export function computeFirstLifeCodeRefreshSecond(): number {
+    const { min, max } = getLifeCodeRefreshRange();
+    return min + Math.floor(Math.random() * (max - min + 1));
+}
+
 // ============ Oxygen State Helpers ============
 
 function createOxygenState(baseOxygen: number, drainRate: number, timestamp?: number): JokerOxygenState {
@@ -127,7 +154,6 @@ function createEmptyPlayer(seat: number): JokerPlayerState {
         ghostTargetLocation: null,
         ghostAssignedLocation: null,
         hauntingTarget: null,
-        lastHauntTickAt: null,
     };
 }
 
@@ -145,6 +171,7 @@ function createEmptyRoundState(): JokerRoundState {
         roundCount: 0,
         phaseStartAt: Date.now(),
         redLightHalf: "first",
+        lifeCodeRefreshSecond: computeFirstLifeCodeRefreshSecond(),
         oxygenGivenThisRound: {},
         goldenRabbitTriggeredLocations: [],
         arrivedBySession: {},
@@ -518,8 +545,40 @@ export function submitLifeCodeAction(
         return { ok: false, error: "Invalid actor" };
     }
 
-    // Determine if old codes are valid (first 30s of red light)
     const now = Date.now();
+
+    // CRITICAL: Goose or dodo trying to kill = immediate foul death, regardless of code validity
+    if (payload.action === "kill" && (actor.role === "goose" || actor.role === "dodo")) {
+        actor.isAlive = false;
+
+        // Create death record for foul
+        snapshot.deaths.push({
+            sessionId: actor.sessionId!,
+            seat: actor.seat,
+            name: actor.name,
+            role: actor.role,
+            reason: "foul",
+            location: actor.location ?? undefined,
+            round: snapshot.roundCount,
+            at: now,
+            revealed: false,
+        });
+
+        snapshot.logs.push({
+            at: now,
+            text: `Player ${actor.name} died`,
+            type: "death",
+        });
+        snapshot.updatedAt = now;
+
+        return {
+            ok: false,
+            error: "foul_death",
+            message: "犯规死亡",
+        };
+    }
+
+    // Determine if old codes are valid (first 30s of red light)
     const phaseElapsed = now - snapshot.round.phaseStartAt;
     const includeOldCodes = phaseElapsed < 30_000;
 
@@ -553,36 +612,8 @@ function handleKillAction(
 ): ActionResult {
     const now = Date.now();
 
-    // Goose or dodo trying to kill = foul
-    if (actor.role === "goose" || actor.role === "dodo") {
-        actor.isAlive = false;
-
-        // Create death record for foul
-        snapshot.deaths.push({
-            sessionId: actor.sessionId!,
-            seat: actor.seat,
-            name: actor.name,
-            role: actor.role,
-            reason: "foul",
-            location: actor.location ?? undefined,
-            round: snapshot.roundCount,
-            at: now,
-            revealed: false,
-        });
-
-        snapshot.logs.push({
-            at: now,
-            text: `Player ${actor.name} died`,
-            type: "death",
-        });
-        snapshot.updatedAt = now;
-
-        return {
-            ok: false,
-            error: "foul_death",
-            message: "犯规死亡",
-        };
-    }
+    // Note: Goose/dodo foul death is now handled earlier in submitLifeCodeAction
+    // This function is only called for duck/hawk with valid target
 
     // Duck or hawk kills target (no location check, no same-round check per rules)
     target.isAlive = false;
@@ -681,7 +712,8 @@ function applyOxygenWithoutLeakFix(target: JokerPlayerState, amount: number): vo
 
 export function useMonitoringPeek(
     snapshot: JokerSnapshot,
-    sessionId: string
+    sessionId: string,
+    targetLocation?: JokerLocation
 ): ActionResult {
     if (snapshot.phase !== "red_light") {
         return { ok: false, error: "Location effects only available during red light" };
@@ -705,20 +737,27 @@ export function useMonitoringPeek(
         return { ok: false, error: "Monitoring already used this round" };
     }
 
+    // Validate target location if provided
+    if (!targetLocation) {
+        return { ok: false, error: "No target location specified" };
+    }
+
     const actorCamp = getCamp(actor.role);
     if (!actorCamp) {
         return { ok: false, error: "Invalid player" };
     }
 
+    // Filter candidates by target location and different camp
     const candidates = snapshot.players.filter(p => {
         if (!p.isAlive || !p.sessionId) return false;
         if (p.sessionId === sessionId) return false;
+        if (p.location !== targetLocation) return false;
         const camp = getCamp(p.role);
         return camp !== null && camp !== actorCamp;
     });
 
     if (candidates.length === 0) {
-        return { ok: false, error: "No eligible target" };
+        return { ok: false, error: "No eligible target at location" };
     }
 
     const target = candidates[Math.floor(Math.random() * candidates.length)];
@@ -1877,6 +1916,10 @@ export function transitionToRedLight(snapshot: JokerSnapshot): void {
     snapshot.phase = "red_light";
     snapshot.round.phaseStartAt = Date.now();
     snapshot.round.redLightHalf = "first";
+    snapshot.round.lifeCodeRefreshSecond = computeNextLifeCodeRefreshSecond(
+        snapshot.round.lifeCodeRefreshSecond
+    );
+    console.log(`[LifeCode] Round ${snapshot.roundCount}: scheduled at ${snapshot.round.lifeCodeRefreshSecond}s`);
 
     // 记录当前回合每个场所的玩家座位号
     const roundLocations: Record<string, number[]> = {};
@@ -1951,7 +1994,6 @@ export function resetToLobby(snapshot: JokerSnapshot): void {
         player.ghostTargetLocation = null;
         player.ghostAssignedLocation = null;
         player.hauntingTarget = null;
-        player.lastHauntTickAt = null;
     }
 
     snapshot.updatedAt = Date.now();
@@ -1960,7 +2002,6 @@ export function resetToLobby(snapshot: JokerSnapshot): void {
 // ============ Ghost System ============
 
 const MAX_GHOSTS_PER_TARGET = 3;
-const HAUNT_TICK_INTERVAL_MS = 10_000;
 const HAUNT_OXYGEN_DEDUCT = 3;
 
 /** 判断玩家是否为可作祟的幽灵（死亡且已公开） */
@@ -2081,29 +2122,30 @@ export function ghostHaunt(
         return { ok: false, error: "Target already has maximum ghosts" };
     }
 
-    const now = Date.now();
     ghost.hauntingTarget = payload.targetSessionId;
-    ghost.lastHauntTickAt = now;
-    snapshot.updatedAt = now;
+    snapshot.updatedAt = Date.now();
 
     return { ok: true };
 }
 
-/** 处理作祟 tick - 每秒调用，满10秒则扣氧 */
-export function processHauntingTick(snapshot: JokerSnapshot): string[] {
+/** 处理作祟 tick - 倒计时整10秒时扣氧（60s, 50s, 40s, 30s, 20s, 10s, 0s） */
+export function processHauntingTick(snapshot: JokerSnapshot, deadline?: number): string[] {
     if (snapshot.phase !== "red_light") return [];
+    if (!deadline) return [];
 
     const now = Date.now();
-    const hauntedPlayers: Map<string, number> = new Map(); // sessionId -> ghost count
+    const remainingMs = deadline - now;
+    const remainingSec = Math.ceil(remainingMs / 1000);
+
+    // 只在倒计时整10秒时扣氧
+    if (remainingSec < 0 || remainingSec % 10 !== 0) return [];
 
     // 统计每个被作祟玩家的幽灵数量
+    const hauntedPlayers: Map<string, number> = new Map(); // sessionId -> ghost count
     for (const ghost of snapshot.players) {
-        if (!ghost.isAlive && ghost.hauntingTarget && ghost.lastHauntTickAt) {
-            // 检查是否满10秒
-            if (now - ghost.lastHauntTickAt >= HAUNT_TICK_INTERVAL_MS) {
-                const count = hauntedPlayers.get(ghost.hauntingTarget) || 0;
-                hauntedPlayers.set(ghost.hauntingTarget, count + 1);
-            }
+        if (!ghost.isAlive && ghost.hauntingTarget) {
+            const count = hauntedPlayers.get(ghost.hauntingTarget) || 0;
+            hauntedPlayers.set(ghost.hauntingTarget, count + 1);
         }
     }
 
@@ -2119,13 +2161,6 @@ export function processHauntingTick(snapshot: JokerSnapshot): string[] {
         const amount = effectiveCount * HAUNT_OXYGEN_DEDUCT;
         deductOxygen(target, amount);
         deductedPlayers.push(targetSessionId);
-
-        // 更新所有作祟该目标的幽灵的 lastHauntTickAt
-        for (const ghost of snapshot.players) {
-            if (!ghost.isAlive && ghost.hauntingTarget === targetSessionId) {
-                ghost.lastHauntTickAt = now;
-            }
-        }
     }
 
     if (deductedPlayers.length > 0) {
@@ -2140,7 +2175,6 @@ export function clearAllHauntings(snapshot: JokerSnapshot): void {
     for (const player of snapshot.players) {
         if (!player.isAlive) {
             player.hauntingTarget = null;
-            player.lastHauntTickAt = null;
         }
     }
     snapshot.updatedAt = Date.now();

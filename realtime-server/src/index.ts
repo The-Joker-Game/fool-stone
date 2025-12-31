@@ -1121,7 +1121,7 @@ io.on("connection", (socket: Socket) => {
             break;
 
           case "joker:location_monitor":
-            res = jokerUseMonitoringPeek(jokerSnapshot, socket.data.sessionId);
+            res = jokerUseMonitoringPeek(jokerSnapshot, socket.data.sessionId, data?.targetLocation);
             shouldBroadcast = res.ok;
             break;
 

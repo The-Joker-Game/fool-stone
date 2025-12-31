@@ -248,7 +248,6 @@ function createEmptyPlayer(seat: number): JokerPlayerState {
         ghostTargetLocation: null,
         ghostAssignedLocation: null,
         hauntingTarget: null,
-        lastHauntTickAt: null,
     };
 }
 

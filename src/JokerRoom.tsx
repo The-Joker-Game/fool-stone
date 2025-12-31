@@ -77,9 +77,6 @@ function randName() {
     return `Player-${a}${b}`;
 }
 
-const LIFE_CODE_REFRESH_MS = 70_000;
-const LIFE_CODE_WARNING_MS = 5_000;
-
 const ROLE_REVEAL_STYLES: Record<JokerRole, { ring: string; text: string; icon: React.ElementType }> = {
     duck: {
         ring: "bg-orange-500/20 border-orange-500/50 shadow-orange-500/30",
@@ -338,12 +335,12 @@ export default function JokerRoom() {
     const [goldenRabbitResultFlash, setGoldenRabbitResultFlash] = useState<null | { result: "success" | "fail"; until: number; rabbitIndex?: number }>(null);
     const [sharedTaskResultFlash, setSharedTaskResultFlash] = useState<null | { result: "success" | "fail"; until: number }>(null);
     const [monitorPeek, setMonitorPeek] = useState<null | { code: string; until: number }>(null);
-    const [lifeCodeNextRefreshAt, setLifeCodeNextRefreshAt] = useState<number | null>(null);
-    const [lifeCodeRefreshCountdown, setLifeCodeRefreshCountdown] = useState(0);
+    const [lifeCodeWarningCountdown, setLifeCodeWarningCountdown] = useState(0);
     const [showMedicalDialog, setShowMedicalDialog] = useState(false);
+    const [showMonitorLocationDialog, setShowMonitorLocationDialog] = useState(false);
     const [showReview, setShowReview] = useState(false);
     const [suppressPauseDialog, setSuppressPauseDialog] = useState(false);
-    const [pendingLocationEffect, setPendingLocationEffect] = useState<null | { location: JokerLocation; targetSessionId?: string }>(null);
+    const [pendingLocationEffect, setPendingLocationEffect] = useState<null | { location: JokerLocation; targetSessionId?: string; monitorTargetLocation?: JokerLocation }>(null);
 
     // Mini-game state
     const [showMiniGame, setShowMiniGame] = useState(false);
@@ -568,10 +565,18 @@ export default function JokerRoom() {
             }
         });
 
+        // Subscribe to life code warning action
+        const offAction = rt.subscribeAction(msg => {
+            if (msg.action === "joker:life_code_warning") {
+                setLifeCodeWarningCountdown(5);
+            }
+        });
+
         return () => {
             offConn?.();
             offPresence?.();
             offState?.();
+            offAction?.();
         };
     }, [ensureSnapshotFromPresence, setJokerSnapshot]);
 
@@ -917,6 +922,8 @@ export default function JokerRoom() {
             "Not in warehouse": t('error.notInWarehouse'),
             "Not alone in location": t('error.notAlone'),
             "No eligible target": t('error.noTarget'),
+            "No eligible target at location": t('error.noTargetAtLocation'),
+            "No target location specified": t('error.noTargetAtLocation'),
             "Already gave oxygen to this player this round": t('error.alreadyGaveOxygen'),
             "Invalid target": t('error.invalidTarget'),
             "Warehouse already used this round": t('error.warehouseUsed'),
@@ -929,16 +936,26 @@ export default function JokerRoom() {
         return map[err] ?? t('error.operationFailed');
     }, [t]);
 
-    const startLocationEffectTask = useCallback((location: JokerLocation, targetSessionId?: string) => {
+    const startLocationEffectTask = useCallback((location: JokerLocation, targetSessionId?: string, monitorTargetLocation?: JokerLocation) => {
         if (!roomCode || showMiniGame) return;
-        setPendingLocationEffect({ location, targetSessionId });
+        setPendingLocationEffect({ location, targetSessionId, monitorTargetLocation });
         setCurrentGameType(getRandomGame());
         setShowMiniGame(true);
     }, [roomCode, showMiniGame]);
 
     const handleMonitorPeek = useCallback(() => {
         if (isInteractionDisabled) return;
-        startLocationEffectTask("监控室");
+        if (monitorUsed) {
+            alert(t('error.monitorUsed'));
+            return;
+        }
+        setShowMonitorLocationDialog(true);
+    }, [isInteractionDisabled, monitorUsed, t]);
+
+    const handleMonitorLocationSelect = useCallback((targetLocation: JokerLocation) => {
+        if (isInteractionDisabled) return;
+        setShowMonitorLocationDialog(false);
+        startLocationEffectTask("监控室", undefined, targetLocation);
     }, [isInteractionDisabled, startLocationEffectTask]);
 
     const handlePowerBoost = useCallback(() => {
@@ -988,11 +1005,15 @@ export default function JokerRoom() {
         toast.error(t('toast.locationEffectFailed'));
     }, [roomCode, locationEffectErrorMessage, t]);
 
-    const handleLocationEffectSuccess = useCallback(async (effect: { location: JokerLocation; targetSessionId?: string }) => {
+    const handleLocationEffectSuccess = useCallback(async (effect: { location: JokerLocation; targetSessionId?: string; monitorTargetLocation?: JokerLocation }) => {
         if (!roomCode) return;
         let resp: any = null;
         if (effect.location === "监控室") {
-            resp = await rt.emitAck("intent", { room: roomCode, action: "joker:location_monitor" });
+            resp = await rt.emitAck("intent", {
+                room: roomCode,
+                action: "joker:location_monitor",
+                data: { targetLocation: effect.monitorTargetLocation },
+            });
         } else if (effect.location === "发电室") {
             resp = await rt.emitAck("intent", { room: roomCode, action: "joker:location_power" });
         } else if (effect.location === "厨房") {
@@ -1095,35 +1116,22 @@ export default function JokerRoom() {
     }, [me?.oxygenLeakResolvedAt]);
 
     useEffect(() => {
+        // Reset warning countdown when life codes are refreshed
         if (!jokerSnapshot?.lifeCodes) return;
         const version = jokerSnapshot.lifeCodes.version;
         if (lastLifeCodeVersionRef.current === version) return;
         lastLifeCodeVersionRef.current = version;
-        const baseTime = jokerSnapshot.lifeCodes.lastUpdatedAt || Date.now();
-        setLifeCodeNextRefreshAt(baseTime + LIFE_CODE_REFRESH_MS);
-    }, [jokerSnapshot?.lifeCodes?.version, jokerSnapshot?.lifeCodes?.lastUpdatedAt]);
+        setLifeCodeWarningCountdown(0);
+    }, [jokerSnapshot?.lifeCodes?.version]);
 
+    // Life code warning countdown timer
     useEffect(() => {
-        if (!lifeCodeNextRefreshAt) {
-            setLifeCodeRefreshCountdown(0);
-            return;
-        }
-        const tick = () => {
-            const remainingMs = lifeCodeNextRefreshAt - Date.now();
-            if (remainingMs <= 0) {
-                setLifeCodeRefreshCountdown(0);
-                return;
-            }
-            if (remainingMs <= LIFE_CODE_WARNING_MS) {
-                setLifeCodeRefreshCountdown(Math.ceil(remainingMs / 1000));
-                return;
-            }
-            setLifeCodeRefreshCountdown(0);
-        };
-        tick();
-        const interval = setInterval(tick, 200);
-        return () => clearInterval(interval);
-    }, [lifeCodeNextRefreshAt]);
+        if (lifeCodeWarningCountdown <= 0) return;
+        const timer = setTimeout(() => {
+            setLifeCodeWarningCountdown(prev => Math.max(0, prev - 1));
+        }, 1000);
+        return () => clearTimeout(timer);
+    }, [lifeCodeWarningCountdown]);
 
     useEffect(() => {
         if (!goldenRabbitResultFlash) return;
@@ -1369,7 +1377,7 @@ export default function JokerRoom() {
                                     <div className="flex items-center gap-2">
                                         <GiGhost className="w-5 h-5 text-yellow-300" />
                                         <span className="text-sm text-yellow-200">{t('ghost.goingTo')}</span>
-                                        <span className="font-bold text-yellow-100">{t(`locations.${me.ghostAssignedLocation}`)}</span>
+                                        <span className="font-bold text-yellow-100">{t(`locations.${LOCATION_KEY_MAP[me.ghostAssignedLocation]}`)}</span>
                                     </div>
                                 </div>
                             )}
@@ -1560,7 +1568,7 @@ export default function JokerRoom() {
                         <div className="text-xl font-black tracking-wide text-white">{t('rules.title')}</div>
                         <ScrollArea className="mt-3 max-h-[70vh] pr-2">
                             <div className="text-sm text-white/70 leading-relaxed whitespace-pre-line">
-                                【{t('rules.version')}】{rulesVersion}
+                                {i18n.language.startsWith('zh') ? '【' : '['}{t('rules.version')}{i18n.language.startsWith('zh') ? '】' : ']'}{rulesVersion}
                                 {"\n"}
                                 {t('rules.content')}
                             </div>
@@ -1697,7 +1705,7 @@ export default function JokerRoom() {
                     {/* Sticky Status Card - stays visible */}
                     {phase !== "lobby" && me && (
                         <div className="sticky top-0 z-20 pb-4 -mx-4 px-4 pt-2">
-                            <Card className="bg-black/10 backdrop-blur-[2px] border-white/10 overflow-hidden relative">
+                            <Card className="bg-black/10 backdrop-blur-sm border-white/10 overflow-hidden relative">
                                 <CardContent className="p-4 flex items-center justify-between">
                                     <div className="flex items-center gap-4">
                                         <div className="relative">
@@ -1810,9 +1818,15 @@ export default function JokerRoom() {
                                                 </div>
                                             ))}
                                         </CardContent>
+                                    </Card>
+                                </div>
+                            )}
 
-                                        {/* Action Bar */}
-                                        <div className="p-4 border-t border-white/10 flex gap-3 sticky bottom-0 bg-black/20 backdrop-blur-xl rounded-b-xl z-20">
+                            {/* Lobby Action Bar - Fixed at bottom */}
+                            {phase === "lobby" && (
+                                <div className="fixed bottom-0 left-0 right-0 z-30">
+                                    <div className="max-w-md mx-auto px-4 pb-4">
+                                        <div className="p-4 border border-white/10 flex gap-3 bg-black/80 backdrop-blur-xl rounded-2xl shadow-2xl">
                                             <Button
                                                 onClick={toggleReady}
                                                 className={`flex-1 h-12 text-lg font-medium transition-all ${users.find(u => u.sessionId === getSessionId())?.ready
@@ -1832,7 +1846,7 @@ export default function JokerRoom() {
                                                 </Button>
                                             )}
                                         </div>
-                                    </Card>
+                                    </div>
                                 </div>
                             )}
 
@@ -1932,7 +1946,7 @@ export default function JokerRoom() {
                                     </div>
                                     <div className="text-center space-y-2">
                                         <p className="text-white/50 uppercase tracking-widest text-sm">{t('yellow.destinationAssigned')}</p>
-                                        <h2 className="text-5xl font-black text-white drop-shadow-lg">{me?.location ?? "..."}</h2>
+                                        <h2 className="text-5xl font-black text-white drop-shadow-lg">{me?.location ? t(`locations.${LOCATION_KEY_MAP[me.location]}`) : "..."}</h2>
                                     </div>
                                     <Card className="w-full max-w-sm bg-black/20 backdrop-blur-xl border-white/10 text-left">
                                         <CardHeader className="pb-2">
@@ -1981,16 +1995,16 @@ export default function JokerRoom() {
                             {/* Red Light: Actions */}
                             {phase === "red_light" && myAlive && (
                                 <motion.div variants={cardVariants} className="space-y-6">
-                                    <Card className="bg-black/10 backdrop-blur-[2px] border-white/10 shadow-2xl">
+                                    <Card className="bg-black/10 backdrop-blur-sm border-white/10 shadow-2xl">
                                         <CardContent className="p-6 space-y-6">
                                             <div className="space-y-4">
                                                 <label className="text-center flex items-center justify-center gap-2 text-xs font-bold text-white/40 uppercase tracking-widest">
                                                     <Target className="w-4 h-4" />
                                                     {t('game.targetLifeCode')}
                                                 </label>
-                                                {phase === "red_light" && myAlive && lifeCodeRefreshCountdown > 0 && !isPaused && (
+                                                {phase === "red_light" && myAlive && lifeCodeWarningCountdown > 0 && !isPaused && (
                                                     <div className="text-center text-xs font-semibold text-amber-200/90 bg-amber-500/10 border border-amber-500/20 rounded-full py-1">
-                                                        {t('game.lifeCodeRefresh')} {lifeCodeRefreshCountdown}s
+                                                        {t('game.lifeCodeRefresh')} {lifeCodeWarningCountdown}s
                                                     </div>
                                                 )}
                                                 <div className="flex justify-center">
@@ -2721,6 +2735,36 @@ export default function JokerRoom() {
                         {medicalTargets.length === 0 && (
                             <div className="text-center text-sm text-white/50">{t('medical.noTargets')}</div>
                         )}
+                    </div>
+                </DialogContent>
+            </Dialog>
+            {/* Monitor Location Selection Dialog */}
+            <Dialog open={showMonitorLocationDialog} onOpenChange={setShowMonitorLocationDialog}>
+                <DialogContent className="bg-slate-950/95 text-white border-white/10">
+                    <DialogHeader>
+                        <DialogTitle>{t('locationEffect.monitor')}</DialogTitle>
+                        <DialogDescription className="text-white/60">
+                            {t('monitor.selectLocation')}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-2">
+                        {(jokerSnapshot?.activeLocations ?? []).filter(loc => loc !== '监控室').map(loc => {
+                            const LocationIcon = LOCATION_ICONS[loc];
+                            return (
+                                <Button
+                                    key={loc}
+                                    onClick={() => handleMonitorLocationSelect(loc)}
+                                    className="justify-between bg-white/5 border border-white/10 hover:bg-white/10"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <LocationIcon className="w-5 h-5" />
+                                        <span className="font-medium text-white">
+                                            {t(`locations.${LOCATION_KEY_MAP[loc]}`)}
+                                        </span>
+                                    </div>
+                                </Button>
+                            );
+                        })}
                     </div>
                 </DialogContent>
             </Dialog>

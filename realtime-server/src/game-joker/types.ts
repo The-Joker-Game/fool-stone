@@ -81,7 +81,6 @@ export interface JokerPlayerState {
     ghostTargetLocation: JokerLocation | null;   // 绿灯选择的目标场所
     ghostAssignedLocation: JokerLocation | null; // 黄灯后确定的场所
     hauntingTarget: string | null;               // 作祟目标 sessionId
-    lastHauntTickAt: number | null;              // 上次作祟扣氧时间戳
 }
 
 export interface JokerVoteEntry {
@@ -140,6 +139,8 @@ export interface JokerRoundState {
     phaseStartAt: number;
     // Red light sub-phase: 0-20s = old codes, 20-40s = new codes
     redLightHalf: "first" | "second";
+    // Life code refresh timing: seconds after red light starts (dynamically computed)
+    lifeCodeRefreshSecond: number;
     // Track oxygen gives per round: actorSessionId -> targetSessionId -> true
     oxygenGivenThisRound: Record<string, Record<string, boolean>>;
     goldenRabbitTriggeredLocations: JokerLocation[];

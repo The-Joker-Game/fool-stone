@@ -33,7 +33,6 @@ import {
 // Track active timers per room
 const roomTimers = new Map<string, NodeJS.Timeout[]>();
 const oxygenIntervals = new Map<string, NodeJS.Timeout>();
-const lifeCodeIntervals = new Map<string, NodeJS.Timeout>();
 const scheduledDeadlines = new Map<string, number>();
 
 export function addTimeout(roomCode: string, timeout: NodeJS.Timeout): void {
@@ -58,12 +57,6 @@ export function clearRoomTimeouts(roomCode: string): void {
         oxygenIntervals.delete(roomCode);
     }
 
-    const lifeCodeInterval = lifeCodeIntervals.get(roomCode);
-    if (lifeCodeInterval) {
-        clearInterval(lifeCodeInterval);
-        lifeCodeIntervals.delete(roomCode);
-    }
-
     scheduledDeadlines.delete(roomCode);
 }
 
@@ -84,7 +77,6 @@ export function checkAndScheduleActions(
 
     if (snapshot.paused) {
         stopOxygenTick(room.code);
-        stopLifeCodeRotation(room.code);
         return;
     }
 
@@ -112,44 +104,36 @@ export function checkAndScheduleActions(
     switch (phase) {
         case "lobby":
             // No timers in lobby
-            stopLifeCodeRotation(room.code);
             break;
 
         case "role_reveal":
             scheduleRoleRevealToGreenLight(room, io);
-            stopLifeCodeRotation(room.code);
             break;
 
         case "green_light":
             schedulePhaseTransition(room, io, "yellow_light");
             startOxygenTick(room, io);
-            startLifeCodeRotation(room, io);
             break;
 
         case "yellow_light":
             schedulePhaseTransition(room, io, "red_light");
-            startLifeCodeRotation(room, io);
             break;
 
         case "red_light":
             scheduleRedLightActions(room, io);
-            startLifeCodeRotation(room, io);
             break;
 
         case "meeting":
             scheduleMeetingToVoting(room, io);
             stopOxygenTick(room.code);
-            stopLifeCodeRotation(room.code);
             break;
 
         case "voting":
             scheduleVoteResolution(room, io);
-            stopLifeCodeRotation(room.code);
             break;
 
         case "execution":
             schedulePostExecution(room, io);
-            stopLifeCodeRotation(room.code);
             break;
 
         case "game_over":
@@ -220,6 +204,43 @@ function scheduleRedLightActions(
 
     addTimeout(room.code, endTimer);
     scheduleEmergencyTasks(room, io);
+    scheduleLifeCodeRefresh(room, io);
+}
+
+function scheduleLifeCodeRefresh(
+    room: { code: string; snapshot: any },
+    io: Server
+): void {
+    const snapshot = room.snapshot as JokerSnapshot;
+    if (snapshot.phase !== "red_light" || !snapshot.deadline) return;
+
+    const redLightStartMs = snapshot.round.phaseStartAt;
+    const refreshSecond = snapshot.round.lifeCodeRefreshSecond;
+    const refreshAt = redLightStartMs + refreshSecond * 1000;
+    const warningAt = refreshAt - 5000; // 提前5秒警告
+
+    // 5秒前警告（如果刷新时间>=5秒才发警告，否则红灯开始时立即发）
+    const warningDelay = Math.max(0, warningAt - Date.now());
+    const warningTimer = setTimeout(() => {
+        if ((room.snapshot as JokerSnapshot).phase !== "red_light") return;
+        io.to(room.code).emit("action", {
+            action: "joker:life_code_warning",
+            from: "_server",
+            at: Date.now(),
+        });
+    }, warningDelay);
+    addTimeout(room.code, warningTimer);
+
+    // 刷新生命代码
+    const refreshDelay = Math.max(0, refreshAt - Date.now());
+    const refreshTimer = setTimeout(() => {
+        const snap = room.snapshot as JokerSnapshot;
+        if (snap.phase !== "red_light") return;
+        generateAllLifeCodes(snap);
+        console.log(`[LifeCode] Round ${snap.roundCount}: refreshed at ${refreshSecond}s`);
+        broadcastSnapshot(room, io);
+    }, refreshDelay);
+    addTimeout(room.code, refreshTimer);
 }
 
 const EMERGENCY_REMAINING_MIN_MS = 10_000;
@@ -379,32 +400,6 @@ function scheduleMeetingToVoting(
     addTimeout(room.code, timer);
 }
 
-function startLifeCodeRotation(
-    room: { code: string; snapshot: any },
-    io: Server
-): void {
-    if (lifeCodeIntervals.has(room.code)) return;
-
-    const interval = setInterval(() => {
-        const snapshot = room.snapshot as JokerSnapshot;
-        if (!snapshot || snapshot.engine !== "joker") return;
-        const activePhase = ["green_light", "yellow_light", "red_light"].includes(snapshot.phase);
-        if (!activePhase) return;
-        generateAllLifeCodes(snapshot);
-        broadcastSnapshot(room, io);
-    }, 70_000);
-
-    lifeCodeIntervals.set(room.code, interval);
-}
-
-function stopLifeCodeRotation(roomCode: string): void {
-    const interval = lifeCodeIntervals.get(roomCode);
-    if (interval) {
-        clearInterval(interval);
-        lifeCodeIntervals.delete(roomCode);
-    }
-}
-
 function scheduleVoteResolution(
     room: { code: string; snapshot: any },
     io: Server
@@ -506,8 +501,8 @@ function startOxygenTick(
         tickOxygen(snapshot);
         const deaths = checkOxygenDeath(snapshot);
 
-        // Process ghost haunting tick (deduct oxygen every 10s)
-        const hauntDeducted = processHauntingTick(snapshot);
+        // Process ghost haunting tick (deduct oxygen every 10s of countdown)
+        const hauntDeducted = processHauntingTick(snapshot, snapshot.deadline);
         if (hauntDeducted.length > 0) {
             broadcastSnapshot(room, io);
         }

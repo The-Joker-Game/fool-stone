@@ -77,7 +77,6 @@ export interface JokerPlayerState {
     ghostTargetLocation: JokerLocation | null;
     ghostAssignedLocation: JokerLocation | null;
     hauntingTarget: string | null;
-    lastHauntTickAt: number | null;
 }
 
 export interface JokerVoteEntry {
@@ -131,6 +130,7 @@ export interface JokerRoundState {
     roundCount: number;
     phaseStartAt: number;
     redLightHalf: "first" | "second";
+    lifeCodeRefreshSecond: number;
     oxygenGivenThisRound: Record<string, Record<string, boolean>>;
     goldenRabbitTriggeredLocations: JokerLocation[];
     arrivedBySession: Record<string, boolean>;
