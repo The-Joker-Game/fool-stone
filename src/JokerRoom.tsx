@@ -2048,21 +2048,21 @@ export default function JokerRoom() {
                                         <p className="text-white/60 text-lg max-w-xs mx-auto">
                                             {t(`roleDesc.${myRole}`)}
                                         </p>
-                                        {myRole === "duck" && (
+                                        {(myRole === "duck" || myRole.endsWith("_duck")) && (
                                             <div className="pt-3 space-y-2">
                                                 <p className="text-xs uppercase tracking-widest text-orange-200/70">{t('game.yourCompanions')}</p>
                                                 <div className="flex flex-wrap items-center justify-center gap-2">
                                                     {jokerPlayers
-                                                        .filter(p => p.sessionId && p.role === "duck" && p.sessionId !== me.sessionId)
+                                                        .filter(p => p.sessionId && (p.role === "duck" || p.role?.endsWith("_duck")) && p.sessionId !== me.sessionId)
                                                         .map(p => (
                                                             <Badge
                                                                 key={p.sessionId}
                                                                 className="bg-orange-500/20 text-orange-200 border-orange-500/30 hover:bg-orange-500/30"
                                                             >
-                                                                {p.name || `${t('game.player')}${p.seat}`}（{p.seat}）
+                                                                {p.name || `${t('game.player')}${p.seat}`}（{p.seat}）- {t(`roles.${p.role}`)}
                                                             </Badge>
                                                         ))}
-                                                    {jokerPlayers.filter(p => p.sessionId && p.role === "duck" && p.sessionId !== me.sessionId).length === 0 && (
+                                                    {jokerPlayers.filter(p => p.sessionId && (p.role === "duck" || p.role?.endsWith("_duck")) && p.sessionId !== me.sessionId).length === 0 && (
                                                         <Badge className="bg-white/10 text-white/60 border-white/10 hover:bg-white/10">
                                                             {t('game.noCompanions')}
                                                         </Badge>
