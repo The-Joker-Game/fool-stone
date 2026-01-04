@@ -24,7 +24,7 @@ export interface JokerStore {
     clearError: () => void;
 
     // Game actions
-    startGame: () => Promise<{ ok: boolean; error?: string }>;
+    startGame: (template?: "simple" | "special", enableSoloEffects?: boolean) => Promise<{ ok: boolean; error?: string }>;
     selectLocation: (location: JokerLocation) => Promise<{ ok: boolean; error?: string }>;
     submitAction: (code: string, action: "kill" | "oxygen") => Promise<{ ok: boolean; error?: string }>;
     report: () => Promise<{ ok: boolean; error?: string }>;
@@ -69,13 +69,14 @@ export const useJokerStore = create<JokerStore>()(
             set({ lastError: null });
         },
 
-        async startGame() {
+        async startGame(template = "simple", enableSoloEffects = true) {
             const snapshot = get().snapshot;
             if (!snapshot) return { ok: false, error: "No snapshot" };
             try {
                 const resp = await rt.emitAck("intent", {
                     room: snapshot.roomCode,
                     action: "joker:start_game",
+                    data: { template, enableSoloEffects },
                     from: getSessionId(),
                 }, 5000);
                 return { ok: (resp as any)?.ok ?? false, error: (resp as any)?.msg };
@@ -248,6 +249,8 @@ function createEmptyPlayer(seat: number): JokerPlayerState {
         ghostTargetLocation: null,
         ghostAssignedLocation: null,
         hauntingTarget: null,
+        // Stasis fields
+        inStasis: false,
     };
 }
 

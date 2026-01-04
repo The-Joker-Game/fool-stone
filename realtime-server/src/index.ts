@@ -46,6 +46,8 @@ import {
   useKitchenOxygen as jokerUseKitchenOxygen,
   useMedicalOxygen as jokerUseMedicalOxygen,
   useWarehouseOxygen as jokerUseWarehouseOxygen,
+  useDispatchRoom as jokerUseDispatchRoom,
+  useStasisPod as jokerUseStasisPod,
   failLocationEffect as jokerFailLocationEffect,
   joinSharedTask as jokerJoinSharedTask,
   resolveSharedTask as jokerResolveSharedTask,
@@ -56,6 +58,9 @@ import {
   // Ghost system
   ghostSelectLocation as jokerGhostSelectLocation,
   ghostHaunt as jokerGhostHaunt,
+  // Special role abilities
+  coronerInvestigate as jokerCoronerInvestigate,
+  overseerInvestigate as jokerOverseerInvestigate,
 } from "./game-joker/engine.js";
 import type { ActionResult, JokerPlayerState, JokerSnapshot } from "./game-joker/types.js";
 import { checkAndScheduleActions as jokerScheduleActions, clearRoomTimeouts as jokerClearTimeouts, checkAllVoted } from "./game-joker/scheduler.js";
@@ -956,8 +961,10 @@ io.on("connection", (socket: Socket) => {
                 }
               }
             }
-            res = assignJokerRoles(jokerSnapshot);
+            res = assignJokerRoles(jokerSnapshot, data?.template ?? "simple");
             if (res.ok) {
+              // Store game settings
+              jokerSnapshot.enableSoloEffects = data?.enableSoloEffects !== false; // default true
               transitionToRoleReveal(jokerSnapshot);
             }
             shouldBroadcast = true;
@@ -1145,8 +1152,30 @@ io.on("connection", (socket: Socket) => {
             shouldBroadcast = true;
             break;
 
+          case "joker:location_dispatch":
+            res = jokerUseDispatchRoom(jokerSnapshot, socket.data.sessionId);
+            shouldBroadcast = true;
+            break;
+
+          case "joker:location_stasis":
+            res = jokerUseStasisPod(jokerSnapshot, socket.data.sessionId);
+            shouldBroadcast = true;
+            break;
+
           case "joker:location_effect_fail":
             res = jokerFailLocationEffect(jokerSnapshot, socket.data.sessionId);
+            shouldBroadcast = true;
+            break;
+
+          case "joker:coroner_investigate":
+            res = jokerCoronerInvestigate(jokerSnapshot, socket.data.sessionId, data?.deadSessionId);
+            // Broadcast to sync investigatedDeaths list
+            shouldBroadcast = true;
+            break;
+
+          case "joker:overseer_investigate":
+            res = jokerOverseerInvestigate(jokerSnapshot, socket.data.sessionId, data?.targetSessionId);
+            // Broadcast to sync state
             shouldBroadcast = true;
             break;
 

@@ -1,5 +1,5 @@
 // src/JokerRoom.tsx
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "./i18n";
@@ -10,12 +10,13 @@ import type {
     JokerPhase,
     JokerSnapshot,
     JokerRole,
+    JokerRoleTemplate,
 } from "./joker/types";
 import { useJokerStore } from "./joker/store";
 import type { JokerStore } from "./joker/store";
 import { MiniGame, getRandomGame, type MiniGameType } from "./joker/mini-games";
 import { JokerGameReview } from "./joker/components/JokerGameReview";
-import { GiKitchenKnives, GiMedicalPack, GiElectric, GiCctvCamera, GiCardboardBox, GiGhost, GiDuck, GiGoose, GiChicken, GiEagleHead } from "react-icons/gi";
+import { GiKitchenKnives, GiMedicalPack, GiElectric, GiCctvCamera, GiCardboardBox, GiGhost, GiDuck, GiGoose, GiChicken, GiEagleHead, GiShipWheel, GiCryoChamber, GiHummingbird } from "react-icons/gi";
 import {
     Card,
     CardContent,
@@ -33,6 +34,8 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Switch } from "@/components/ui/switch";
 import {
     Users,
     LogOut,
@@ -78,6 +81,7 @@ function randName() {
 }
 
 const ROLE_REVEAL_STYLES: Record<JokerRole, { ring: string; text: string; icon: React.ElementType }> = {
+    // Base roles
     duck: {
         ring: "bg-orange-500/20 border-orange-500/50 shadow-orange-500/30",
         text: "text-orange-400",
@@ -98,9 +102,53 @@ const ROLE_REVEAL_STYLES: Record<JokerRole, { ring: string; text: string; icon: 
         text: "text-sky-200",
         icon: GiEagleHead,
     },
+    // 🦢 Goose faction special roles
+    vigilante_goose: {
+        ring: "bg-rose-500/20 border-rose-400/50 shadow-rose-500/30",
+        text: "text-rose-200",
+        icon: GiGoose,
+    },
+    sheriff_goose: {
+        ring: "bg-yellow-500/20 border-yellow-400/50 shadow-yellow-500/30",
+        text: "text-yellow-200",
+        icon: GiGoose,
+    },
+    coroner_goose: {
+        ring: "bg-purple-500/20 border-purple-400/50 shadow-purple-500/30",
+        text: "text-purple-200",
+        icon: GiGoose,
+    },
+    overseer_goose: {
+        ring: "bg-cyan-500/20 border-cyan-400/50 shadow-cyan-500/30",
+        text: "text-cyan-200",
+        icon: GiGoose,
+    },
+    // 🦆 Duck faction special roles
+    poisoner_duck: {
+        ring: "bg-green-500/20 border-green-400/50 shadow-green-500/30",
+        text: "text-green-300",
+        icon: GiDuck,
+    },
+    saboteur_duck: {
+        ring: "bg-red-500/20 border-red-400/50 shadow-red-500/30",
+        text: "text-red-300",
+        icon: GiDuck,
+    },
+    // 🐦 Neutral special roles
+    falcon: {
+        ring: "bg-rose-600/20 border-rose-500/50 shadow-rose-600/30",
+        text: "text-rose-300",
+        icon: GiEagleHead,
+    },
+    woodpecker: {
+        ring: "bg-emerald-500/20 border-emerald-400/50 shadow-emerald-500/30",
+        text: "text-emerald-200",
+        icon: GiHummingbird,  // 蜂鸟图标代替（无专门啄木鸟图标）
+    },
 };
 
 const ROLE_CARD_STYLES: Record<JokerRole, { card: string; badge: string }> = {
+    // Base roles
     duck: {
         card: "bg-orange-500/10 border-orange-500/20",
         badge: "text-orange-300 border-orange-500/30",
@@ -117,6 +165,41 @@ const ROLE_CARD_STYLES: Record<JokerRole, { card: string; badge: string }> = {
         card: "bg-sky-500/10 border-sky-500/20",
         badge: "text-sky-200 border-sky-400/30",
     },
+    // 🦢 Goose faction special roles
+    vigilante_goose: {
+        card: "bg-rose-500/10 border-rose-500/20",
+        badge: "text-rose-200 border-rose-400/30",
+    },
+    sheriff_goose: {
+        card: "bg-yellow-500/10 border-yellow-500/20",
+        badge: "text-yellow-200 border-yellow-400/30",
+    },
+    coroner_goose: {
+        card: "bg-purple-500/10 border-purple-500/20",
+        badge: "text-purple-200 border-purple-400/30",
+    },
+    overseer_goose: {
+        card: "bg-cyan-500/10 border-cyan-500/20",
+        badge: "text-cyan-200 border-cyan-400/30",
+    },
+    // 🦆 Duck faction special roles
+    poisoner_duck: {
+        card: "bg-green-500/10 border-green-500/20",
+        badge: "text-green-300 border-green-400/30",
+    },
+    saboteur_duck: {
+        card: "bg-red-500/10 border-red-500/20",
+        badge: "text-red-300 border-red-400/30",
+    },
+    // 🐦 Neutral special roles
+    falcon: {
+        card: "bg-rose-600/10 border-rose-600/20",
+        badge: "text-rose-300 border-rose-500/30",
+    },
+    woodpecker: {
+        card: "bg-emerald-500/10 border-emerald-500/20",
+        badge: "text-emerald-200 border-emerald-400/30",
+    },
 };
 
 // Location icons mapping
@@ -127,6 +210,8 @@ const LOCATION_KEY_MAP: Record<JokerLocation, string> = {
     "发电室": "power",
     "监控室": "monitor",
     "仓库": "warehouse",
+    "调度室": "dispatch",
+    "休眠舱": "stasis",
 };
 
 const LOCATION_ICONS: Record<JokerLocation, React.ElementType> = {
@@ -135,6 +220,8 @@ const LOCATION_ICONS: Record<JokerLocation, React.ElementType> = {
     "发电室": GiElectric,
     "监控室": GiCctvCamera,
     "仓库": GiCardboardBox,
+    "调度室": GiShipWheel,
+    "休眠舱": GiCryoChamber,
 };
 
 const PHASE_GRADIENTS: Record<JokerPhase, string> = {
@@ -332,15 +419,38 @@ export default function JokerRoom() {
     const actionCooldown = cooldownSeconds > 0;
     const [taskCooldownSeconds, setTaskCooldownSeconds] = useState(0);
     const taskCooldown = taskCooldownSeconds > 0;
-    const [goldenRabbitResultFlash, setGoldenRabbitResultFlash] = useState<null | { result: "success" | "fail"; until: number; rabbitIndex?: number }>(null);
-    const [sharedTaskResultFlash, setSharedTaskResultFlash] = useState<null | { result: "success" | "fail"; until: number }>(null);
-    const [monitorPeek, setMonitorPeek] = useState<null | { code: string; until: number }>(null);
     const [lifeCodeWarningCountdown, setLifeCodeWarningCountdown] = useState(0);
     const [showMedicalDialog, setShowMedicalDialog] = useState(false);
     const [showMonitorLocationDialog, setShowMonitorLocationDialog] = useState(false);
     const [showReview, setShowReview] = useState(false);
     const [suppressPauseDialog, setSuppressPauseDialog] = useState(false);
+    const [coronerEmptyChecked, setCoronerEmptyChecked] = useState(false);
+    const [overseerEmptyChecked, setOverseerEmptyChecked] = useState(false);
     const [pendingLocationEffect, setPendingLocationEffect] = useState<null | { location: JokerLocation; targetSessionId?: string; monitorTargetLocation?: JokerLocation }>(null);
+
+    // Role template selection (shown in host badge popover) - persisted to localStorage
+    const [roleTemplate, setRoleTemplate] = useState<JokerRoleTemplate>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem("joker_roleTemplate");
+            return saved === "special" ? "special" : "simple";
+        }
+        return "simple";
+    });
+    const [enableSoloEffects, setEnableSoloEffects] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem("joker_enableSoloEffects");
+            return saved !== "false"; // default true
+        }
+        return true;
+    });
+
+    // Persist settings to localStorage
+    useEffect(() => {
+        localStorage.setItem("joker_roleTemplate", roleTemplate);
+    }, [roleTemplate]);
+    useEffect(() => {
+        localStorage.setItem("joker_enableSoloEffects", String(enableSoloEffects));
+    }, [enableSoloEffects]);
 
     // Mini-game state
     const [showMiniGame, setShowMiniGame] = useState(false);
@@ -412,12 +522,15 @@ export default function JokerRoom() {
     }, [jokerPlayers, me?.location]);
     const soloLocation = !!me?.location && sameLocationCount === 1;
     const soloLocationEffect = myAlive && phase === "red_light" && soloLocation ? me.location : null;
+    const soloEffectsDisabled = jokerSnapshot?.enableSoloEffects === false;
     const powerBoostUsed = !!jokerSnapshot?.round?.powerBoostBySession?.[mySessionId];
     const powerBoostActive = !!jokerSnapshot?.round?.powerBoostActiveBySession?.[mySessionId];
     const warehouseUsed = !!jokerSnapshot?.round?.warehouseUsedBySession?.[mySessionId];
     const monitorUsed = !!jokerSnapshot?.round?.monitorUsedBySession?.[mySessionId];
     const kitchenUsed = !!jokerSnapshot?.round?.kitchenUsedBySession?.[mySessionId];
     const medicalUsed = !!jokerSnapshot?.round?.medicalUsedBySession?.[mySessionId];
+    const dispatchUsed = !!jokerSnapshot?.round?.dispatchUsedBySession?.[mySessionId];
+    const stasisUsed = !!jokerSnapshot?.round?.stasisActiveBySession?.[mySessionId];
     const arrivalMap = jokerSnapshot?.round?.arrivedBySession ?? {};
     const meArrived = !!arrivalMap[mySessionId];
     const personalTaskProgressLabel =
@@ -468,6 +581,12 @@ export default function JokerRoom() {
         }, 1000);
         return () => clearInterval(interval);
     }, [taskCooldownSeconds]);
+
+    // Reset coroner and overseer empty check at the start of each new round
+    useEffect(() => {
+        setCoronerEmptyChecked(false);
+        setOverseerEmptyChecked(false);
+    }, [jokerSnapshot?.roundCount]);
 
     useEffect(() => {
         if (jokerSnapshot?.paused && typeof jokerSnapshot?.pauseRemainingMs === "number") {
@@ -676,7 +795,7 @@ export default function JokerRoom() {
     }, [roomCode, users]);
 
     const handleStartGame = useCallback(async () => {
-        const res = await startGame();
+        const res = await startGame(roleTemplate, enableSoloEffects);
         if (!res.ok) {
             const msg =
                 res.error === "Need at least 5 players to start"
@@ -692,7 +811,7 @@ export default function JokerRoom() {
                                     : res.error || t('error.startFailed');
             await alert(msg);
         }
-    }, [startGame, t]);
+    }, [startGame, t, roleTemplate, enableSoloEffects]);
 
     const handleSelectLocation = useCallback(async (loc: JokerLocation) => {
         await selectLocation(loc);
@@ -931,6 +1050,11 @@ export default function JokerRoom() {
             "Power boost already used this round": t('error.powerUsed'),
             "Kitchen already used this round": t('error.kitchenUsed'),
             "Medical already used this round": t('error.medicalUsed'),
+            "Dispatch already used this round": t('error.dispatchUsed'),
+            "Already in stasis": t('error.stasisUsed'),
+            "Not in dispatch room": t('error.notInDispatchRoom'),
+            "Not in stasis pod": t('error.notInStasisPod'),
+            "Target is in stasis": t('error.targetInStasis'),
             "Invalid location": t('error.invalidLocation'),
         };
         return map[err] ?? t('error.operationFailed');
@@ -973,6 +1097,16 @@ export default function JokerRoom() {
         startLocationEffectTask("仓库");
     }, [isInteractionDisabled, startLocationEffectTask]);
 
+    const handleDispatchRoom = useCallback(() => {
+        if (isInteractionDisabled) return;
+        startLocationEffectTask("调度室");
+    }, [isInteractionDisabled, startLocationEffectTask]);
+
+    const handleStasisPod = useCallback(() => {
+        if (isInteractionDisabled) return;
+        startLocationEffectTask("休眠舱");
+    }, [isInteractionDisabled, startLocationEffectTask]);
+
     const handleMedicalOpen = useCallback(() => {
         if (isInteractionDisabled) return;
         if (medicalUsed) {
@@ -1002,8 +1136,59 @@ export default function JokerRoom() {
             await alert(locationEffectErrorMessage((resp as any)?.msg));
             return;
         }
-        toast.error(t('toast.locationEffectFailed'));
+        toast.error(t('toast.locationEffectFailed'), { classNames: { toast: 'toast-error' } });
     }, [roomCode, locationEffectErrorMessage, t]);
+
+    // 验尸鹅 (coroner_goose) investigation handler
+    const handleCoronerInvestigate = useCallback(async (deadSessionId: string) => {
+        if (!roomCode) return;
+        const resp = await rt.emitAck("intent", {
+            room: roomCode,
+            action: "joker:coroner_investigate",
+            data: { deadSessionId },
+        });
+        if (!(resp as any)?.ok) {
+            toast.error((resp as any)?.msg || t('error.operationFailed'), { classNames: { toast: 'toast-error' } });
+            return;
+        }
+        const data = (resp as any)?.data;
+        if (data) {
+            const reasonMap: Record<string, string> = {
+                kill: "击杀",
+                poison: "毒杀",
+                oxygen: "缺氧",
+                suicide: "自杀",
+                foul: "犯规",
+                vote: "投票",
+            };
+            const reasonText = reasonMap[data.reason] || data.reason;
+            toast.info(`${data.deadName}（座位${data.deadSeat}）死因：${reasonText}`, {
+                duration: 8000,
+                classNames: { toast: 'toast-info' }
+            });
+        }
+    }, [roomCode, t]);
+
+    // 监工鹅 (overseer_goose) investigation handler
+    const handleOverseerInvestigate = useCallback(async (targetSessionId: string) => {
+        if (!roomCode) return;
+        const resp = await rt.emitAck("intent", {
+            room: roomCode,
+            action: "joker:overseer_investigate",
+            data: { targetSessionId },
+        });
+        if (!(resp as any)?.ok) {
+            toast.error((resp as any)?.msg || t('error.operationFailed'), { classNames: { toast: 'toast-error' } });
+            return;
+        }
+        const data = (resp as any)?.data;
+        if (data) {
+            toast.info(`${data.targetName}（座位${data.targetSeat}）任务贡献度：${data.contribution}%`, {
+                duration: 8000,
+                classNames: { toast: 'toast-info' }
+            });
+        }
+    }, [roomCode, t]);
 
     const handleLocationEffectSuccess = useCallback(async (effect: { location: JokerLocation; targetSessionId?: string; monitorTargetLocation?: JokerLocation }) => {
         if (!roomCode) return;
@@ -1020,6 +1205,10 @@ export default function JokerRoom() {
             resp = await rt.emitAck("intent", { room: roomCode, action: "joker:location_kitchen" });
         } else if (effect.location === "仓库") {
             resp = await rt.emitAck("intent", { room: roomCode, action: "joker:location_warehouse" });
+        } else if (effect.location === "调度室") {
+            resp = await rt.emitAck("intent", { room: roomCode, action: "joker:location_dispatch" });
+        } else if (effect.location === "休眠舱") {
+            resp = await rt.emitAck("intent", { room: roomCode, action: "joker:location_stasis" });
         } else if (effect.location === "医务室") {
             if (!effect.targetSessionId) {
                 await alert(t('error.invalidTarget'));
@@ -1040,7 +1229,7 @@ export default function JokerRoom() {
         if (effect.location === "监控室") {
             const code = (resp as any)?.data?.lifeCode;
             if (code) {
-                setMonitorPeek({ code, until: Date.now() + 5000 });
+                toast.info(`${t('toast.peekLifeCode')} ${code}`, { duration: 5000, classNames: { toast: 'toast-info' } });
             }
         }
 
@@ -1080,10 +1269,11 @@ export default function JokerRoom() {
         if (lastSharedResolvedAtRef.current === sharedTask.resolvedAt) return;
         lastSharedResolvedAtRef.current = sharedTask.resolvedAt;
         if (isSharedParticipant) {
-            setSharedTaskResultFlash({
-                result: sharedTask.result,
-                until: Date.now() + 2500,
-            });
+            if (sharedTask.result === "success") {
+                toast.success(t('sharedTask.success'), { duration: 3000, classNames: { toast: 'toast-success' } });
+            } else {
+                toast.error(t('sharedTask.fail'), { duration: 3000, classNames: { toast: 'toast-error' } });
+            }
             setTaskCooldownSeconds(10);
         }
     }, [sharedTask?.status, sharedTask?.result, sharedTask?.resolvedAt, isSharedParticipant]);
@@ -1093,11 +1283,11 @@ export default function JokerRoom() {
         if (lastGoldenRabbitResolvedAtRef.current === goldenRabbitTask.resolvedAt) return;
         lastGoldenRabbitResolvedAtRef.current = goldenRabbitTask.resolvedAt;
         if (isGoldenRabbitParticipant) {
-            setGoldenRabbitResultFlash({
-                result: goldenRabbitTask.result,
-                until: Date.now() + 2500,
-                rabbitIndex: goldenRabbitTask.rabbitIndex,
-            });
+            if (goldenRabbitTask.result === "success") {
+                toast.success(t('emergency.captureSuccess'), { duration: 4000, classNames: { toast: 'toast-warning' } });
+            } else {
+                toast.error(t('emergency.captureFail'), { duration: 3000, classNames: { toast: 'toast-error' } });
+            }
         }
     }, [goldenRabbitTask?.status, goldenRabbitTask?.result, goldenRabbitTask?.resolvedAt, isGoldenRabbitParticipant]);
 
@@ -1105,14 +1295,14 @@ export default function JokerRoom() {
         if (!me?.oxygenLeakActive || !me.oxygenLeakStartedAt) return;
         if (lastOxygenLeakStartedAtRef.current === me.oxygenLeakStartedAt) return;
         lastOxygenLeakStartedAtRef.current = me.oxygenLeakStartedAt;
-        toast.error(t('toast.oxygenLeak'), { duration: 3000 });
+        toast.error(t('toast.oxygenLeak'), { duration: 3000, classNames: { toast: 'toast-error' } });
     }, [me?.oxygenLeakActive, me?.oxygenLeakStartedAt]);
 
     useEffect(() => {
         if (!me?.oxygenLeakResolvedAt) return;
         if (lastOxygenLeakResolvedAtRef.current === me.oxygenLeakResolvedAt) return;
         lastOxygenLeakResolvedAtRef.current = me.oxygenLeakResolvedAt;
-        toast.success(t('toast.oxygenFixed'));
+        toast.success(t('toast.oxygenFixed'), { classNames: { toast: 'toast-success' } });
     }, [me?.oxygenLeakResolvedAt]);
 
     useEffect(() => {
@@ -1133,27 +1323,6 @@ export default function JokerRoom() {
         return () => clearTimeout(timer);
     }, [lifeCodeWarningCountdown]);
 
-    useEffect(() => {
-        if (!goldenRabbitResultFlash) return;
-        const delay = Math.max(0, goldenRabbitResultFlash.until - Date.now());
-        const timer = setTimeout(() => setGoldenRabbitResultFlash(null), delay);
-        return () => clearTimeout(timer);
-    }, [goldenRabbitResultFlash?.until]);
-
-    useEffect(() => {
-        if (!sharedTaskResultFlash) return;
-        const delay = Math.max(0, sharedTaskResultFlash.until - Date.now());
-        const timer = setTimeout(() => setSharedTaskResultFlash(null), delay);
-        return () => clearTimeout(timer);
-    }, [sharedTaskResultFlash?.until]);
-
-    useEffect(() => {
-        if (!monitorPeek) return;
-        const delay = Math.max(0, monitorPeek.until - Date.now());
-        const timer = setTimeout(() => setMonitorPeek(null), delay);
-        return () => clearTimeout(timer);
-    }, [monitorPeek?.until]);
-
     const handleCompleteTask = useCallback(async () => {
         if (!roomCode) return;
         setShowMiniGame(false);
@@ -1165,7 +1334,7 @@ export default function JokerRoom() {
             return;
         }
         await rt.emitAck("intent", { room: roomCode, action: "joker:complete_task" });
-        toast.success(t('toast.taskSuccess'));
+        toast.success(t('toast.taskSuccess'), { duration: 2000, classNames: { toast: 'toast-success' } });
         setTaskCooldownSeconds(10);
     }, [roomCode, pendingLocationEffect, handleLocationEffectSuccess]);
 
@@ -1177,7 +1346,7 @@ export default function JokerRoom() {
             handleLocationEffectFail();
             return;
         }
-        toast.error(t('toast.taskFailed'));
+        toast.error(t('toast.taskFailed'), { duration: 2000, classNames: { toast: 'toast-error' } });
         setTaskCooldownSeconds(10);
     }, [pendingLocationEffect, handleLocationEffectFail]);
 
@@ -1272,7 +1441,7 @@ export default function JokerRoom() {
             const { ghostSelectLocation } = useJokerStore.getState();
             const result = await ghostSelectLocation(location);
             if (!result.ok) {
-                toast.error(result.error || t('ghost.selectLocationFailed'));
+                toast.error(result.error || t('ghost.selectLocationFailed'), { classNames: { toast: 'toast-error' } });
             }
         };
 
@@ -1281,7 +1450,7 @@ export default function JokerRoom() {
             const { ghostHaunt } = useJokerStore.getState();
             const result = await ghostHaunt(targetSessionId);
             if (!result.ok) {
-                toast.error(result.error || t('ghost.hauntFailed'));
+                toast.error(result.error || t('ghost.hauntFailed'), { classNames: { toast: 'toast-error' } });
             }
         };
 
@@ -1582,51 +1751,6 @@ export default function JokerRoom() {
                     </div>
                 </div>
             )}
-            {monitorPeek && (
-                <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
-                    <div className="px-6 py-3 rounded-full border text-lg font-semibold bg-slate-500/20 text-slate-100 border-slate-400/40">
-                        {t('toast.peekLifeCode')} {monitorPeek.code}
-                    </div>
-                </div>
-            )}
-            {sharedTaskResultFlash && (
-                <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
-                    <div className={`inline-flex items-center px-6 py-4 rounded-2xl border text-lg font-semibold ${sharedTaskResultFlash.result === "success"
-                        ? "bg-emerald-500/20 text-emerald-100 border-emerald-400/40"
-                        : "bg-red-500/20 text-red-200 border-red-500/30"
-                        }`}>
-                        {sharedTaskResultFlash.result === "success" ? t('sharedTask.success') : t('sharedTask.fail')}
-                    </div>
-                </div>
-            )}
-            {goldenRabbitResultFlash && (
-                <div className="fixed inset-0 z-[9998] pointer-events-none flex items-center justify-center">
-                    <div className={`inline-flex flex-col items-center px-6 py-4 rounded-2xl border text-lg font-semibold ${goldenRabbitResultFlash.result === "success"
-                        ? "bg-amber-400/20 text-amber-100 border-amber-400/40"
-                        : "bg-red-500/20 text-red-200 border-red-500/30"
-                        }`}>
-                        <div className="text-center">
-                            {goldenRabbitResultFlash.result === "success" ? t('emergency.captureSuccess') : t('emergency.captureFail')}
-                        </div>
-                        {goldenRabbitResultFlash.rabbitIndex !== undefined && (
-                            <div className="mt-3 grid grid-cols-3 gap-1">
-                                {Array.from({ length: 9 }, (_, idx) => {
-                                    const isRabbit = idx === goldenRabbitResultFlash.rabbitIndex;
-                                    return (
-                                        <div
-                                            key={idx}
-                                            className={`w-7 h-7 rounded-md border ${isRabbit
-                                                ? "bg-amber-300/80 border-amber-200"
-                                                : "bg-white/5 border-white/20"
-                                                }`}
-                                        />
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
 
             {/* Low Oxygen Vignette Effect */}
             {myAlive && displayOxygen < 60 && phase !== "game_over" && phase !== "lobby" && (
@@ -1656,9 +1780,58 @@ export default function JokerRoom() {
                         </div>
                         {isHost && (
                             <>
-                                <Badge className="bg-yellow-500/20 text-yellow-200 border-yellow-500/30 hover:bg-yellow-500/30">
-                                    <Crown className="w-3 h-3 mr-1" /> {t('lobby.host')}
-                                </Badge>
+                                {phase === "lobby" ? (
+                                    <Popover>
+                                        <PopoverTrigger asChild>
+                                            <Badge className="bg-yellow-500/20 text-yellow-200 border-yellow-500/30 hover:bg-yellow-500/30 cursor-pointer">
+                                                <Crown className="w-3 h-3 mr-1" /> {t('lobby.host')}
+                                            </Badge>
+                                        </PopoverTrigger>
+                                        <PopoverContent className="w-64 bg-slate-900 border-slate-700 p-4">
+                                            <div className="space-y-4">
+                                                <div className="text-sm font-medium text-white">
+                                                    {t('lobby.gameSettings', '游戏设置')}
+                                                </div>
+                                                {/* 特殊角色开关 */}
+                                                <div className="flex items-center justify-between">
+                                                    <div className="space-y-0.5">
+                                                        <label htmlFor="special-roles" className="text-sm text-white">
+                                                            {t('lobby.specialRoles', '特殊角色')}
+                                                        </label>
+                                                        <p className="text-xs text-slate-400">
+                                                            {t('lobby.specialRolesDesc', '启用毒师鸭、警长鹅等')}
+                                                        </p>
+                                                    </div>
+                                                    <Switch
+                                                        id="special-roles"
+                                                        checked={roleTemplate === "special"}
+                                                        onCheckedChange={(checked) => setRoleTemplate(checked ? "special" : "simple")}
+                                                    />
+                                                </div>
+                                                {/* 单人场所效果开关 */}
+                                                <div className="flex items-center justify-between">
+                                                    <div className="space-y-0.5">
+                                                        <label htmlFor="solo-effects" className="text-sm text-white">
+                                                            {t('lobby.soloEffects', '场所效果')}
+                                                        </label>
+                                                        <p className="text-xs text-slate-400">
+                                                            {t('lobby.soloEffectsDesc', '单人时触发场所技能')}
+                                                        </p>
+                                                    </div>
+                                                    <Switch
+                                                        id="solo-effects"
+                                                        checked={enableSoloEffects}
+                                                        onCheckedChange={setEnableSoloEffects}
+                                                    />
+                                                </div>
+                                            </div>
+                                        </PopoverContent>
+                                    </Popover>
+                                ) : (
+                                    <Badge className="bg-yellow-500/20 text-yellow-200 border-yellow-500/30">
+                                        <Crown className="w-3 h-3 mr-1" /> {t('lobby.host')}
+                                    </Badge>
+                                )}
                                 <Button
                                     variant="ghost"
                                     size="sm"
@@ -2169,6 +2342,23 @@ export default function JokerRoom() {
                                                     </Button>
                                                     {soloLocationEffect ? (() => {
                                                         const LocationIcon = LOCATION_ICONS[soloLocationEffect];
+                                                        // 场所效果被禁用时显示灰色禁用按钮
+                                                        if (soloEffectsDisabled) {
+                                                            return (
+                                                                <Button
+                                                                    disabled
+                                                                    className="h-14 rounded-xl border border-white/10 bg-slate-700/50 text-sm font-bold flex flex-col gap-1 text-white/50 cursor-not-allowed"
+                                                                >
+                                                                    <div className="flex items-center gap-2">
+                                                                        <LocationIcon className="w-4 h-4" />
+                                                                        {t('locationEffect.disabled', '场所效果')}
+                                                                    </div>
+                                                                    <span className="text-[11px] text-white/40">
+                                                                        {t('locationEffect.disabledDesc', '本局已禁用')}
+                                                                    </span>
+                                                                </Button>
+                                                            );
+                                                        }
                                                         if (soloLocationEffect === "监控室") {
                                                             return (
                                                                 <Button
@@ -2237,21 +2427,58 @@ export default function JokerRoom() {
                                                                 </Button>
                                                             );
                                                         }
-                                                        return (
-                                                            <Button
-                                                                onClick={handleWarehouseOxygen}
-                                                                disabled={isInteractionDisabled || showMiniGame || warehouseUsed}
-                                                                className="h-14 rounded-xl border border-white/10 bg-gradient-to-r from-indigo-700 to-slate-700 hover:from-indigo-600 hover:to-slate-600 text-sm font-bold flex flex-col gap-1 text-white"
-                                                            >
-                                                                <div className="flex items-center gap-2">
-                                                                    <LocationIcon className="w-4 h-4" />
-                                                                    {t('locationEffect.warehouse')}
-                                                                </div>
-                                                                <span className="text-[11px] text-white/90">
-                                                                    {warehouseUsed ? t('locationEffect.usedThisRound') : t('locationEffect.warehouseDesc')}
-                                                                </span>
-                                                            </Button>
-                                                        );
+                                                        if (soloLocationEffect === "仓库") {
+                                                            return (
+                                                                <Button
+                                                                    onClick={handleWarehouseOxygen}
+                                                                    disabled={isInteractionDisabled || showMiniGame || warehouseUsed}
+                                                                    className="h-14 rounded-xl border border-white/10 bg-gradient-to-r from-indigo-700 to-slate-700 hover:from-indigo-600 hover:to-slate-600 text-sm font-bold flex flex-col gap-1 text-white"
+                                                                >
+                                                                    <div className="flex items-center gap-2">
+                                                                        <LocationIcon className="w-4 h-4" />
+                                                                        {t('locationEffect.warehouse')}
+                                                                    </div>
+                                                                    <span className="text-[11px] text-white/90">
+                                                                        {warehouseUsed ? t('locationEffect.usedThisRound') : t('locationEffect.warehouseDesc')}
+                                                                    </span>
+                                                                </Button>
+                                                            );
+                                                        }
+                                                        if (soloLocationEffect === "调度室") {
+                                                            return (
+                                                                <Button
+                                                                    onClick={handleDispatchRoom}
+                                                                    disabled={isInteractionDisabled || showMiniGame || dispatchUsed}
+                                                                    className="h-14 rounded-xl border border-white/10 bg-gradient-to-r from-cyan-700 to-blue-700 hover:from-cyan-600 hover:to-blue-600 text-sm font-bold flex flex-col gap-1 text-white"
+                                                                >
+                                                                    <div className="flex items-center gap-2">
+                                                                        <LocationIcon className="w-4 h-4" />
+                                                                        {t('locationEffect.dispatch')}
+                                                                    </div>
+                                                                    <span className="text-[11px] text-white/90">
+                                                                        {dispatchUsed ? t('locationEffect.usedThisRound') : t('locationEffect.dispatchDesc')}
+                                                                    </span>
+                                                                </Button>
+                                                            );
+                                                        }
+                                                        if (soloLocationEffect === "休眠舱") {
+                                                            return (
+                                                                <Button
+                                                                    onClick={handleStasisPod}
+                                                                    disabled={isInteractionDisabled || showMiniGame || stasisUsed}
+                                                                    className="h-14 rounded-xl border border-white/10 bg-gradient-to-r from-violet-700 to-purple-700 hover:from-violet-600 hover:to-purple-600 text-sm font-bold flex flex-col gap-1 text-white"
+                                                                >
+                                                                    <div className="flex items-center gap-2">
+                                                                        <LocationIcon className="w-4 h-4" />
+                                                                        {t('locationEffect.stasis')}
+                                                                    </div>
+                                                                    <span className="text-[11px] text-white/90">
+                                                                        {stasisUsed ? t('locationEffect.usedThisRound') : t('locationEffect.stasisDesc')}
+                                                                    </span>
+                                                                </Button>
+                                                            );
+                                                        }
+                                                        return null;  // fallback for unknown locations
                                                     })() : (
                                                         <Button
                                                             onClick={handleJoinSharedTask}
@@ -2266,6 +2493,57 @@ export default function JokerRoom() {
                                                         </Button>
                                                     )}
                                                 </div>
+                                                {/* 验尸鹅特殊能力 - 横向滚动carousel */}
+                                                {me?.role === "coroner_goose" && phase === "red_light" && (() => {
+                                                    const playersAtLocation = jokerPlayers.filter(p => p.location === me.location && p.isAlive && p.sessionId !== me.sessionId);
+                                                    const isAlone = playersAtLocation.length === 0;
+                                                    if (!isAlone) return null;
+
+                                                    // All revealed deaths (not just uninvestigated)
+                                                    const revealedDeaths = jokerSnapshot?.deaths?.filter(d => d.revealed) ?? [];
+                                                    // Has the coroner used their ability this round?
+                                                    const usedThisRound = coronerEmptyChecked;
+
+                                                    return (
+                                                        <div className="space-y-2">
+                                                            <div className="text-xs text-purple-400/80 pl-1">验尸调查</div>
+                                                            <div className="flex gap-2 overflow-x-auto pb-1">
+                                                                {revealedDeaths.length === 0 ? (
+                                                                    <Button
+                                                                        disabled
+                                                                        className="h-10 px-4 rounded-lg bg-purple-500/20 text-purple-300/50 text-sm"
+                                                                    >
+                                                                        暂无死者
+                                                                    </Button>
+                                                                ) : (
+                                                                    revealedDeaths.map(d => {
+                                                                        const alreadyInvestigated = me.investigatedDeaths?.includes(d.sessionId);
+                                                                        return (
+                                                                            <Button
+                                                                                key={d.sessionId}
+                                                                                onClick={() => {
+                                                                                    handleCoronerInvestigate(d.sessionId);
+                                                                                    setCoronerEmptyChecked(true);
+                                                                                }}
+                                                                                disabled={usedThisRound || alreadyInvestigated}
+                                                                                className={`h-10 px-3 rounded-lg text-sm flex items-center gap-2 flex-shrink-0 ${alreadyInvestigated
+                                                                                    ? "bg-purple-500/10 text-purple-300/40"
+                                                                                    : usedThisRound
+                                                                                        ? "bg-purple-500/20 text-purple-300/50"
+                                                                                        : "bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 text-white"
+                                                                                    }`}
+                                                                            >
+                                                                                <Avvvatars value={String(d.seat)} size={20} />
+                                                                                <span>{d.name}</span>
+                                                                                {alreadyInvestigated && <span className="text-xs opacity-60">已调查</span>}
+                                                                            </Button>
+                                                                        );
+                                                                    })
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })()}
                                                 {taskCooldown && (
                                                     <div className="text-center text-xs text-amber-200/80">
                                                         {t('sharedTask.taskCooldown')} {taskCooldownSeconds}s
@@ -2344,6 +2622,50 @@ export default function JokerRoom() {
                                             </div>
                                         </CardContent>
                                     </Card>
+
+                                    {/* 监工鹅特殊能力：调查任务贡献度 - 横向滚动carousel */}
+                                    {me?.role === "overseer_goose" && phase === "red_light" && (() => {
+                                        const playersAtLocation = jokerPlayers.filter(p => p.location === me.location && p.isAlive && p.sessionId !== me.sessionId);
+                                        const isAlone = playersAtLocation.length === 0;
+                                        if (!isAlone) return null;
+
+                                        const otherPlayers = jokerPlayers.filter(p => p.sessionId && p.sessionId !== me.sessionId);
+                                        const usedThisRound = overseerEmptyChecked;
+
+                                        return (
+                                            <div className="space-y-2">
+                                                <div className="text-xs text-cyan-400/80 pl-1">任务贡献度调查</div>
+                                                <div className="flex gap-2 overflow-x-auto pb-1">
+                                                    {otherPlayers.length === 0 ? (
+                                                        <Button
+                                                            disabled
+                                                            className="h-10 px-4 rounded-lg bg-cyan-500/20 text-cyan-300/50 text-sm"
+                                                        >
+                                                            暂无可调查目标
+                                                        </Button>
+                                                    ) : (
+                                                        otherPlayers.map(p => (
+                                                            <Button
+                                                                key={p.sessionId}
+                                                                onClick={() => {
+                                                                    handleOverseerInvestigate(p.sessionId!);
+                                                                    setOverseerEmptyChecked(true);
+                                                                }}
+                                                                disabled={usedThisRound}
+                                                                className={`h-10 px-3 rounded-lg text-sm flex items-center gap-2 flex-shrink-0 ${usedThisRound
+                                                                    ? "bg-cyan-500/20 text-cyan-300/50"
+                                                                    : "bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white"
+                                                                    }`}
+                                                            >
+                                                                <Avvvatars value={String(p.seat)} size={20} />
+                                                                <span>{p.name}</span>
+                                                            </Button>
+                                                        ))
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
 
                                     {/* Players Nearby */}
                                     {me?.location && (

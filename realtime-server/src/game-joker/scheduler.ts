@@ -13,6 +13,7 @@ import {
     finalizeGame,
     tickOxygen,
     checkOxygenDeath,
+    checkPoisonDeath,
     startMeeting,
     generateAllLifeCodes,
     SHARED_TASK_DURATIONS_MS,
@@ -501,14 +502,18 @@ function startOxygenTick(
         tickOxygen(snapshot);
         const deaths = checkOxygenDeath(snapshot);
 
+        // Check poison deaths (毒师鸭 60s poison timer)
+        const poisonDeaths = checkPoisonDeath(snapshot);
+
         // Process ghost haunting tick (deduct oxygen every 10s of countdown)
         const hauntDeducted = processHauntingTick(snapshot, snapshot.deadline);
         if (hauntDeducted.length > 0) {
             broadcastSnapshot(room, io);
         }
 
-        if (deaths.length > 0) {
-            // Someone died from oxygen
+        // Handle any deaths (oxygen or poison)
+        const allDeaths = [...deaths, ...poisonDeaths];
+        if (allDeaths.length > 0) {
             broadcastSnapshot(room, io);
 
             // Check win condition

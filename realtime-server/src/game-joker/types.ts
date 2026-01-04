@@ -1,6 +1,26 @@
 // realtime-server/src/game-joker/types.ts
 
-export type JokerRole = "duck" | "goose" | "dodo" | "hawk";
+// Base roles
+export type JokerBaseRole = "duck" | "goose" | "dodo" | "hawk";
+
+// Special roles
+export type JokerSpecialRole =
+    // 🦢 鹅阵营特殊角色 (Goose faction special roles)
+    | "vigilante_goose"    // 正义鹅：仅一次击杀机会
+    | "sheriff_goose"      // 警长鹅：杀鹅自杀
+    | "coroner_goose"      // 验尸鹅：调查死因
+    | "overseer_goose"     // 监工鹅：调查任务贡献度
+    // 🦆 鸭阵营特殊角色 (Duck faction special roles)
+    | "poisoner_duck"      // 毒师鸭：60秒毒杀
+    | "saboteur_duck"      // 糊弄鸭：埋隐患
+    // 🐦 中立阵营特殊角色 (Neutral faction special roles)
+    | "falcon"             // 猎鹰：可杀人，存活到最后获胜
+    | "woodpecker";        // 啄木鸟：击杀导致氧气泄漏
+
+export type JokerRole = JokerBaseRole | JokerSpecialRole;
+
+// Role template: simple uses original config, special enables special roles
+export type JokerRoleTemplate = "simple" | "special";
 
 export type JokerPhase =
     | "lobby"
@@ -13,14 +33,16 @@ export type JokerPhase =
     | "execution"
     | "game_over";
 
-export type JokerLocation = "厨房" | "医务室" | "发电室" | "监控室" | "仓库";
+export type JokerLocation = "厨房" | "医务室" | "发电室" | "监控室" | "仓库" | "调度室" | "休眠舱";
 
 // Death tracking
 export type JokerDeathReason =
     | "kill"           // 被杀
     | "foul"           // 犯规死亡 (鹅/呆呆鸟尝试杀人)
     | "oxygen"         // 氧气耗尽
-    | "vote";          // 投票淘汰
+    | "vote"           // 投票淘汰
+    | "poison"         // 毒杀 (毒师鸭)
+    | "suicide";       // 自杀 (警长鹅杀鹅后)
 
 export interface JokerDeathRecord {
     sessionId: string;           // 死者 sessionId
@@ -81,6 +103,30 @@ export interface JokerPlayerState {
     ghostTargetLocation: JokerLocation | null;   // 绿灯选择的目标场所
     ghostAssignedLocation: JokerLocation | null; // 黄灯后确定的场所
     hauntingTarget: string | null;               // 作祟目标 sessionId
+
+    // Stasis fields (休眠舱)
+    inStasis: boolean;  // 是否处于休眠状态
+    stasisEnteredAt?: number;  // 进入休眠舱的时间戳（用于暂停毒杀计时）
+
+    // === Special Role States 特殊角色状态 ===
+    // 正义鹅 (vigilante_goose)
+    vigilanteKillUsed?: boolean;        // 是否已使用击杀机会
+
+    // 毒师鸭 (poisoner_duck)
+    poisonTargetSessionId?: string;     // 中毒目标的 sessionId (用于毒师)
+    isPoisoned?: boolean;               // 是否中毒 (用于目标玩家)
+    poisonRemainingSeconds?: number;    // 毒杀剩余秒数（每 tick 递减）
+    poisonedBySessionId?: string;       // 下毒者 sessionId (用于目标玩家)
+
+    // 糊弄鸭 (saboteur_duck)
+    saboteurHiddenDamage?: number;      // 累计隐患百分比
+    saboteurExploded?: boolean;         // 隐患是否已爆发
+
+    // 验尸鹅 (coroner_goose)
+    investigatedDeaths?: string[];      // 已调查的死者 sessionId 列表
+
+    // 监工鹅 (overseer_goose)
+    totalTaskContribution?: number;     // 累计任务贡献度 (跨轮次)
 }
 
 export interface JokerVoteEntry {
@@ -151,6 +197,13 @@ export interface JokerRoundState {
     monitorUsedBySession: Record<string, boolean>;
     kitchenUsedBySession: Record<string, boolean>;
     medicalUsedBySession: Record<string, boolean>;
+    // New location effects (新场所)
+    dispatchUsedBySession: Record<string, boolean>;     // 调度室使用记录
+    stasisActiveBySession: Record<string, boolean>;     // 休眠舱激活状态
+    randomDispatchNextRound: boolean;                   // 下回合是否随机分配
+    randomDispatchInitiatorSessionId: string | null;    // 启动调度的玩家 sessionId
+    // === Special Role Tracking 特殊角色追踪 ===
+    taskContributionBySession: Record<string, number>;  // 监工鹅：任务贡献度追踪
 }
 
 export type JokerTaskKind = "personal" | "shared" | "emergency";
@@ -202,7 +255,7 @@ export interface JokerTaskSystemState {
 }
 
 export interface JokerGameResult {
-    winner: "duck" | "goose" | "dodo" | "hawk";
+    winner: "duck" | "goose" | "dodo" | "hawk" | "falcon" | "woodpecker";
     reason: string;
 }
 
@@ -266,6 +319,10 @@ export interface JokerSnapshot {
     deadline?: number;
     paused?: boolean;
     pauseRemainingMs?: number;
+
+    // Role template used for this game
+    roleTemplate?: JokerRoleTemplate;
+    enableSoloEffects?: boolean;
     updatedAt: number;
 }
 

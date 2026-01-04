@@ -20,6 +20,17 @@ const ROLE_COLORS: Record<JokerRole, string> = {
     goose: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
     dodo: "bg-purple-500/20 text-purple-300 border-purple-500/30",
     hawk: "bg-blue-500/20 text-blue-300 border-blue-500/30",
+    // Special goose roles
+    vigilante_goose: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
+    sheriff_goose: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
+    coroner_goose: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
+    overseer_goose: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
+    // Special duck role
+    poisoner_duck: "bg-orange-500/20 text-orange-300 border-orange-500/30",
+    saboteur_duck: "bg-orange-500/20 text-orange-300 border-orange-500/30",
+    // Neutral roles
+    falcon: "bg-blue-500/20 text-blue-300 border-blue-500/30",
+    woodpecker: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
 };
 
 const LOCATION_KEY_MAP: Record<JokerLocation, string> = {
@@ -28,6 +39,8 @@ const LOCATION_KEY_MAP: Record<JokerLocation, string> = {
     "发电室": "power",
     "监控室": "monitor",
     "仓库": "warehouse",
+    "调度室": "dispatch",
+    "休眠舱": "stasis",
 };
 
 type TimelineEvent =
@@ -57,12 +70,20 @@ export function JokerGameReview({ deaths, votingHistory, players, locationHistor
             const victimLoc = death.location ? `（${t(`locations.${LOCATION_KEY_MAP[death.location]}`)}）` : "";
             return t('review.killedBy', { killerSeat: death.killerSeat, killerLoc, victimSeat: death.seat, victimLoc });
         }
+        if (death.reason === "poison") {
+            const loc = death.location ? `（${t(`locations.${LOCATION_KEY_MAP[death.location]}`)}）` : "";
+            return `${death.seat}号${loc}被毒杀`;
+        }
         if (death.reason === "oxygen") {
             return t('review.oxygenDeath', { seat: death.seat });
         }
         if (death.reason === "foul") {
             const loc = death.location ? `（${t(`locations.${LOCATION_KEY_MAP[death.location]}`)}）` : "";
             return t('review.foulDeath', { seat: death.seat, loc });
+        }
+        if (death.reason === "suicide") {
+            const loc = death.location ? `（${t(`locations.${LOCATION_KEY_MAP[death.location]}`)}）` : "";
+            return `${death.seat}号${loc}自杀`;
         }
         if (death.reason === "vote") {
             return t('review.votedOut', { seat: death.seat });

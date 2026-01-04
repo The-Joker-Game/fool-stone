@@ -5,6 +5,7 @@ import type {
     JokerPlayerState,
     JokerPhase,
     JokerRole,
+    JokerRoleTemplate,
     JokerLocation,
     JokerLifeCodeState,
     JokerRoundState,
@@ -33,14 +34,17 @@ const OXYGEN_DRAIN_LEAK = 3;
 const GOLDEN_RABBIT_PROGRESS_REWARD = 8;
 export const GOLDEN_RABBIT_JOIN_MS = 8_000;
 
+// Meeting duration calculation: base + per_player * alive_count
+const MEETING_BASE_DURATION = 60_000;
+const MEETING_PER_PLAYER_DURATION = 30_000;
+
 // Phase durations in milliseconds
 export const PHASE_DURATIONS = {
     role_reveal: 10_000,
     green_light: 15_000,
     yellow_light: 15_000,
     red_light: 60_000,
-    meeting: 60_000,
-    voting: 120_000,
+    voting: 30_000,
     execution: 10_000,
 };
 
@@ -154,6 +158,8 @@ function createEmptyPlayer(seat: number): JokerPlayerState {
         ghostTargetLocation: null,
         ghostAssignedLocation: null,
         hauntingTarget: null,
+        // Stasis fields
+        inStasis: false,
     };
 }
 
@@ -181,6 +187,13 @@ function createEmptyRoundState(): JokerRoundState {
         monitorUsedBySession: {},
         kitchenUsedBySession: {},
         medicalUsedBySession: {},
+        // New location effects
+        dispatchUsedBySession: {},
+        stasisActiveBySession: {},
+        randomDispatchNextRound: false,
+        randomDispatchInitiatorSessionId: null,
+        // Special role tracking
+        taskContributionBySession: {},
     };
 }
 
@@ -230,22 +243,154 @@ export function initJokerRoom(roomCode: string, players: InitPlayer[]): JokerSna
 
 // ============ Role Assignment ============
 
-const ROLE_COUNTS_BY_PLAYERS: Record<number, { goose: number; duck: number; dodo: number; hawk: number }> = {
+// Simple template: original role configuration (no special roles)
+const SIMPLE_ROLE_COUNTS: Record<number, { goose: number; duck: number; dodo: number; hawk: number }> = {
     5: { goose: 4, duck: 1, dodo: 0, hawk: 0 },
     6: { goose: 4, duck: 1, dodo: 1, hawk: 0 },
     7: { goose: 4, duck: 2, dodo: 1, hawk: 0 },
     8: { goose: 4, duck: 2, dodo: 1, hawk: 1 },
     9: { goose: 5, duck: 2, dodo: 1, hawk: 1 },
     10: { goose: 6, duck: 2, dodo: 1, hawk: 1 },
-    11: { goose: 7, duck: 2, dodo: 1, hawk: 1 },
-    12: { goose: 8, duck: 3, dodo: 1, hawk: 1 },
-    13: { goose: 9, duck: 3, dodo: 1, hawk: 1 },
-    14: { goose: 10, duck: 3, dodo: 1, hawk: 1 },
-    15: { goose: 11, duck: 4, dodo: 1, hawk: 1 },
-    16: { goose: 12, duck: 4, dodo: 1, hawk: 1 },
+    11: { goose: 6, duck: 3, dodo: 1, hawk: 1 },
+    12: { goose: 7, duck: 3, dodo: 1, hawk: 1 },
+    13: { goose: 8, duck: 3, dodo: 1, hawk: 1 },
+    14: { goose: 8, duck: 4, dodo: 1, hawk: 1 },
+    15: { goose: 9, duck: 4, dodo: 1, hawk: 1 },
+    16: { goose: 10, duck: 4, dodo: 1, hawk: 1 },
 };
 
-export function assignJokerRoles(snapshot: JokerSnapshot): ActionResult {
+// Special template configuration
+interface SpecialRoleConfig {
+    baseGoose: number;           // 普通鹅数量
+    specialGooseKinds: number;   // 随机特殊鹅种类数 (0 = 无特殊鹅)
+    baseDuck: number;            // 普通鸭数量
+    poisonerDuck: number;        // 毒师鸭数量
+    saboteurDuck: number;        // 糊弄鸭数量
+    dodo: number;                // 呆呆鸟数量
+    neutralBird: "none" | "random" | "both";  // 猎鹰/啄木鸟: none=无, random=随机1个, both=都有
+}
+
+const SPECIAL_ROLE_COUNTS: Record<number, SpecialRoleConfig> = {
+    5: { baseGoose: 4, specialGooseKinds: 0, baseDuck: 1, poisonerDuck: 0, saboteurDuck: 0, dodo: 0, neutralBird: "none" },
+    6: { baseGoose: 4, specialGooseKinds: 0, baseDuck: 1, poisonerDuck: 0, saboteurDuck: 0, dodo: 1, neutralBird: "none" },
+    7: { baseGoose: 4, specialGooseKinds: 0, baseDuck: 2, poisonerDuck: 0, saboteurDuck: 0, dodo: 1, neutralBird: "none" },
+    8: { baseGoose: 4, specialGooseKinds: 0, baseDuck: 1, poisonerDuck: 1, saboteurDuck: 0, dodo: 1, neutralBird: "random" },
+    9: { baseGoose: 3, specialGooseKinds: 2, baseDuck: 1, poisonerDuck: 1, saboteurDuck: 0, dodo: 1, neutralBird: "random" },
+    10: { baseGoose: 4, specialGooseKinds: 2, baseDuck: 0, poisonerDuck: 1, saboteurDuck: 1, dodo: 1, neutralBird: "random" },
+    11: { baseGoose: 4, specialGooseKinds: 3, baseDuck: 0, poisonerDuck: 1, saboteurDuck: 1, dodo: 1, neutralBird: "random" },
+    12: { baseGoose: 4, specialGooseKinds: 3, baseDuck: 1, poisonerDuck: 1, saboteurDuck: 1, dodo: 1, neutralBird: "random" },
+    13: { baseGoose: 5, specialGooseKinds: 3, baseDuck: 1, poisonerDuck: 1, saboteurDuck: 1, dodo: 1, neutralBird: "random" },
+    14: { baseGoose: 5, specialGooseKinds: 4, baseDuck: 1, poisonerDuck: 1, saboteurDuck: 1, dodo: 1, neutralBird: "random" },
+    15: { baseGoose: 5, specialGooseKinds: 4, baseDuck: 1, poisonerDuck: 1, saboteurDuck: 1, dodo: 1, neutralBird: "both" },
+    16: { baseGoose: 6, specialGooseKinds: 4, baseDuck: 1, poisonerDuck: 1, saboteurDuck: 1, dodo: 1, neutralBird: "both" },
+};
+
+const ALL_SPECIAL_GOOSE_ROLES: JokerRole[] = ["vigilante_goose", "sheriff_goose", "coroner_goose", "overseer_goose"];
+
+/**
+ * 生成特殊鹅角色列表
+ * @param kinds 需要随机选择的特殊鹅种类数 (2/3/4)
+ * @param targetCount 需要填满的特殊鹅总数
+ * @returns 特殊鹅角色列表，总数等于 targetCount
+ */
+function generateSpecialGooseRoles(kinds: number, targetCount: number): JokerRole[] {
+    if (kinds === 0 || targetCount === 0) return [];
+
+    // 1. 随机选择 kinds 种特殊鹅类型
+    const selectedTypes = shuffleArray([...ALL_SPECIAL_GOOSE_ROLES]).slice(0, Math.min(kinds, ALL_SPECIAL_GOOSE_ROLES.length));
+
+    // 2. 初始化每种类型的数量为0
+    const typeCounts: Map<JokerRole, number> = new Map();
+    for (const type of selectedTypes) {
+        typeCounts.set(type, 0);
+    }
+
+    // 3. 随机分配 targetCount 个位置，每种最多2只
+    let remaining = targetCount;
+    const maxPerType = 2;
+
+    // 先随机分配，确保每种不超过2只
+    while (remaining > 0) {
+        // 找出还能分配的类型（当前数量 < 2）
+        const availableTypes = selectedTypes.filter(t => (typeCounts.get(t) ?? 0) < maxPerType);
+
+        if (availableTypes.length === 0) {
+            // 所有类型都已满2只，但还有剩余位置
+            // 这种情况不应该发生（kinds * 2 >= targetCount），但以防万一
+            console.warn(`[generateSpecialGooseRoles] Cannot fill all ${targetCount} slots with ${kinds} types (max 2 each)`);
+            break;
+        }
+
+        // 随机选一个类型加1只
+        const randomType = availableTypes[Math.floor(Math.random() * availableTypes.length)];
+        typeCounts.set(randomType, (typeCounts.get(randomType) ?? 0) + 1);
+        remaining--;
+    }
+
+    // 4. 生成结果数组
+    const result: JokerRole[] = [];
+    for (const [type, count] of typeCounts) {
+        for (let i = 0; i < count; i++) {
+            result.push(type);
+        }
+    }
+
+    return result;
+}
+
+/**
+ * 为特殊模版生成角色列表
+ */
+function generateSpecialTemplateRoles(playerCount: number): JokerRole[] | null {
+    const config = SPECIAL_ROLE_COUNTS[playerCount];
+    if (!config) return null;
+
+    const roles: JokerRole[] = [];
+
+    // 1. 添加普通鸭
+    for (let i = 0; i < config.baseDuck; i++) roles.push("duck");
+
+    // 2. 添加毒师鸭
+    for (let i = 0; i < config.poisonerDuck; i++) roles.push("poisoner_duck");
+
+    // 3. 添加糊弄鸭
+    for (let i = 0; i < config.saboteurDuck; i++) roles.push("saboteur_duck");
+
+    // 4. 添加呆呆鸟
+    for (let i = 0; i < config.dodo; i++) roles.push("dodo");
+
+    // 5. 添加猎鹰/啄木鸟
+    if (config.neutralBird === "random") {
+        // 随机选择一个
+        roles.push(Math.random() < 0.5 ? "falcon" : "woodpecker");
+    } else if (config.neutralBird === "both") {
+        roles.push("falcon");
+        roles.push("woodpecker");
+    }
+    // "none" 时不添加
+
+    // 6. 添加固定数量的普通鹅
+    for (let i = 0; i < config.baseGoose; i++) roles.push("goose");
+
+    // 7. 计算剩余位置（用于特殊鹅）
+    const filledCount = roles.length;
+    const specialGooseCount = playerCount - filledCount;
+
+    if (specialGooseCount < 0) {
+        console.error(`[generateSpecialTemplateRoles] Role count exceeds player count: ${filledCount} > ${playerCount}`);
+        return null;
+    }
+
+    // 8. 生成特殊鹅（凑满剩余位置）
+    if (specialGooseCount > 0 && config.specialGooseKinds > 0) {
+        const specialGooseRoles = generateSpecialGooseRoles(config.specialGooseKinds, specialGooseCount);
+        roles.push(...specialGooseRoles);
+    }
+
+    return roles;
+}
+
+export function assignJokerRoles(snapshot: JokerSnapshot, template: JokerRoleTemplate = "simple"): ActionResult {
     const alivePlayers = snapshot.players.filter(p => p.sessionId);
     const playerCount = alivePlayers.length;
 
@@ -253,20 +398,34 @@ export function assignJokerRoles(snapshot: JokerSnapshot): ActionResult {
         return { ok: false, error: "Need at least 5 players to start" };
     }
 
-    const roleConfig = ROLE_COUNTS_BY_PLAYERS[playerCount];
-    if (!roleConfig) {
-        return { ok: false, error: "Unsupported player count" };
+    let roles: JokerRole[];
+
+    if (template === "special") {
+        const specialRoles = generateSpecialTemplateRoles(playerCount);
+        if (!specialRoles) {
+            return { ok: false, error: "Unsupported player count for special template" };
+        }
+        roles = specialRoles;
+    } else {
+        // Simple template
+        const roleConfig = SIMPLE_ROLE_COUNTS[playerCount];
+        if (!roleConfig) {
+            return { ok: false, error: "Unsupported player count" };
+        }
+        roles = [
+            ...Array(roleConfig.duck).fill("duck"),
+            ...Array(roleConfig.goose).fill("goose"),
+            ...Array(roleConfig.hawk).fill("hawk"),
+            ...Array(roleConfig.dodo).fill("dodo"),
+        ];
     }
 
-    const roles: JokerRole[] = [
-        ...Array(roleConfig.duck).fill("duck"),
-        ...Array(roleConfig.goose).fill("goose"),
-        ...Array(roleConfig.hawk).fill("hawk"),
-        ...Array(roleConfig.dodo).fill("dodo"),
-    ];
     if (roles.length !== playerCount) {
-        return { ok: false, error: "Role count mismatch" };
+        return { ok: false, error: `Role count mismatch: ${roles.length} roles for ${playerCount} players` };
     }
+
+    // Store the template used
+    snapshot.roleTemplate = template;
 
     const shuffledPlayers = [...alivePlayers].sort(() => Math.random() - 0.5);
     const shuffledRoles = shuffleArray(roles);
@@ -279,6 +438,8 @@ export function assignJokerRoles(snapshot: JokerSnapshot): ActionResult {
             resetOxygen(player, INITIAL_OXYGEN);
             player.duckEmergencyUsed = false;
             player.hawkEmergencyUsed = false;
+            // Reset special role state
+            player.vigilanteKillUsed = false;
         }
     }
 
@@ -290,16 +451,38 @@ export function assignJokerRoles(snapshot: JokerSnapshot): ActionResult {
 
     snapshot.updatedAt = Date.now();
 
+    // Log role assignment for debugging
+    console.log(`[JokerGame] Role assignment complete (template: ${template})`);
+    console.log(`[JokerGame] Players: ${playerCount}`);
+    const roleDistribution: Record<string, number> = {};
+    for (const role of shuffledRoles) {
+        roleDistribution[role] = (roleDistribution[role] || 0) + 1;
+    }
+    console.log(`[JokerGame] Role distribution:`, JSON.stringify(roleDistribution));
+    for (const player of snapshot.players.filter(p => p.sessionId)) {
+        const isBot = player.sessionId?.startsWith('BOT_') ? ' [BOT]' : '';
+        console.log(`[JokerGame]   Seat ${player.seat}: ${player.name}${isBot} -> ${player.role}`);
+    }
+
     return { ok: true };
 }
 
 // ============ Location System ============
 
-const ALL_LOCATIONS: JokerLocation[] = ["厨房", "医务室", "发电室", "监控室", "仓库"];
+const ALL_LOCATIONS: JokerLocation[] = ["厨房", "医务室", "发电室", "监控室", "仓库", "调度室", "休眠舱"];
+
+// Player count -> location count mapping
+const LOCATION_COUNT_BY_PLAYERS: Record<number, number> = {
+    3: 2, 4: 2,
+    5: 3, 6: 3,
+    7: 4, 8: 4,
+    9: 5, 10: 5,
+    11: 6, 12: 6, 13: 6,
+    14: 7, 15: 7, 16: 7,
+};
 
 export function computeLocations(aliveCount: number): JokerLocation[] {
-    // Location count = ceil(alive / 2), max 5
-    const count = Math.min(5, Math.ceil(aliveCount / 2));
+    const count = LOCATION_COUNT_BY_PLAYERS[aliveCount] ?? Math.min(7, Math.ceil(aliveCount / 2));
     return ALL_LOCATIONS.slice(0, count);
 }
 
@@ -334,66 +517,128 @@ export function assignLocations(snapshot: JokerSnapshot): ActionResult {
         return { ok: false, error: "No active locations" };
     }
 
-    // Group players by target location preference
-    const preferences: Map<JokerLocation, JokerPlayerState[]> = new Map();
-    const noPreference: JokerPlayerState[] = [];
-
-    for (const loc of locations) {
-        preferences.set(loc, []);
-    }
-
-    for (const player of alivePlayers) {
-        if (player.targetLocation && locations.includes(player.targetLocation)) {
-            preferences.get(player.targetLocation)!.push(player);
-        } else {
-            noPreference.push(player);
-        }
-    }
-
-    // Assign locations respecting constraints:
-    // - Each location: min 1, max 3 players
-    // - Respect preferences when possible
-
     const assignments: Map<JokerLocation, JokerPlayerState[]> = new Map();
     for (const loc of locations) {
         assignments.set(loc, []);
     }
 
-    // First pass: assign players with preferences (up to max 3)
-    for (const [loc, players] of preferences) {
-        const toAssign = players.slice(0, 3);
-        for (const p of toAssign) {
-            assignments.get(loc)!.push(p);
-        }
-        // Overflow goes to no preference
-        for (let i = 3; i < players.length; i++) {
-            noPreference.push(players[i]);
-        }
-    }
+    // Check if random dispatch is active (from dispatch room effect)
+    if (snapshot.round.randomDispatchNextRound) {
+        // Random dispatch: ignore preferences for others, but initiator goes to their chosen location
+        const initiatorSessionId = snapshot.round.randomDispatchInitiatorSessionId;
+        const initiator = initiatorSessionId
+            ? alivePlayers.find(p => p.sessionId === initiatorSessionId)
+            : null;
 
-    // Second pass: ensure each location has at least 1 player
-    for (const loc of locations) {
-        if (assignments.get(loc)!.length === 0 && noPreference.length > 0) {
-            const player = noPreference.shift()!;
-            assignments.get(loc)!.push(player);
+        // First: assign initiator to their preferred location (if valid)
+        if (initiator && initiator.targetLocation && locations.includes(initiator.targetLocation)) {
+            assignments.get(initiator.targetLocation)!.push(initiator);
         }
-    }
 
-    // Third pass: distribute remaining players
-    for (const player of noPreference) {
-        // Find location with fewest players (under max)
-        let minLoc = locations[0];
-        let minCount = assignments.get(minLoc)!.length;
+        // Get other players (excluding initiator if already assigned)
+        const otherPlayers = alivePlayers.filter(p => {
+            if (initiator && p.sessionId === initiator.sessionId) {
+                return !initiator.targetLocation || !locations.includes(initiator.targetLocation);
+            }
+            return true;
+        });
+        const shuffledPlayers = shuffleArray([...otherPlayers]);
+        let playerIndex = 0;
 
+        // Second pass: ensure each location has at least 1 player
         for (const loc of locations) {
-            const count = assignments.get(loc)!.length;
-            if (count < minCount && count < 3) {
-                minLoc = loc;
-                minCount = count;
+            if (assignments.get(loc)!.length === 0 && playerIndex < shuffledPlayers.length) {
+                assignments.get(loc)!.push(shuffledPlayers[playerIndex]);
+                playerIndex++;
             }
         }
 
-        assignments.get(minLoc)!.push(player);
+        // Third pass: distribute remaining players (up to max 3 per location)
+        while (playerIndex < shuffledPlayers.length) {
+            // Find location with fewest players (under max 3)
+            let minLoc = locations[0];
+            let minCount = assignments.get(minLoc)!.length;
+
+            for (const loc of locations) {
+                const count = assignments.get(loc)!.length;
+                if (count < minCount && count < 3) {
+                    minLoc = loc;
+                    minCount = count;
+                }
+            }
+
+            assignments.get(minLoc)!.push(shuffledPlayers[playerIndex]);
+            playerIndex++;
+        }
+
+        // Reset the flags
+        snapshot.round.randomDispatchNextRound = false;
+        snapshot.round.randomDispatchInitiatorSessionId = null;
+    } else {
+        // Normal assignment: respect player preferences
+
+        // Group players by target location preference
+        const preferences: Map<JokerLocation, JokerPlayerState[]> = new Map();
+        const noPreference: JokerPlayerState[] = [];
+
+        for (const loc of locations) {
+            preferences.set(loc, []);
+        }
+
+        for (const player of alivePlayers) {
+            if (player.targetLocation && locations.includes(player.targetLocation)) {
+                preferences.get(player.targetLocation)!.push(player);
+            } else {
+                noPreference.push(player);
+            }
+        }
+
+        // First pass: assign players with preferences (up to max 3)
+        // Shuffle each location's players to randomize who gets overflow
+        for (const [loc, players] of preferences) {
+            const shuffledPlayers = shuffleArray([...players]);
+            const toAssign = shuffledPlayers.slice(0, 3);
+            for (const p of toAssign) {
+                assignments.get(loc)!.push(p);
+            }
+            // Overflow goes to no preference
+            for (let i = 3; i < shuffledPlayers.length; i++) {
+                noPreference.push(shuffledPlayers[i]);
+            }
+        }
+
+        // Shuffle noPreference for random assignment to empty locations
+        const shuffledNoPreference = shuffleArray([...noPreference]);
+        noPreference.length = 0;
+        noPreference.push(...shuffledNoPreference);
+
+        // Second pass: ensure each location has at least 1 player
+        for (const loc of locations) {
+            if (assignments.get(loc)!.length === 0 && noPreference.length > 0) {
+                const player = noPreference.shift()!;
+                assignments.get(loc)!.push(player);
+            }
+        }
+
+        // Third pass: distribute remaining players
+        for (const player of noPreference) {
+            // Find minimum count among locations not yet full
+            let minCount = Infinity;
+            for (const loc of locations) {
+                const count = assignments.get(loc)!.length;
+                if (count < 3 && count < minCount) {
+                    minCount = count;
+                }
+            }
+            // Collect all locations with minimum count for random selection
+            const candidates = locations.filter(
+                loc => assignments.get(loc)!.length === minCount
+            );
+            // Random select from candidates
+            const minLoc = candidates[Math.floor(Math.random() * candidates.length)];
+
+            assignments.get(minLoc)!.push(player);
+        }
     }
 
     // Apply assignments
@@ -436,9 +681,13 @@ export function confirmArrival(snapshot: JokerSnapshot, sessionId: string): Acti
 type JokerCamp = "goose" | "duck" | "neutral";
 
 function getCamp(role: JokerRole | null): JokerCamp | null {
-    if (role === "goose") return "goose";
-    if (role === "duck") return "duck";
-    if (role === "hawk" || role === "dodo") return "neutral";
+    if (!role) return null;
+    // 鹅阵营 (Goose faction): base goose or any role ending with _goose
+    if (role === "goose" || role.endsWith("_goose")) return "goose";
+    // 鸭阵营 (Duck faction): base duck or any role ending with _duck
+    if (role === "duck" || role.endsWith("_duck")) return "duck";
+    // 中立阵营 (Neutral faction): dodo, hawk, falcon, woodpecker
+    if (["hawk", "dodo", "falcon", "woodpecker"].includes(role)) return "neutral";
     return null;
 }
 
@@ -462,6 +711,9 @@ function ensureRoundTracking(snapshot: JokerSnapshot): void {
     if (!snapshot.round.monitorUsedBySession) snapshot.round.monitorUsedBySession = {};
     if (!snapshot.round.kitchenUsedBySession) snapshot.round.kitchenUsedBySession = {};
     if (!snapshot.round.medicalUsedBySession) snapshot.round.medicalUsedBySession = {};
+    // New location effects
+    if (!snapshot.round.dispatchUsedBySession) snapshot.round.dispatchUsedBySession = {};
+    if (!snapshot.round.stasisActiveBySession) snapshot.round.stasisActiveBySession = {};
 }
 
 // ============ Life Code System ============
@@ -546,9 +798,23 @@ export function submitLifeCodeAction(
     }
 
     const now = Date.now();
+    const actorCamp = getCamp(actor.role);
 
-    // CRITICAL: Goose or dodo trying to kill = immediate foul death, regardless of code validity
-    if (payload.action === "kill" && (actor.role === "goose" || actor.role === "dodo")) {
+    // === FOUL DEATH CHECK ===
+    // Roles that commit foul when attempting to kill:
+    // - Basic goose
+    // - dodo (neutral but cannot kill)
+    // - Goose special roles that can't kill: coroner_goose, overseer_goose
+    // - vigilante_goose who has already used their kill
+    const foulOnKill = payload.action === "kill" && (
+        actor.role === "goose" ||
+        actor.role === "dodo" ||
+        actor.role === "coroner_goose" ||
+        actor.role === "overseer_goose" ||
+        (actor.role === "vigilante_goose" && actor.vigilanteKillUsed)
+    );
+
+    if (foulOnKill) {
         actor.isAlive = false;
 
         // Create death record for foul
@@ -556,7 +822,7 @@ export function submitLifeCodeAction(
             sessionId: actor.sessionId!,
             seat: actor.seat,
             name: actor.name,
-            role: actor.role,
+            role: actor.role!,
             reason: "foul",
             location: actor.location ?? undefined,
             round: snapshot.roundCount,
@@ -586,8 +852,13 @@ export function submitLifeCodeAction(
     const target = findPlayerByLifeCode(snapshot, payload.code, includeOldCodes);
 
     if (!target) {
-        // Duck or hawk loses 30s oxygen for incorrect kill code
-        if (payload.action === "kill" && (actor.role === "duck" || actor.role === "hawk")) {
+        // Roles that can kill lose 30s oxygen for incorrect kill code
+        // This includes: duck, hawk, vigilante_goose (unused), sheriff_goose, poisoner_duck, falcon, woodpecker
+        const canKillRoles = [
+            "duck", "hawk", "poisoner_duck", "falcon", "woodpecker",
+            "vigilante_goose", "sheriff_goose"
+        ];
+        if (payload.action === "kill" && actor.role && canKillRoles.includes(actor.role)) {
             const KILL_CODE_PENALTY = 30;
             deductOxygen(actor, KILL_CODE_PENALTY);
             snapshot.updatedAt = now;
@@ -611,20 +882,127 @@ function handleKillAction(
     target: JokerPlayerState
 ): ActionResult {
     const now = Date.now();
+    const actorRole = actor.role;
+    const targetCamp = getCamp(target.role);
 
-    // Note: Goose/dodo foul death is now handled earlier in submitLifeCodeAction
-    // This function is only called for duck/hawk with valid target
+    // If target is in stasis, pretend the kill was successful but don't actually kill them
+    if (target.inStasis) {
+        // Still consume vigilante's one-time chance
+        if (actorRole === "vigilante_goose") {
+            actor.vigilanteKillUsed = true;
+        }
+        return { ok: true, message: "Kill successful" };
+    }
 
-    // Duck or hawk kills target (no location check, no same-round check per rules)
+    // === SPECIAL ROLE KILL HANDLING ===
+
+    // 正义鹅 (vigilante_goose): One-time kill, then mark as used
+    if (actorRole === "vigilante_goose") {
+        actor.vigilanteKillUsed = true;
+        return performKill(snapshot, actor, target, "kill", now);
+    }
+
+    // 警长鹅 (sheriff_goose): Kill works, but if target is goose camp, actor commits suicide
+    if (actorRole === "sheriff_goose") {
+        const killResult = performKill(snapshot, actor, target, "kill", now);
+
+        // If target was goose camp, sheriff commits suicide
+        if (targetCamp === "goose") {
+            actor.isAlive = false;
+            snapshot.deaths.push({
+                sessionId: actor.sessionId!,
+                seat: actor.seat,
+                name: actor.name,
+                role: actor.role!,
+                reason: "suicide",
+                location: actor.location ?? undefined,
+                round: snapshot.roundCount,
+                at: now,
+                revealed: false,
+            });
+            snapshot.logs.push({
+                at: now,
+                text: `Player ${actor.name} died`,
+                type: "death",
+            });
+        }
+        snapshot.updatedAt = now;
+        return killResult;
+    }
+
+    // 毒师鸭 (poisoner_duck): Don't kill immediately, set poison timer
+    if (actorRole === "poisoner_duck") {
+        // Set poison on target (60 seconds countdown, decremented each tick)
+        target.isPoisoned = true;
+        target.poisonRemainingSeconds = 60;
+        target.poisonedBySessionId = actor.sessionId ?? undefined;
+
+        // Track on actor too for reference
+        actor.poisonTargetSessionId = target.sessionId ?? undefined;
+
+        snapshot.updatedAt = now;
+        return { ok: true, message: "下毒成功，60秒后生效" };
+    }
+
+    // 稠木鸟 (woodpecker): Cause oxygen leak instead of killing
+    if (actorRole === "woodpecker") {
+        // Trigger oxygen leak on target (same as emergency task effect)
+        target.oxygenLeakActive = true;
+        target.oxygenLeakStartedAt = now;
+        target.oxygenLeakResolvedAt = undefined;
+        target.oxygenLeakRound = snapshot.roundCount;
+        // Set drain rate to leak rate (3 per second)
+        setOxygenDrainRate(target, OXYGEN_DRAIN_LEAK);
+
+        snapshot.updatedAt = now;
+        return { ok: true, message: "氧气泄漏触发成功" };
+    }
+
+    // 猎鹰 (falcon), duck, hawk: Normal kill
+    // Only these roles can perform normal kills
+    const allowedKillers: JokerRole[] = ["duck", "hawk", "falcon"];
+    if (actorRole && allowedKillers.includes(actorRole)) {
+        return performKill(snapshot, actor, target, "kill", now);
+    }
+
+    // All other roles (including goose) attempting to kill = foul death
+    actor.isAlive = false;
+    snapshot.deaths.push({
+        sessionId: actor.sessionId!,
+        seat: actor.seat,
+        name: actor.name,
+        role: actor.role!,
+        reason: "foul",
+        location: actor.location ?? undefined,
+        round: snapshot.roundCount,
+        at: now,
+        revealed: false,
+    });
+    snapshot.logs.push({
+        at: now,
+        text: `Player ${actor.name} committed foul`,
+        type: "death",
+    });
+    snapshot.updatedAt = now;
+    return { ok: false, error: "Foul death - you cannot kill!" };
+}
+
+// Helper function for standard kill execution
+function performKill(
+    snapshot: JokerSnapshot,
+    actor: JokerPlayerState,
+    target: JokerPlayerState,
+    reason: "kill" | "poison",
+    now: number
+): ActionResult {
     target.isAlive = false;
 
-    // Create death record for kill
     snapshot.deaths.push({
         sessionId: target.sessionId!,
         seat: target.seat,
         name: target.name,
         role: target.role!,
-        reason: "kill",
+        reason: reason,
         killerSessionId: actor.sessionId ?? undefined,
         killerSeat: actor.seat,
         killerLocation: actor.location ?? undefined,
@@ -641,7 +1019,6 @@ function handleKillAction(
     });
 
     snapshot.updatedAt = now;
-
     return { ok: true, message: "Kill successful" };
 }
 
@@ -664,6 +1041,11 @@ function handleOxygenAction(
     // Check same location
     if (actor.location !== target.location) {
         return { ok: false, error: "Not in same location" };
+    }
+
+    // Check if target is in stasis (cannot receive oxygen)
+    if (target.inStasis) {
+        return { ok: false, error: "Target is in stasis" };
     }
 
     // Check if actor already gave oxygen to this target this round
@@ -710,6 +1092,71 @@ function applyOxygenWithoutLeakFix(target: JokerPlayerState, amount: number): vo
     addOxygen(target, amount);
 }
 
+// ============ Poison Death Check (毒师鸭) ============
+
+/**
+ * Tick-based poison check: decrements remaining seconds, kills at 0
+ * - Skips players in stasis (poison paused)
+ * - Called every tick alongside oxygen
+ */
+export function checkPoisonDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
+    const now = Date.now();
+    const deaths: JokerPlayerState[] = [];
+
+    for (const player of snapshot.players) {
+        if (!player.isAlive || !player.isPoisoned) continue;
+        if (player.poisonRemainingSeconds === undefined) continue;
+
+        // Skip if in stasis (poison paused)
+        if (player.inStasis) continue;
+
+        // Decrement remaining seconds (1 per tick)
+        player.poisonRemainingSeconds -= 1;
+
+        // Check if poison kills
+        if (player.poisonRemainingSeconds <= 0) {
+            player.isAlive = false;
+
+            // Find the poisoner for death record
+            const poisoner = snapshot.players.find(p => p.sessionId === player.poisonedBySessionId);
+
+            snapshot.deaths.push({
+                sessionId: player.sessionId!,
+                seat: player.seat,
+                name: player.name,
+                role: player.role!,
+                reason: "poison",
+                killerSessionId: player.poisonedBySessionId,
+                killerSeat: poisoner?.seat,
+                killerLocation: undefined, // Poison kills remotely
+                location: player.location ?? undefined,
+                round: snapshot.roundCount,
+                at: now,
+                revealed: false,
+            });
+
+            snapshot.logs.push({
+                at: now,
+                text: `Player ${player.name} died from poison`,
+                type: "death",
+            });
+
+            // Clear poison state
+            player.isPoisoned = false;
+            player.poisonRemainingSeconds = undefined;
+            player.poisonedBySessionId = undefined;
+
+            deaths.push(player);
+        }
+    }
+
+    if (deaths.length > 0) {
+        snapshot.updatedAt = now;
+    }
+
+    return deaths;
+}
+
 export function useMonitoringPeek(
     snapshot: JokerSnapshot,
     sessionId: string,
@@ -747,11 +1194,12 @@ export function useMonitoringPeek(
         return { ok: false, error: "Invalid player" };
     }
 
-    // Filter candidates by target location and different camp
+    // Filter candidates by target location and different camp (exclude stasis players)
     const candidates = snapshot.players.filter(p => {
         if (!p.isAlive || !p.sessionId) return false;
         if (p.sessionId === sessionId) return false;
         if (p.location !== targetLocation) return false;
+        if (p.inStasis) return false;  // Stasis players are immune to monitoring
         const camp = getCamp(p.role);
         return camp !== null && camp !== actorCamp;
     });
@@ -926,6 +1374,8 @@ export function useWarehouseOxygen(
     const now = Date.now();
     for (const player of snapshot.players) {
         if (!player.isAlive || !player.sessionId) continue;
+        // Players in stasis don't receive warehouse oxygen
+        if (player.inStasis) continue;
         applyOxygenWithoutLeakFix(player, WAREHOUSE_OXYGEN_REFILL);
     }
 
@@ -938,6 +1388,204 @@ export function useWarehouseOxygen(
 
     snapshot.updatedAt = now;
     return { ok: true };
+}
+
+export function useDispatchRoom(
+    snapshot: JokerSnapshot,
+    sessionId: string
+): ActionResult {
+    if (snapshot.phase !== "red_light") {
+        return { ok: false, error: "Location effects only available during red light" };
+    }
+
+    const actor = snapshot.players.find(p => p.sessionId === sessionId);
+    if (!actor || !actor.isAlive || !actor.location) {
+        return { ok: false, error: "Invalid player" };
+    }
+
+    if (actor.location !== "调度室") {
+        return { ok: false, error: "Not in dispatch room" };
+    }
+
+    if (!isSoloInLocation(snapshot, sessionId, actor.location)) {
+        return { ok: false, error: "Not alone in location" };
+    }
+
+    ensureRoundTracking(snapshot);
+    if (snapshot.round.dispatchUsedBySession[sessionId]) {
+        return { ok: false, error: "Dispatch already used this round" };
+    }
+
+    snapshot.round.dispatchUsedBySession[sessionId] = true;
+    snapshot.round.randomDispatchNextRound = true;
+    snapshot.round.randomDispatchInitiatorSessionId = sessionId;
+
+    const now = Date.now();
+    snapshot.logs.push({
+        at: now,
+        text: `Player ${actor.name} activated random dispatch for next round`,
+        type: "system",
+    });
+
+    snapshot.updatedAt = now;
+    return { ok: true };
+}
+
+export function useStasisPod(
+    snapshot: JokerSnapshot,
+    sessionId: string
+): ActionResult {
+    if (snapshot.phase !== "red_light") {
+        return { ok: false, error: "Location effects only available during red light" };
+    }
+
+    const actor = snapshot.players.find(p => p.sessionId === sessionId);
+    if (!actor || !actor.isAlive || !actor.location) {
+        return { ok: false, error: "Invalid player" };
+    }
+
+    if (actor.location !== "休眠舱") {
+        return { ok: false, error: "Not in stasis pod" };
+    }
+
+    if (!isSoloInLocation(snapshot, sessionId, actor.location)) {
+        return { ok: false, error: "Not alone in location" };
+    }
+
+    ensureRoundTracking(snapshot);
+    if (snapshot.round.stasisActiveBySession[sessionId]) {
+        return { ok: false, error: "Already in stasis" };
+    }
+
+    snapshot.round.stasisActiveBySession[sessionId] = true;
+    actor.inStasis = true;
+    // Pause oxygen drain
+    setOxygenDrainRate(actor, 0);
+
+    const now = Date.now();
+    snapshot.logs.push({
+        at: now,
+        text: `Player ${actor.name} entered stasis pod`,
+        type: "system",
+    });
+
+    snapshot.updatedAt = now;
+    return { ok: true };
+}
+
+// ============ Special Role Abilities (验尸鹅 / 监工鹅) ============
+
+/**
+ * 验尸鹅 (coroner_goose): Investigate a dead player's death cause
+ * Only works when alone at a location during red light
+ */
+export function coronerInvestigate(
+    snapshot: JokerSnapshot,
+    sessionId: string,
+    deadSessionId: string
+): ActionResult {
+    if (snapshot.phase !== "red_light") {
+        return { ok: false, error: "Investigation only available during red light" };
+    }
+
+    const actor = snapshot.players.find(p => p.sessionId === sessionId);
+    if (!actor || !actor.isAlive || !actor.location) {
+        return { ok: false, error: "Invalid player" };
+    }
+
+    // Must be coroner_goose
+    if (actor.role !== "coroner_goose") {
+        return { ok: false, error: "Only coroner can investigate deaths" };
+    }
+
+    // Must be alone
+    if (!isSoloInLocation(snapshot, sessionId, actor.location)) {
+        return { ok: false, error: "Must be alone to investigate" };
+    }
+
+    // Find the death record
+    const deathRecord = snapshot.deaths.find(d => d.sessionId === deadSessionId);
+    if (!deathRecord) {
+        return { ok: false, error: "No death record found" };
+    }
+
+    // Initialize investigated list if needed
+    if (!actor.investigatedDeaths) {
+        actor.investigatedDeaths = [];
+    }
+
+    // Check if already investigated
+    if (actor.investigatedDeaths.includes(deadSessionId)) {
+        return { ok: false, error: "Already investigated this death" };
+    }
+
+    // Mark as investigated
+    actor.investigatedDeaths.push(deadSessionId);
+    snapshot.updatedAt = Date.now();
+
+    // Return the death cause (but not the killer's identity)
+    return {
+        ok: true,
+        data: {
+            reason: deathRecord.reason,
+            deadName: deathRecord.name,
+            deadSeat: deathRecord.seat,
+        }
+    };
+}
+
+/**
+ * 监工鹅 (overseer_goose): Check a player's task contribution
+ * Only works when alone at a location during red light
+ */
+export function overseerInvestigate(
+    snapshot: JokerSnapshot,
+    sessionId: string,
+    targetSessionId: string
+): ActionResult {
+    if (snapshot.phase !== "red_light") {
+        return { ok: false, error: "Investigation only available during red light" };
+    }
+
+    const actor = snapshot.players.find(p => p.sessionId === sessionId);
+    if (!actor || !actor.isAlive || !actor.location) {
+        return { ok: false, error: "Invalid player" };
+    }
+
+    // Must be overseer_goose
+    if (actor.role !== "overseer_goose") {
+        return { ok: false, error: "Only overseer can investigate contributions" };
+    }
+
+    // Must be alone
+    if (!isSoloInLocation(snapshot, sessionId, actor.location)) {
+        return { ok: false, error: "Must be alone to investigate" };
+    }
+
+    // Find target
+    const target = snapshot.players.find(p => p.sessionId === targetSessionId);
+    if (!target || !target.sessionId) {
+        return { ok: false, error: "Invalid target" };
+    }
+
+    // Cannot investigate self
+    if (targetSessionId === sessionId) {
+        return { ok: false, error: "Cannot investigate yourself" };
+    }
+
+    // Get cumulative contribution from player (not round-based)
+    const contribution = target.totalTaskContribution ?? 0;
+
+    snapshot.updatedAt = Date.now();
+
+    return {
+        ok: true,
+        data: {
+            targetName: target.name,
+            targetSeat: target.seat,
+            contribution: contribution,
+        }
+    };
 }
 
 export function failLocationEffect(
@@ -990,6 +1638,18 @@ export function failLocationEffect(
             }
             snapshot.round.warehouseUsedBySession[sessionId] = true;
             break;
+        case "调度室":
+            if (snapshot.round.dispatchUsedBySession[sessionId]) {
+                return { ok: false, error: "Dispatch already used this round" };
+            }
+            snapshot.round.dispatchUsedBySession[sessionId] = true;
+            break;
+        case "休眠舱":
+            if (snapshot.round.stasisActiveBySession[sessionId]) {
+                return { ok: false, error: "Already in stasis" };
+            }
+            snapshot.round.stasisActiveBySession[sessionId] = true;
+            break;
         default:
             return { ok: false, error: "Invalid location" };
     }
@@ -1013,6 +1673,8 @@ export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
 
     for (const player of snapshot.players) {
         if (!player.isAlive || !player.sessionId) continue;
+        // Players in stasis don't consume oxygen
+        if (player.inStasis) continue;
 
         const currentOxygen = getCurrentOxygen(player.oxygenState);
         if (currentOxygen <= 0) {
@@ -1093,11 +1755,15 @@ export function startMeeting(
         }
     }
 
+    // Calculate meeting duration based on alive player count
+    const alivePlayerCount = snapshot.players.filter(p => p.isAlive && p.sessionId).length;
+    const meetingDuration = MEETING_BASE_DURATION + MEETING_PER_PLAYER_DURATION * alivePlayerCount;
+
     snapshot.phase = "meeting";
     snapshot.meeting = {
         reporterSessionId,
         bodySessionId,
-        discussionEndAt: now + PHASE_DURATIONS.meeting,
+        discussionEndAt: now + meetingDuration,
         triggerType,
         triggerPlayerName: triggerType === "player" ? reporter.name : undefined,
         triggerPlayerSeat: triggerType === "player" ? reporter.seat : undefined,
@@ -1313,48 +1979,83 @@ export function resolveVotes(snapshot: JokerSnapshot): ActionResult {
 // ============ Win Condition ============
 
 export function checkWinCondition(snapshot: JokerSnapshot): JokerGameResult | null {
+    // Dodo wins if voted out
     if (snapshot.execution?.executedRole === "dodo" && snapshot.execution.reason === "vote") {
         return { winner: "dodo", reason: "dodo_voted" };
     }
 
     const alivePlayers = snapshot.players.filter(p => p.isAlive && p.sessionId);
-    const aliveDucks = alivePlayers.filter(p => p.role === "duck");
-    const aliveGeese = alivePlayers.filter(p => p.role === "goose");
+
+    // Count players by camp using getCamp() for proper special role handling
+    const aliveBycamp = {
+        goose: alivePlayers.filter(p => getCamp(p.role) === "goose"),
+        duck: alivePlayers.filter(p => getCamp(p.role) === "duck"),
+        neutral: alivePlayers.filter(p => getCamp(p.role) === "neutral"),
+    };
+
+    // Find specific neutral roles
     const aliveHawks = alivePlayers.filter(p => p.role === "hawk");
+    const aliveFalcons = alivePlayers.filter(p => p.role === "falcon");
+    const aliveWoodpeckers = alivePlayers.filter(p => p.role === "woodpecker");
     const aliveDodos = alivePlayers.filter(p => p.role === "dodo");
 
+    // === NEUTRAL ROLE VICTORIES ===
+
+    // Hawk victory: alive alone or with exactly 1 goose-camp player
     if (aliveHawks.length === 1) {
         if (alivePlayers.length === 1) {
             return { winner: "hawk", reason: "hawk_survive" };
         }
-        if (
-            alivePlayers.length === 2 &&
-            aliveGeese.length === 1 &&
-            aliveDucks.length === 0 &&
-            aliveDodos.length === 0
-        ) {
+        if (alivePlayers.length === 2 && aliveBycamp.goose.length === 1 &&
+            aliveBycamp.duck.length === 0) {
             return { winner: "hawk", reason: "hawk_survive" };
         }
     }
 
+    // 猎鹰 (Falcon) victory: alive alone or with exactly 1 goose-camp player
+    if (aliveFalcons.length === 1) {
+        if (alivePlayers.length === 1) {
+            return { winner: "falcon", reason: "falcon_survive" };
+        }
+        if (alivePlayers.length === 2 && aliveBycamp.goose.length === 1 &&
+            aliveBycamp.duck.length === 0) {
+            return { winner: "falcon", reason: "falcon_survive" };
+        }
+    }
+
+    // 啄木鸟 (Woodpecker) victory: alive alone or with exactly 1 goose-camp player
+    if (aliveWoodpeckers.length === 1) {
+        if (alivePlayers.length === 1) {
+            return { winner: "woodpecker", reason: "woodpecker_survive" };
+        }
+        if (alivePlayers.length === 2 && aliveBycamp.goose.length === 1 &&
+            aliveBycamp.duck.length === 0) {
+            return { winner: "woodpecker", reason: "woodpecker_survive" };
+        }
+    }
+
+    // === GOOSE VICTORIES ===
+
     // Goose win: task progress reaches 100%
-    if (snapshot.taskProgress >= 100 && aliveGeese.length > 0) {
+    if (snapshot.taskProgress >= 100 && aliveBycamp.goose.length > 0) {
         return { winner: "goose", reason: "task_complete" };
     }
 
-    // Goose win: all ducks dead
-    if (aliveDucks.length === 0 && aliveGeese.length > 0) {
+    // Goose win: all ducks dead (counting all duck-camp roles)
+    if (aliveBycamp.duck.length === 0 && aliveBycamp.goose.length > 0) {
         return { winner: "goose", reason: "all_ducks_eliminated" };
     }
 
-    // Duck win: all geese dead
-    if (aliveDucks.length > 0 && aliveGeese.length === 0) {
+    // === DUCK VICTORIES ===
+
+    // Duck win: all geese dead (counting all goose-camp roles)
+    if (aliveBycamp.duck.length > 0 && aliveBycamp.goose.length === 0) {
         return { winner: "duck", reason: "all_geese_eliminated" };
     }
 
     // Duck win: ducks >= non-ducks
-    const nonDuckCount = alivePlayers.length - aliveDucks.length;
-    if (aliveDucks.length > 0 && aliveDucks.length >= nonDuckCount) {
+    const nonDuckCount = alivePlayers.length - aliveBycamp.duck.length;
+    if (aliveBycamp.duck.length > 0 && aliveBycamp.duck.length >= nonDuckCount) {
         return { winner: "duck", reason: "duck_majority" };
     }
 
@@ -1409,6 +2110,11 @@ export function startTask(snapshot: JokerSnapshot, sessionId: string): ActionRes
         return { ok: false, error: "Dead players cannot do tasks" };
     }
 
+    // Players in stasis cannot do tasks
+    if (player.inStasis) {
+        return { ok: false, error: "Players in stasis cannot do tasks" };
+    }
+
     // Deduct oxygen
     deductOxygen(player, TASK_OXYGEN_COST);
     snapshot.updatedAt = Date.now();
@@ -1433,7 +2139,37 @@ export function completeTask(snapshot: JokerSnapshot, sessionId: string): Action
         ? POWER_TASK_PROGRESS_PER_COMPLETION
         : TASK_PROGRESS_PER_COMPLETION;
 
+
+    // Track cumulative contribution for overseer_goose investigation (stored on player, not round)
+    player.totalTaskContribution = (player.totalTaskContribution ?? 0) + progressGain;
+
+    // 糊弄鸭 (saboteur_duck): Track contribution for explosion calculation
+    // Hidden damage = contribution × 2 (deducted when task reaches 100%)
+    if (player.role === "saboteur_duck" && !player.saboteurExploded) {
+        player.saboteurHiddenDamage = (player.saboteurHiddenDamage ?? 0) + progressGain;
+    }
+
     snapshot.taskProgress = Math.min(100, snapshot.taskProgress + progressGain);
+
+    // 糊弄鸭爆发：当任务进度达到100%时，扣除糊弄鸭贡献 × 2
+    if (snapshot.taskProgress >= 100) {
+        let totalExplosionDamage = 0;
+        for (const p of snapshot.players) {
+            if (p.role === "saboteur_duck" && !p.saboteurExploded && p.saboteurHiddenDamage) {
+                totalExplosionDamage += p.saboteurHiddenDamage * 2;
+                p.saboteurExploded = true;  // 标记已爆发，防止重复扣除
+            }
+        }
+        if (totalExplosionDamage > 0) {
+            snapshot.taskProgress = Math.max(0, snapshot.taskProgress - totalExplosionDamage);
+            snapshot.logs.push({
+                at: Date.now(),
+                text: `隐患爆发！任务进度 -${totalExplosionDamage}%`,
+                type: "system",
+            });
+        }
+    }
+
     snapshot.updatedAt = Date.now();
 
     return { ok: true, message: `Task completed! Progress: ${snapshot.taskProgress}%` };
@@ -1456,6 +2192,11 @@ export function joinSharedTask(
     }
     if (!player.location) {
         return { ok: false, error: "Player has no location" };
+    }
+
+    // Players in stasis cannot join shared tasks
+    if (player.inStasis) {
+        return { ok: false, error: "Players in stasis cannot do tasks" };
     }
 
     if (!snapshot.tasks) snapshot.tasks = {};
@@ -1879,6 +2620,10 @@ export function transitionToGreenLight(snapshot: JokerSnapshot): void {
     for (const player of snapshot.players) {
         player.targetLocation = null;
         player.location = null;
+        // Reset stasis state
+        if (player.inStasis) {
+            player.inStasis = false;
+        }
         // Reset oxygen drain rate to normal and refresh timestamp for new round
         if (player.isAlive) {
             setOxygenDrainRate(player, OXYGEN_DRAIN_NORMAL);
@@ -1897,6 +2642,10 @@ export function transitionToGreenLight(snapshot: JokerSnapshot): void {
     snapshot.round.monitorUsedBySession = {};
     snapshot.round.kitchenUsedBySession = {};
     snapshot.round.medicalUsedBySession = {};
+    // Reset new location effect states
+    snapshot.round.dispatchUsedBySession = {};
+    snapshot.round.stasisActiveBySession = {};
+    // Note: randomDispatchNextRound is NOT reset here; it's consumed in assignLocations
 
     snapshot.deadline = Date.now() + PHASE_DURATIONS.green_light;
     snapshot.updatedAt = Date.now();
@@ -2116,6 +2865,9 @@ export function ghostHaunt(
         return { ok: false, error: "Target not in same location" };
     }
 
+    // Note: Players in stasis CAN be targeted for haunting (to hide their stasis status),
+    // but they won't actually lose oxygen (handled in processHauntingTick)
+
     // 检查作祟上限
     const currentHauntCount = getHauntingCount(snapshot, payload.targetSessionId);
     if (currentHauntCount >= MAX_GHOSTS_PER_TARGET) {
@@ -2155,6 +2907,9 @@ export function processHauntingTick(snapshot: JokerSnapshot, deadline?: number):
     for (const [targetSessionId, ghostCount] of hauntedPlayers) {
         const target = snapshot.players.find(p => p.sessionId === targetSessionId);
         if (!target || !target.isAlive) continue;
+
+        // Skip oxygen deduction for players in stasis (but they can still be "haunted" visually)
+        if (target.inStasis) continue;
 
         // 扣氧（最多3个幽灵效果）
         const effectiveCount = Math.min(ghostCount, MAX_GHOSTS_PER_TARGET);

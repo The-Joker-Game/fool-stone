@@ -138,3 +138,44 @@ body,
 .flask-card:disabled img {
   filter: grayscale(0.4);
 }
+
+/* Toast Notification Styles */
+.toast-success {
+  background-color: rgba(187, 247, 208, 0.8) !important;
+  /* green-200 */
+  border: 2px solid #22c55e !important;
+  color: #14532d !important;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 24px rgba(34, 197, 94, 0.3);
+  padding: 24px 32px !important;
+}
+
+.toast-error {
+  background-color: rgba(254, 202, 202, 0.8) !important;
+  /* red-200 */
+  border: 2px solid #ef4444 !important;
+  color: #7f1d1d !important;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 24px rgba(239, 68, 68, 0.3);
+  padding: 24px 32px !important;
+}
+
+.toast-warning {
+  background-color: rgba(253, 230, 138, 0.8) !important;
+  /* amber-200 */
+  border: 2px solid #f59e0b !important;
+  color: #78350f !important;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 24px rgba(245, 158, 11, 0.3);
+  padding: 24px 32px !important;
+}
+
+.toast-info {
+  background-color: rgba(191, 219, 254, 0.8) !important;
+  /* blue-200 */
+  border: 2px solid #3b82f6 !important;
+  color: #1e3a8a !important;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 24px rgba(59, 130, 246, 0.3);
+  padding: 24px 32px !important;
+}

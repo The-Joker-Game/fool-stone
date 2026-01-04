@@ -1,6 +1,26 @@
 // src/joker/types.ts
 
-export type JokerRole = "duck" | "goose" | "dodo" | "hawk";
+// Base roles
+export type JokerBaseRole = "duck" | "goose" | "dodo" | "hawk";
+
+// Special roles
+export type JokerSpecialRole =
+    // 🪢 鹅阵营特殊角色 (Goose faction special roles)
+    | "vigilante_goose"    // 正义鹅：仅一次击杀机会
+    | "sheriff_goose"      // 警长鹅：杀鹅自杀
+    | "coroner_goose"      // 验尸鹅：调查死因
+    | "overseer_goose"     // 监工鹅：调查任务贡献度
+    // 🦆 鸭阵营特殊角色 (Duck faction special roles)
+    | "poisoner_duck"      // 毒师鸭：60秒毒杀
+    | "saboteur_duck"      // 糊弄鸭：埋隐患
+    // 🐦 中立阵营特殊角色 (Neutral faction special roles)
+    | "falcon"             // 猎鹰：可杀人，存活到最后获胜
+    | "woodpecker";        // 稠木鸟：击杀导致氧气泄漏
+
+export type JokerRole = JokerBaseRole | JokerSpecialRole;
+
+// Role template: simple uses original config, special enables special roles
+export type JokerRoleTemplate = "simple" | "special";
 
 export type JokerPhase =
     | "lobby"
@@ -13,14 +33,16 @@ export type JokerPhase =
     | "execution"
     | "game_over";
 
-export type JokerLocation = "厨房" | "医务室" | "发电室" | "监控室" | "仓库";
+export type JokerLocation = "厨房" | "医务室" | "发电室" | "监控室" | "仓库" | "调度室" | "休眠舱";
 
 // Death tracking
 export type JokerDeathReason =
     | "kill"           // 被杀
     | "foul"           // 犯规死亡
     | "oxygen"         // 氧气耗尽
-    | "vote";          // 投票淘汰
+    | "vote"           // 投票淘汰
+    | "poison"         // 毒杀 (毒师鸭)
+    | "suicide";       // 自杀 (警长鹅杀鹅后)
 
 export interface JokerDeathRecord {
     sessionId: string;
@@ -77,6 +99,30 @@ export interface JokerPlayerState {
     ghostTargetLocation: JokerLocation | null;
     ghostAssignedLocation: JokerLocation | null;
     hauntingTarget: string | null;
+
+    // Stasis fields (休眠舱)
+    inStasis: boolean;
+    stasisEnteredAt?: number;  // 进入休眠舱的时间戳（用于暂停毒杀计时）
+
+    // === Special Role States 特殊角色状态 ===
+    // 正义鹅 (vigilante_goose)
+    vigilanteKillUsed?: boolean;
+
+    // 毒师鸭 (poisoner_duck)
+    poisonTargetSessionId?: string;
+    isPoisoned?: boolean;
+    poisonRemainingSeconds?: number;
+    poisonedBySessionId?: string;
+
+    // 糊弄鸭 (saboteur_duck)
+    saboteurHiddenDamage?: number;
+    saboteurExploded?: boolean;
+
+    // 验尸鹅 (coroner_goose)
+    investigatedDeaths?: string[];
+
+    // 监工鹅 (overseer_goose)
+    totalTaskContribution?: number;     // 累计任务贡献度 (跨轮次)
 }
 
 export interface JokerVoteEntry {
@@ -140,6 +186,13 @@ export interface JokerRoundState {
     monitorUsedBySession: Record<string, boolean>;
     kitchenUsedBySession: Record<string, boolean>;
     medicalUsedBySession: Record<string, boolean>;
+    // New location effects (新场所)
+    dispatchUsedBySession: Record<string, boolean>;
+    stasisActiveBySession: Record<string, boolean>;
+    randomDispatchNextRound: boolean;
+    randomDispatchInitiatorSessionId: string | null;
+    // === Special Role Tracking 特殊角色追踪 ===
+    taskContributionBySession: Record<string, number>;
 }
 
 export type JokerTaskKind = "personal" | "shared" | "emergency";
@@ -191,7 +244,7 @@ export interface JokerTaskSystemState {
 }
 
 export interface JokerGameResult {
-    winner: "duck" | "goose" | "dodo" | "hawk";
+    winner: "duck" | "goose" | "dodo" | "hawk" | "falcon" | "woodpecker";
     reason: string;
 }
 
@@ -234,6 +287,8 @@ export interface JokerSnapshot {
     tasks?: JokerTaskSystemState;
     paused?: boolean;
     pauseRemainingMs?: number;
+    roleTemplate?: JokerRoleTemplate;
+    enableSoloEffects?: boolean;
     updatedAt: number;
 }
 
