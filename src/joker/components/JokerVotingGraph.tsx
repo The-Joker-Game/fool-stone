@@ -19,6 +19,17 @@ const ROLE_COLORS: Record<JokerRole, string> = {
     goose: "bg-emerald-500 text-white border-emerald-600",
     dodo: "bg-purple-500 text-white border-purple-600",
     hawk: "bg-blue-500 text-white border-blue-600",
+    // Special goose roles
+    vigilante_goose: "bg-emerald-600 text-white border-emerald-700",
+    sheriff_goose: "bg-emerald-600 text-white border-emerald-700",
+    coroner_goose: "bg-emerald-600 text-white border-emerald-700",
+    overseer_goose: "bg-emerald-600 text-white border-emerald-700",
+    // Special duck roles
+    poisoner_duck: "bg-orange-600 text-white border-orange-700",
+    saboteur_duck: "bg-orange-600 text-white border-orange-700",
+    // Neutral birds
+    falcon: "bg-blue-600 text-white border-blue-700",
+    woodpecker: "bg-blue-600 text-white border-blue-700",
 };
 
 const ROLE_ICONS: Record<JokerRole, React.ElementType> = {
@@ -26,6 +37,17 @@ const ROLE_ICONS: Record<JokerRole, React.ElementType> = {
     goose: GiGoose,
     dodo: GiChicken,
     hawk: GiEagleHead,
+    // Special goose roles
+    vigilante_goose: GiGoose,
+    sheriff_goose: GiGoose,
+    coroner_goose: GiGoose,
+    overseer_goose: GiGoose,
+    // Special duck roles
+    poisoner_duck: GiDuck,
+    saboteur_duck: GiDuck,
+    // Neutral birds
+    falcon: GiEagleHead,
+    woodpecker: GiEagleHead,
 };
 
 export function JokerVotingGraph({ players, votes, showRole = false }: JokerVotingGraphProps) {
