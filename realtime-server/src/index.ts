@@ -1004,6 +1004,10 @@ io.on("connection", (socket: Socket) => {
             );
             if (reporter && reporter.isAlive && reporter.sessionId) {
               res = jokerStartMeeting(jokerSnapshot, reporter.sessionId);
+              if (res.ok) {
+                // 清理红灯阶段的定时器，防止红灯结束的timer覆盖会议状态
+                jokerClearTimeouts(roomCode);
+              }
               shouldBroadcast = true;
             } else {
               res = { ok: false, error: "Invalid reporter" };
