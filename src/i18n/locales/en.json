@@ -33,7 +33,6 @@
     "overseer_goose": "Foreman Goose",
     "poisoner_duck": "Poisoner Duck",
     "saboteur_duck": "Saboteur Duck",
-    "falcon": "Falcon",
     "woodpecker": "Woodpecker"
   },
   "roleDesc": {
@@ -47,7 +46,6 @@
     "overseer_goose": "When alone, investigate a player's task contribution.",
     "poisoner_duck": "Your kill poisons the target, they die after 60s.",
     "saboteur_duck": "Tasks bury hazards, explode at 100% to reduce progress.",
-    "falcon": "You can kill any player, survive to the end to win!",
     "woodpecker": "Your kill causes target's oxygen to leak, survive to win!"
   },
   "locations": {
@@ -74,20 +72,22 @@
     "cancelReady": "Cancel Ready",
     "readyUp": "Ready Up",
     "start": "Start",
-    "host": "Host"
+    "host": "Host",
+    "addBot": "Add Bot"
   },
   "game": {
     "lifeCode": "Life Code",
     "oxygen": "Oxygen",
     "targetLifeCode": "Target Life Code",
     "lifeCodeRefresh": "Life code refreshing in",
+    "lifeCodeRefreshed": "Life code refreshed!",
     "kill": "Kill",
     "giveOxygen": "Give O₂",
     "cooldown": "Cooldown",
     "taskProgress": "Task Progress",
     "personalTask": "Personal Task",
     "sharedTask": "Shared Task",
-    "progressLabel": "+2% Progress",
+    "progressLabel": "+1.5% Progress",
     "progressLabelBoosted": "+3% Progress",
     "nearbyPlayers": "Nearby Players",
     "noOneHere": "No one else here...",
@@ -156,7 +156,7 @@
     "waitingOtherPlayers": "Selected, waiting for others",
     "success": "Shared task success",
     "fail": "Shared task failed",
-    "eachPersonProgress": "+3% progress each",
+    "eachPersonProgress": "+2.5% progress each",
     "taskCooldown": "Task cooldown"
   },
   "meeting": {
@@ -181,7 +181,10 @@
     "abstain": "Abstain",
     "votes": "votes",
     "abstainLabel": "Skip",
-    "noVotes": "No votes recorded"
+    "noVotes": "No votes recorded",
+    "confirmTitle": "Confirm Vote",
+    "confirmAbstain": "Are you sure you want to abstain?",
+    "confirmVoteFor": "Are you sure you want to vote for {{name}}?"
   },
   "execution": {
     "seat": "Seat",
@@ -213,7 +216,6 @@
       "all_geese_eliminated": "All Geese eliminated",
       "duck_majority": "Duck count >= Non-Duck count",
       "dodo_voted": "Dodo was voted out",
-      "falcon_survive": "Falcon survived until the end",
       "woodpecker_survive": "Woodpecker survived until the end"
     }
   },
@@ -258,6 +260,7 @@
     "notSameLocation": "Player not at same location",
     "cantOxygenSelf": "Cannot give oxygen to yourself",
     "alreadyGaveOxygen": "Already gave oxygen to this player",
+    "consecutiveOxygen": "Cannot give oxygen consecutively to the same player",
     "redLightOnly": "Actions only available during red light",
     "invalidActor": "Invalid action",
     "unknownAction": "Unknown action",
@@ -297,7 +300,8 @@
     "notInStasisPod": "Must be in Stasis Pod",
     "targetInStasis": "Target is in stasis",
     "invalidLocation": "Invalid location",
-    "noOxygenTargets": "No available oxygen targets"
+    "noOxygenTargets": "No available oxygen targets",
+    "addBotFailed": "Failed to add bot"
   },
   "toast": {
     "taskSuccess": "Personal task success",
@@ -337,15 +341,18 @@
     "eliminated": "{{player}} was eliminated",
     "tie": "Tie",
     "tooManyAbstain": "Too many abstains",
-    "roleWas": "'s role was"
+    "roleWas": "'s role was",
+    "taskContribution": "Task Contribution",
+    "total": "Total"
   },
   "task": {
-    "progress2": "+2% Progress",
+    "progress2": "+1.5% Progress",
     "progress3": "+3% Progress"
   },
   "common": {
     "unknown": "Unknown",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "confirm": "Confirm"
   },
   "ghost": {
     "title": "Ghost Mode",

@@ -14,7 +14,6 @@ export type JokerSpecialRole =
     | "poisoner_duck"      // 毒师鸭：60秒毒杀
     | "saboteur_duck"      // 糊弄鸭：埋隐患
     // 🐦 中立阵营特殊角色 (Neutral faction special roles)
-    | "falcon"             // 猎鹰：可杀人，存活到最后获胜
     | "woodpecker";        // 啄木鸟：击杀导致氧气泄漏
 
 export type JokerRole = JokerBaseRole | JokerSpecialRole;
@@ -90,6 +89,7 @@ export interface JokerPlayerState {
     oxygenState: JokerOxygenState; // oxygen state for client interpolation
     duckEmergencyUsed: boolean; // duck one-time +180 on first death
     hawkEmergencyUsed: boolean;
+    woodpeckerEmergencyUsed: boolean; // woodpecker one-time +180 on first death
     oxygenLeakActive: boolean;
     oxygenLeakStartedAt?: number;
     oxygenLeakResolvedAt?: number;
@@ -124,6 +124,9 @@ export interface JokerPlayerState {
 
     // 验尸鹅 (coroner_goose)
     investigatedDeaths?: string[];      // 已调查的死者 sessionId 列表
+
+    // Oxygen tracking (生命代码补氧追踪)
+    lastOxygenGiverSessionId?: string | null;  // 上一次通过生命代码补氧的人
 
     // 监工鹅 (overseer_goose)
     totalTaskContribution?: number;     // 累计任务贡献度 (跨轮次)
@@ -172,8 +175,6 @@ export interface JokerVotingRoundRecord {
 export interface JokerLifeCodeState {
     // Current round codes: sessionId -> code
     current: Record<string, string>;
-    // Previous round codes (still valid for first 20s of red light)
-    previous: Record<string, string>;
     // Version tracker
     version: number;
     // Last time codes were regenerated (ms)
@@ -183,8 +184,6 @@ export interface JokerLifeCodeState {
 export interface JokerRoundState {
     roundCount: number;
     phaseStartAt: number;
-    // Red light sub-phase: 0-20s = old codes, 20-40s = new codes
-    redLightHalf: "first" | "second";
     // Life code refresh timing: seconds after red light starts (dynamically computed)
     lifeCodeRefreshSecond: number;
     // Track oxygen gives per round: actorSessionId -> targetSessionId -> true
@@ -255,7 +254,7 @@ export interface JokerTaskSystemState {
 }
 
 export interface JokerGameResult {
-    winner: "duck" | "goose" | "dodo" | "hawk" | "falcon" | "woodpecker";
+    winner: "duck" | "goose" | "dodo" | "hawk" | "woodpecker";
     reason: string;
 }
 

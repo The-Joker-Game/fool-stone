@@ -14,8 +14,7 @@ export type JokerSpecialRole =
     | "poisoner_duck"      // 毒师鸭：60秒毒杀
     | "saboteur_duck"      // 糊弄鸭：埋隐患
     // 🐦 中立阵营特殊角色 (Neutral faction special roles)
-    | "falcon"             // 猎鹰：可杀人，存活到最后获胜
-    | "woodpecker";        // 稠木鸟：击杀导致氧气泄漏
+    | "woodpecker";        // 啄木鸟：击杀导致氧气泄漏
 
 export type JokerRole = JokerBaseRole | JokerSpecialRole;
 
@@ -87,6 +86,7 @@ export interface JokerPlayerState {
     oxygenState: JokerOxygenState;
     duckEmergencyUsed: boolean;
     hawkEmergencyUsed: boolean;
+    woodpeckerEmergencyUsed: boolean;
     oxygenLeakActive: boolean;
     oxygenLeakStartedAt?: number;
     oxygenLeakResolvedAt?: number;
@@ -120,6 +120,9 @@ export interface JokerPlayerState {
 
     // 验尸鹅 (coroner_goose)
     investigatedDeaths?: string[];
+
+    // Oxygen tracking (生命代码补氧追踪)
+    lastOxygenGiverSessionId?: string | null;
 
     // 监工鹅 (overseer_goose)
     totalTaskContribution?: number;     // 累计任务贡献度 (跨轮次)
@@ -167,7 +170,6 @@ export interface JokerVotingRoundRecord {
 
 export interface JokerLifeCodeState {
     current: Record<string, string>;
-    previous: Record<string, string>;
     version: number;
     lastUpdatedAt: number;
 }
@@ -175,7 +177,6 @@ export interface JokerLifeCodeState {
 export interface JokerRoundState {
     roundCount: number;
     phaseStartAt: number;
-    redLightHalf: "first" | "second";
     lifeCodeRefreshSecond: number;
     oxygenGivenThisRound: Record<string, Record<string, boolean>>;
     goldenRabbitTriggeredLocations: JokerLocation[];
@@ -244,7 +245,7 @@ export interface JokerTaskSystemState {
 }
 
 export interface JokerGameResult {
-    winner: "duck" | "goose" | "dodo" | "hawk" | "falcon" | "woodpecker";
+    winner: "duck" | "goose" | "dodo" | "hawk" | "woodpecker";
     reason: string;
 }
 

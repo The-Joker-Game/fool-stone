@@ -33,7 +33,6 @@
     "overseer_goose": "监工鹅",
     "poisoner_duck": "毒师鸭",
     "saboteur_duck": "糊弄鸭",
-    "falcon": "猎鹰",
     "woodpecker": "啄木鸟"
   },
   "roleDesc": {
@@ -47,7 +46,6 @@
     "overseer_goose": "独自一人时，可调查玩家的任务贡献度。",
     "poisoner_duck": "击杀时会下毒，60秒后目标毒发身亡。",
     "saboteur_duck": "做任务时埋下隐患，进度100%时爆发扣减进度。",
-    "falcon": "你可以击杀任何玩家，存活到最后获胜！",
     "woodpecker": "你的击杀会导致目标氧气泄漏，存活到最后获胜！"
   },
   "locations": {
@@ -74,20 +72,22 @@
     "cancelReady": "取消准备",
     "readyUp": "准备",
     "start": "开始",
-    "host": "房主"
+    "host": "房主",
+    "addBot": "添加机器人"
   },
   "game": {
     "lifeCode": "生命代码",
     "oxygen": "氧气",
     "targetLifeCode": "目标生命代码",
     "lifeCodeRefresh": "生命代码即将刷新",
+    "lifeCodeRefreshed": "生命密码刷新了！",
     "kill": "击杀",
     "giveOxygen": "补氧",
     "cooldown": "冷却中",
     "taskProgress": "任务进度",
     "personalTask": "个人任务",
     "sharedTask": "共同任务",
-    "progressLabel": "+2%进度",
+    "progressLabel": "+1.5%进度",
     "progressLabelBoosted": "+3%进度",
     "nearbyPlayers": "附近玩家",
     "noOneHere": "这里没有其他人...",
@@ -156,7 +156,7 @@
     "waitingOtherPlayers": "已选择，请等待其他玩家",
     "success": "共同任务成功",
     "fail": "共同任务失败",
-    "eachPersonProgress": "每人+3%进度",
+    "eachPersonProgress": "每人+2.5%进度",
     "taskCooldown": "任务冷却中"
   },
   "meeting": {
@@ -181,7 +181,10 @@
     "abstain": "弃票",
     "votes": "票",
     "abstainLabel": "弃",
-    "noVotes": "无投票记录"
+    "noVotes": "无投票记录",
+    "confirmTitle": "确认投票",
+    "confirmAbstain": "确定要弃票吗？",
+    "confirmVoteFor": "确定要投票给 {{name}} 吗？"
   },
   "execution": {
     "seat": "座位",
@@ -213,7 +216,6 @@
       "all_geese_eliminated": "所有鹅已被淘汰",
       "duck_majority": "鸭子数量超过或等于非鸭子",
       "dodo_voted": "呆呆鸟被投票淘汰",
-      "falcon_survive": "猎鹰存活到最后",
       "woodpecker_survive": "啄木鸟存活到最后"
     }
   },
@@ -258,6 +260,7 @@
     "notSameLocation": "该玩家与你不在同一场所",
     "cantOxygenSelf": "不能给自己补氧",
     "alreadyGaveOxygen": "本回合已对该玩家补氧",
+    "consecutiveOxygen": "不能连续给同一玩家补氧",
     "redLightOnly": "只能在红灯阶段操作",
     "invalidActor": "操作无效",
     "unknownAction": "未知操作",
@@ -297,7 +300,8 @@
     "notInStasisPod": "必须在休眠舱使用",
     "targetInStasis": "目标处于休眠状态",
     "invalidLocation": "无效场所",
-    "noOxygenTargets": "暂无可补氧目标"
+    "noOxygenTargets": "暂无可补氧目标",
+    "addBotFailed": "添加机器人失败"
   },
   "toast": {
     "taskSuccess": "个人任务成功",
@@ -337,15 +341,18 @@
     "eliminated": "{{player}} 被淘汰",
     "tie": "平票",
     "tooManyAbstain": "弃票过多",
-    "roleWas": "的身份是"
+    "roleWas": "的身份是",
+    "taskContribution": "任务贡献度",
+    "total": "合计"
   },
   "task": {
-    "progress2": "+2%进度",
+    "progress2": "+1.5%进度",
     "progress3": "+3%进度"
   },
   "common": {
     "unknown": "未知",
-    "cancel": "取消"
+    "cancel": "取消",
+    "confirm": "确认"
   },
   "ghost": {
     "title": "幽灵模式",

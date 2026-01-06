@@ -31,7 +31,7 @@ const DUCK_EMERGENCY_OXYGEN = 180;
 const HAWK_EMERGENCY_OXYGEN = 180;
 const OXYGEN_DRAIN_NORMAL = 1;
 const OXYGEN_DRAIN_LEAK = 3;
-const GOLDEN_RABBIT_PROGRESS_REWARD = 8;
+const GOLDEN_RABBIT_PROGRESS_REWARD = 9;
 export const GOLDEN_RABBIT_JOIN_MS = 8_000;
 
 // Meeting duration calculation: base + per_player * alive_count
@@ -148,6 +148,7 @@ function createEmptyPlayer(seat: number): JokerPlayerState {
         oxygenState: createOxygenState(INITIAL_OXYGEN, OXYGEN_DRAIN_NORMAL),
         duckEmergencyUsed: false,
         hawkEmergencyUsed: false,
+        woodpeckerEmergencyUsed: false,
         oxygenLeakActive: false,
         oxygenLeakStartedAt: undefined,
         oxygenLeakResolvedAt: undefined,
@@ -160,13 +161,14 @@ function createEmptyPlayer(seat: number): JokerPlayerState {
         hauntingTarget: null,
         // Stasis fields
         inStasis: false,
+        // Oxygen tracking
+        lastOxygenGiverSessionId: null,
     };
 }
 
 function createEmptyLifeCodeState(): JokerLifeCodeState {
     return {
         current: {},
-        previous: {},
         version: 0,
         lastUpdatedAt: Date.now(),
     };
@@ -176,7 +178,6 @@ function createEmptyRoundState(): JokerRoundState {
     return {
         roundCount: 0,
         phaseStartAt: Date.now(),
-        redLightHalf: "first",
         lifeCodeRefreshSecond: computeFirstLifeCodeRefreshSecond(),
         oxygenGivenThisRound: {},
         goldenRabbitTriggeredLocations: [],
@@ -362,9 +363,9 @@ function generateSpecialTemplateRoles(playerCount: number): JokerRole[] | null {
     // 5. 添加猎鹰/啄木鸟
     if (config.neutralBird === "random") {
         // 随机选择一个
-        roles.push(Math.random() < 0.5 ? "falcon" : "woodpecker");
+        roles.push(Math.random() < 0.5 ? "hawk" : "woodpecker");
     } else if (config.neutralBird === "both") {
-        roles.push("falcon");
+        roles.push("hawk");
         roles.push("woodpecker");
     }
     // "none" 时不添加
@@ -438,6 +439,7 @@ export function assignJokerRoles(snapshot: JokerSnapshot, template: JokerRoleTem
             resetOxygen(player, INITIAL_OXYGEN);
             player.duckEmergencyUsed = false;
             player.hawkEmergencyUsed = false;
+            player.woodpeckerEmergencyUsed = false;
             // Reset special role state
             player.vigilanteKillUsed = false;
         }
@@ -686,8 +688,8 @@ function getCamp(role: JokerRole | null): JokerCamp | null {
     if (role === "goose" || role.endsWith("_goose")) return "goose";
     // 鸭阵营 (Duck faction): base duck or any role ending with _duck
     if (role === "duck" || role.endsWith("_duck")) return "duck";
-    // 中立阵营 (Neutral faction): dodo, hawk, falcon, woodpecker
-    if (["hawk", "dodo", "falcon", "woodpecker"].includes(role)) return "neutral";
+    // 中立阵营 (Neutral faction): dodo, hawk, woodpecker
+    if (["hawk", "dodo", "woodpecker"].includes(role)) return "neutral";
     return null;
 }
 
@@ -736,8 +738,6 @@ function generateUniqueLifeCodes(count: number): string[] {
 
 export function generateAllLifeCodes(snapshot: JokerSnapshot): void {
     const now = Date.now();
-    // Rotate: current becomes previous
-    snapshot.lifeCodes.previous = { ...snapshot.lifeCodes.current };
     snapshot.lifeCodes.current = {};
 
     const alivePlayers = snapshot.players.filter(p => p.sessionId && p.isAlive);
@@ -757,28 +757,14 @@ export function generateAllLifeCodes(snapshot: JokerSnapshot): void {
 
 function findPlayerByLifeCode(
     snapshot: JokerSnapshot,
-    code: string,
-    includeOldCodes: boolean
+    code: string
 ): JokerPlayerState | null {
-    // Check current codes
+    // Check current codes only - old codes are invalid after refresh
     for (const player of snapshot.players) {
         if (player.isAlive && player.lifeCode === code) {
             return player;
         }
     }
-
-    // Check previous codes (valid in first half of red light)
-    if (includeOldCodes) {
-        for (const [sessionId, oldCode] of Object.entries(snapshot.lifeCodes.previous)) {
-            if (oldCode === code) {
-                const player = snapshot.players.find(
-                    p => p.sessionId === sessionId && p.isAlive
-                );
-                if (player) return player;
-            }
-        }
-    }
-
     return null;
 }
 
@@ -844,18 +830,14 @@ export function submitLifeCodeAction(
         };
     }
 
-    // Determine if old codes are valid (first 30s of red light)
-    const phaseElapsed = now - snapshot.round.phaseStartAt;
-    const includeOldCodes = phaseElapsed < 30_000;
-
-    // Find target by life code
-    const target = findPlayerByLifeCode(snapshot, payload.code, includeOldCodes);
+    // Find target by life code (only current codes are valid)
+    const target = findPlayerByLifeCode(snapshot, payload.code);
 
     if (!target) {
         // Roles that can kill lose 30s oxygen for incorrect kill code
-        // This includes: duck, hawk, vigilante_goose (unused), sheriff_goose, poisoner_duck, falcon, woodpecker
+        // This includes: duck, hawk, vigilante_goose (unused), sheriff_goose, poisoner_duck, woodpecker
         const canKillRoles = [
-            "duck", "hawk", "poisoner_duck", "falcon", "woodpecker",
+            "duck", "hawk", "poisoner_duck", "woodpecker",
             "vigilante_goose", "sheriff_goose"
         ];
         if (payload.action === "kill" && actor.role && canKillRoles.includes(actor.role)) {
@@ -958,9 +940,9 @@ function handleKillAction(
         return { ok: true, message: "氧气泄漏触发成功" };
     }
 
-    // 猎鹰 (falcon), duck, hawk: Normal kill
+    // duck, hawk: Normal kill
     // Only these roles can perform normal kills
-    const allowedKillers: JokerRole[] = ["duck", "hawk", "falcon"];
+    const allowedKillers: JokerRole[] = ["duck", "hawk"];
     if (actorRole && allowedKillers.includes(actorRole)) {
         return performKill(snapshot, actor, target, "kill", now);
     }
@@ -1048,6 +1030,11 @@ function handleOxygenAction(
         return { ok: false, error: "Target is in stasis" };
     }
 
+    // Check if same person is trying to give oxygen consecutively (via life code)
+    if (target.lastOxygenGiverSessionId === actorSessionId) {
+        return { ok: false, error: "Cannot give oxygen consecutively to the same player" };
+    }
+
     // Check if actor already gave oxygen to this target this round
     if (snapshot.round.oxygenGivenThisRound[actorSessionId]?.[targetSessionId]) {
         return { ok: false, error: "Already gave oxygen to this player this round" };
@@ -1059,6 +1046,8 @@ function handleOxygenAction(
         snapshot.round.oxygenGivenThisRound[actorSessionId] = {};
     }
     snapshot.round.oxygenGivenThisRound[actorSessionId][targetSessionId] = true;
+    // Update last oxygen giver (only for life code oxygen)
+    target.lastOxygenGiverSessionId = actorSessionId;
     if (target.oxygenLeakActive) {
         target.oxygenLeakActive = false;
         target.oxygenLeakResolvedAt = Date.now();
@@ -1698,6 +1687,16 @@ export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
                     text: `Player ${player.name} used emergency oxygen`,
                     type: "oxygen",
                 });
+            } else if (player.role === "woodpecker" && !player.woodpeckerEmergencyUsed) {
+                // Woodpecker gets emergency oxygen (one-time)
+                resetOxygen(player, HAWK_EMERGENCY_OXYGEN, OXYGEN_DRAIN_NORMAL);
+                player.woodpeckerEmergencyUsed = true;
+
+                snapshot.logs.push({
+                    at: now,
+                    text: `Player ${player.name} used emergency oxygen`,
+                    type: "oxygen",
+                });
             } else {
                 // Player dies
                 player.isAlive = false;
@@ -1995,13 +1994,12 @@ export function checkWinCondition(snapshot: JokerSnapshot): JokerGameResult | nu
 
     // Find specific neutral roles
     const aliveHawks = alivePlayers.filter(p => p.role === "hawk");
-    const aliveFalcons = alivePlayers.filter(p => p.role === "falcon");
     const aliveWoodpeckers = alivePlayers.filter(p => p.role === "woodpecker");
     const aliveDodos = alivePlayers.filter(p => p.role === "dodo");
 
     // === NEUTRAL ROLE VICTORIES ===
 
-    // Hawk victory: alive alone or with exactly 1 goose-camp player
+    // Hawk (猎鹰) victory: alive alone or with exactly 1 goose-camp player
     if (aliveHawks.length === 1) {
         if (alivePlayers.length === 1) {
             return { winner: "hawk", reason: "hawk_survive" };
@@ -2009,17 +2007,6 @@ export function checkWinCondition(snapshot: JokerSnapshot): JokerGameResult | nu
         if (alivePlayers.length === 2 && aliveBycamp.goose.length === 1 &&
             aliveBycamp.duck.length === 0) {
             return { winner: "hawk", reason: "hawk_survive" };
-        }
-    }
-
-    // 猎鹰 (Falcon) victory: alive alone or with exactly 1 goose-camp player
-    if (aliveFalcons.length === 1) {
-        if (alivePlayers.length === 1) {
-            return { winner: "falcon", reason: "falcon_survive" };
-        }
-        if (alivePlayers.length === 2 && aliveBycamp.goose.length === 1 &&
-            aliveBycamp.duck.length === 0) {
-            return { winner: "falcon", reason: "falcon_survive" };
         }
     }
 
@@ -2064,10 +2051,10 @@ export function checkWinCondition(snapshot: JokerSnapshot): JokerGameResult | nu
 
 // ============ Task System ============
 
-const TASK_PROGRESS_PER_COMPLETION = 2; // +2% per task
-const POWER_TASK_PROGRESS_PER_COMPLETION = 3; // +3% per task with power boost (1.5x)
+const TASK_PROGRESS_PER_COMPLETION = 1.5; // +1.5% per task
+const POWER_TASK_PROGRESS_PER_COMPLETION = 3; // +3% per task with power boost (fixed, not multiplier)
 const TASK_OXYGEN_COST = 10; // -10s oxygen per task attempt
-const SHARED_TASK_PROGRESS_PER_PARTICIPANT = 3; // +3% per participant
+const SHARED_TASK_PROGRESS_PER_PARTICIPANT = 2.5; // +2.5% per participant
 const SHARED_TASK_OXYGEN_COST = 10; // -10s oxygen per shared task join
 export const SHARED_TASK_DURATIONS_MS: Record<JokerSharedTaskType, number> = {
     nine_grid: 10_000,
@@ -2139,9 +2126,11 @@ export function completeTask(snapshot: JokerSnapshot, sessionId: string): Action
         ? POWER_TASK_PROGRESS_PER_COMPLETION
         : TASK_PROGRESS_PER_COMPLETION;
 
-
     // Track cumulative contribution for overseer_goose investigation (stored on player, not round)
     player.totalTaskContribution = (player.totalTaskContribution ?? 0) + progressGain;
+
+    // Also track in round state for game review display
+    snapshot.round.taskContributionBySession[sessionId] = player.totalTaskContribution;
 
     // 糊弄鸭 (saboteur_duck): Track contribution for explosion calculation
     // Hidden damage = contribution × 2 (deducted when task reaches 100%)
@@ -2261,6 +2250,15 @@ export function resolveSharedTask(
     if (success) {
         const gain = SHARED_TASK_PROGRESS_PER_PARTICIPANT * shared.participants.length;
         snapshot.taskProgress = Math.min(100, snapshot.taskProgress + gain);
+
+        // Track contribution for each participant (each gets full contribution amount)
+        for (const participantId of shared.participants) {
+            const participant = snapshot.players.find(p => p.sessionId === participantId);
+            if (participant) {
+                participant.totalTaskContribution = (participant.totalTaskContribution ?? 0) + gain;
+                snapshot.round.taskContributionBySession[participantId] = participant.totalTaskContribution;
+            }
+        }
     }
 
     snapshot.updatedAt = Date.now();
@@ -2532,6 +2530,19 @@ export function resolveGoldenRabbitTask(
             100,
             snapshot.taskProgress + GOLDEN_RABBIT_PROGRESS_REWARD
         );
+
+        // Track contribution for each participant (split evenly)
+        const participantCount = task.participants.length;
+        if (participantCount > 0) {
+            const contributionPerPlayer = GOLDEN_RABBIT_PROGRESS_REWARD / participantCount;
+            for (const participantId of task.participants) {
+                const participant = snapshot.players.find(p => p.sessionId === participantId);
+                if (participant) {
+                    participant.totalTaskContribution = (participant.totalTaskContribution ?? 0) + contributionPerPlayer;
+                    snapshot.round.taskContributionBySession[participantId] = participant.totalTaskContribution;
+                }
+            }
+        }
     }
     snapshot.updatedAt = Date.now();
     return { ok: true };
@@ -2664,7 +2675,6 @@ export function transitionToYellowLight(snapshot: JokerSnapshot): void {
 export function transitionToRedLight(snapshot: JokerSnapshot): void {
     snapshot.phase = "red_light";
     snapshot.round.phaseStartAt = Date.now();
-    snapshot.round.redLightHalf = "first";
     snapshot.round.lifeCodeRefreshSecond = computeNextLifeCodeRefreshSecond(
         snapshot.round.lifeCodeRefreshSecond
     );
@@ -2694,11 +2704,8 @@ export function transitionToRedLight(snapshot: JokerSnapshot): void {
 }
 
 export function rotateLifeCodesAtHalfRedLight(snapshot: JokerSnapshot): void {
-    if (snapshot.round.redLightHalf === "first") {
-        generateAllLifeCodes(snapshot);
-        snapshot.round.redLightHalf = "second";
-        snapshot.updatedAt = Date.now();
-    }
+    generateAllLifeCodes(snapshot);
+    snapshot.updatedAt = Date.now();
 }
 
 // ============ Reset Game ============
@@ -2731,6 +2738,7 @@ export function resetToLobby(snapshot: JokerSnapshot): void {
         resetOxygen(player, INITIAL_OXYGEN);
         player.duckEmergencyUsed = false;
         player.hawkEmergencyUsed = false;
+        player.woodpeckerEmergencyUsed = false;
         player.oxygenLeakActive = false;
         player.oxygenLeakStartedAt = undefined;
         player.oxygenLeakResolvedAt = undefined;

@@ -81,52 +81,41 @@ function randName() {
 }
 
 const ROLE_REVEAL_STYLES: Record<JokerRole, { ring: string; text: string; icon: React.ElementType }> = {
-    // Base roles
-    duck: {
-        ring: "bg-orange-500/20 border-orange-500/50 shadow-orange-500/30",
-        text: "text-orange-400",
-        icon: GiDuck,
-    },
+    // 🦢 Goose faction - Blue
     goose: {
-        ring: "bg-white/20 border-white/50 shadow-white/30",
-        text: "text-white",
+        ring: "bg-blue-500/20 border-blue-400/50 shadow-blue-500/30",
+        text: "text-blue-300",
         icon: GiGoose,
     },
-    dodo: {
-        ring: "bg-amber-500/20 border-amber-400/50 shadow-amber-500/30",
-        text: "text-amber-200",
-        icon: GiChicken,
-    },
-    hawk: {
-        ring: "bg-sky-500/20 border-sky-400/50 shadow-sky-500/30",
-        text: "text-sky-200",
-        icon: GiEagleHead,
-    },
-    // 🦢 Goose faction special roles
     vigilante_goose: {
-        ring: "bg-rose-500/20 border-rose-400/50 shadow-rose-500/30",
-        text: "text-rose-200",
+        ring: "bg-blue-500/20 border-blue-400/50 shadow-blue-500/30",
+        text: "text-blue-300",
         icon: GiGoose,
     },
     sheriff_goose: {
-        ring: "bg-yellow-500/20 border-yellow-400/50 shadow-yellow-500/30",
-        text: "text-yellow-200",
+        ring: "bg-blue-500/20 border-blue-400/50 shadow-blue-500/30",
+        text: "text-blue-300",
         icon: GiGoose,
     },
     coroner_goose: {
-        ring: "bg-purple-500/20 border-purple-400/50 shadow-purple-500/30",
-        text: "text-purple-200",
+        ring: "bg-blue-500/20 border-blue-400/50 shadow-blue-500/30",
+        text: "text-blue-300",
         icon: GiGoose,
     },
     overseer_goose: {
-        ring: "bg-cyan-500/20 border-cyan-400/50 shadow-cyan-500/30",
-        text: "text-cyan-200",
+        ring: "bg-blue-500/20 border-blue-400/50 shadow-blue-500/30",
+        text: "text-blue-300",
         icon: GiGoose,
     },
-    // 🦆 Duck faction special roles
+    // 🦆 Duck faction - Red
+    duck: {
+        ring: "bg-red-500/20 border-red-400/50 shadow-red-500/30",
+        text: "text-red-300",
+        icon: GiDuck,
+    },
     poisoner_duck: {
-        ring: "bg-green-500/20 border-green-400/50 shadow-green-500/30",
-        text: "text-green-300",
+        ring: "bg-red-500/20 border-red-400/50 shadow-red-500/30",
+        text: "text-red-300",
         icon: GiDuck,
     },
     saboteur_duck: {
@@ -134,71 +123,71 @@ const ROLE_REVEAL_STYLES: Record<JokerRole, { ring: string; text: string; icon: 
         text: "text-red-300",
         icon: GiDuck,
     },
-    // 🐦 Neutral special roles
-    falcon: {
-        ring: "bg-rose-600/20 border-rose-500/50 shadow-rose-600/30",
-        text: "text-rose-300",
+    // 🐦 Neutral faction - Yellow/Amber
+    dodo: {
+        ring: "bg-amber-500/20 border-amber-400/50 shadow-amber-500/30",
+        text: "text-amber-200",
+        icon: GiChicken,
+    },
+    hawk: {
+        ring: "bg-amber-500/20 border-amber-400/50 shadow-amber-500/30",
+        text: "text-amber-200",
         icon: GiEagleHead,
     },
     woodpecker: {
-        ring: "bg-emerald-500/20 border-emerald-400/50 shadow-emerald-500/30",
-        text: "text-emerald-200",
-        icon: GiHummingbird,  // 蜂鸟图标代替（无专门啄木鸟图标）
+        ring: "bg-amber-500/20 border-amber-400/50 shadow-amber-500/30",
+        text: "text-amber-200",
+        icon: GiHummingbird,
     },
 };
 
 const ROLE_CARD_STYLES: Record<JokerRole, { card: string; badge: string }> = {
-    // Base roles
-    duck: {
-        card: "bg-orange-500/10 border-orange-500/20",
-        badge: "text-orange-300 border-orange-500/30",
-    },
+    // 🦢 Goose faction - Blue
     goose: {
         card: "bg-blue-500/10 border-blue-500/20",
         badge: "text-blue-300 border-blue-500/30",
     },
+    vigilante_goose: {
+        card: "bg-blue-500/10 border-blue-500/20",
+        badge: "text-blue-300 border-blue-500/30",
+    },
+    sheriff_goose: {
+        card: "bg-blue-500/10 border-blue-500/20",
+        badge: "text-blue-300 border-blue-500/30",
+    },
+    coroner_goose: {
+        card: "bg-blue-500/10 border-blue-500/20",
+        badge: "text-blue-300 border-blue-500/30",
+    },
+    overseer_goose: {
+        card: "bg-blue-500/10 border-blue-500/20",
+        badge: "text-blue-300 border-blue-500/30",
+    },
+    // 🦆 Duck faction - Red
+    duck: {
+        card: "bg-red-500/10 border-red-500/20",
+        badge: "text-red-300 border-red-500/30",
+    },
+    poisoner_duck: {
+        card: "bg-red-500/10 border-red-500/20",
+        badge: "text-red-300 border-red-500/30",
+    },
+    saboteur_duck: {
+        card: "bg-red-500/10 border-red-500/20",
+        badge: "text-red-300 border-red-500/30",
+    },
+    // 🐦 Neutral faction - Yellow/Amber
     dodo: {
         card: "bg-amber-500/10 border-amber-500/20",
         badge: "text-amber-200 border-amber-400/30",
     },
     hawk: {
-        card: "bg-sky-500/10 border-sky-500/20",
-        badge: "text-sky-200 border-sky-400/30",
-    },
-    // 🦢 Goose faction special roles
-    vigilante_goose: {
-        card: "bg-rose-500/10 border-rose-500/20",
-        badge: "text-rose-200 border-rose-400/30",
-    },
-    sheriff_goose: {
-        card: "bg-yellow-500/10 border-yellow-500/20",
-        badge: "text-yellow-200 border-yellow-400/30",
-    },
-    coroner_goose: {
-        card: "bg-purple-500/10 border-purple-500/20",
-        badge: "text-purple-200 border-purple-400/30",
-    },
-    overseer_goose: {
-        card: "bg-cyan-500/10 border-cyan-500/20",
-        badge: "text-cyan-200 border-cyan-400/30",
-    },
-    // 🦆 Duck faction special roles
-    poisoner_duck: {
-        card: "bg-green-500/10 border-green-500/20",
-        badge: "text-green-300 border-green-400/30",
-    },
-    saboteur_duck: {
-        card: "bg-red-500/10 border-red-500/20",
-        badge: "text-red-300 border-red-400/30",
-    },
-    // 🐦 Neutral special roles
-    falcon: {
-        card: "bg-rose-600/10 border-rose-600/20",
-        badge: "text-rose-300 border-rose-500/30",
+        card: "bg-amber-500/10 border-amber-500/20",
+        badge: "text-amber-200 border-amber-400/30",
     },
     woodpecker: {
-        card: "bg-emerald-500/10 border-emerald-500/20",
-        badge: "text-emerald-200 border-emerald-400/30",
+        card: "bg-amber-500/10 border-amber-500/20",
+        badge: "text-amber-200 border-amber-400/30",
     },
 };
 
@@ -420,9 +409,11 @@ export default function JokerRoom() {
     const [taskCooldownSeconds, setTaskCooldownSeconds] = useState(0);
     const taskCooldown = taskCooldownSeconds > 0;
     const [lifeCodeWarningCountdown, setLifeCodeWarningCountdown] = useState(0);
+    const [lifeCodeRefreshedCountdown, setLifeCodeRefreshedCountdown] = useState(0);
     const [showMedicalDialog, setShowMedicalDialog] = useState(false);
     const [showMonitorLocationDialog, setShowMonitorLocationDialog] = useState(false);
     const [showReview, setShowReview] = useState(false);
+    const [pendingVoteTarget, setPendingVoteTarget] = useState<{ sessionId: string | null; name: string } | null>(null);
     const [suppressPauseDialog, setSuppressPauseDialog] = useState(false);
     const [coronerEmptyChecked, setCoronerEmptyChecked] = useState(false);
     const [overseerEmptyChecked, setOverseerEmptyChecked] = useState(false);
@@ -794,6 +785,23 @@ export default function JokerRoom() {
         }, 3000);
     }, [roomCode, users]);
 
+    const handleAddBot = useCallback(async () => {
+        if (!roomCode || !isHost) return;
+        try {
+            const resp = await rt.emitAck("room:add_bot", {
+                code: roomCode,
+                sessionId: getSessionId(),
+            }, 3000);
+            if (!(resp as any)?.ok) {
+                const err = (resp as any)?.msg;
+                await alert(err || t('error.addBotFailed'));
+            }
+        } catch (e) {
+            console.error(e);
+            await alert(t('error.addBotFailed'));
+        }
+    }, [roomCode, isHost, t]);
+
     const handleStartGame = useCallback(async () => {
         const res = await startGame(roleTemplate, enableSoloEffects);
         if (!res.ok) {
@@ -837,30 +845,38 @@ export default function JokerRoom() {
                                 ? t('error.cantOxygenSelf')
                                 : res.error === "Already gave oxygen to this player this round"
                                     ? t('error.alreadyGaveOxygen')
-                                    : res.error === "Actions only available during red light"
-                                        ? t('error.redLightOnly')
-                                        : res.error === "Invalid actor"
-                                            ? t('error.invalidActor')
-                                            : res.error === "Unknown action"
-                                                ? t('error.unknownAction')
-                                                : res.error === "foul_death" || res.error === "foul"
-                                                    ? t('error.foulDeath')
-                                                    : res.error === "Game paused"
-                                                        ? t('error.gamePaused')
-                                                        : res.error === "No snapshot"
-                                                            ? t('error.noSnapshot')
-                                                            : res.error === "Player not found"
-                                                                ? t('error.playerNotFound')
-                                                                : t('error.operationFailed');
+                                    : res.error === "Cannot give oxygen consecutively to the same player"
+                                        ? t('error.consecutiveOxygen')
+                                        : res.error === "Actions only available during red light"
+                                            ? t('error.redLightOnly')
+                                            : res.error === "Invalid actor"
+                                                ? t('error.invalidActor')
+                                                : res.error === "Unknown action"
+                                                    ? t('error.unknownAction')
+                                                    : res.error === "foul_death" || res.error === "foul"
+                                                        ? t('error.foulDeath')
+                                                        : res.error === "Game paused"
+                                                            ? t('error.gamePaused')
+                                                            : res.error === "No snapshot"
+                                                                ? t('error.noSnapshot')
+                                                                : res.error === "Player not found"
+                                                                    ? t('error.playerNotFound')
+                                                                    : t('error.operationFailed');
             await alert(msg);
         }
         setLifeCodeInput("");
     }, [lifeCodeInput, actionCooldown, isInteractionDisabled, submitAction, myRole, t]);
 
-    const handleVote = useCallback(async (targetSessionId: string | null) => {
+    const handleVoteConfirm = useCallback(async () => {
+        if (isInteractionDisabled || !pendingVoteTarget) return;
+        await vote(pendingVoteTarget.sessionId);
+        setPendingVoteTarget(null);
+    }, [vote, isInteractionDisabled, pendingVoteTarget]);
+
+    const handleVoteClick = useCallback((targetSessionId: string | null, targetName: string) => {
         if (isInteractionDisabled) return;
-        await vote(targetSessionId);
-    }, [vote, isInteractionDisabled]);
+        setPendingVoteTarget({ sessionId: targetSessionId, name: targetName });
+    }, [isInteractionDisabled]);
 
     const handleReport = useCallback(async () => {
         if (isInteractionDisabled) return;
@@ -1310,6 +1326,10 @@ export default function JokerRoom() {
         if (!jokerSnapshot?.lifeCodes) return;
         const version = jokerSnapshot.lifeCodes.version;
         if (lastLifeCodeVersionRef.current === version) return;
+        // Only show "refreshed" notification if this is not the first version (initial assignment)
+        if (lastLifeCodeVersionRef.current !== 0) {
+            setLifeCodeRefreshedCountdown(5);
+        }
         lastLifeCodeVersionRef.current = version;
         setLifeCodeWarningCountdown(0);
     }, [jokerSnapshot?.lifeCodes?.version]);
@@ -1322,6 +1342,15 @@ export default function JokerRoom() {
         }, 1000);
         return () => clearTimeout(timer);
     }, [lifeCodeWarningCountdown]);
+
+    // Life code refreshed notification countdown timer
+    useEffect(() => {
+        if (lifeCodeRefreshedCountdown <= 0) return;
+        const timer = setTimeout(() => {
+            setLifeCodeRefreshedCountdown(prev => Math.max(0, prev - 1));
+        }, 1000);
+        return () => clearTimeout(timer);
+    }, [lifeCodeRefreshedCountdown]);
 
     const handleCompleteTask = useCallback(async () => {
         if (!roomCode) return;
@@ -2012,6 +2041,16 @@ export default function JokerRoom() {
 
                                             {isHost && (
                                                 <Button
+                                                    onClick={handleAddBot}
+                                                    className="h-12 px-4 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/30"
+                                                    title={t('lobby.addBot')}
+                                                >
+                                                    <Bot className="w-5 h-5" />
+                                                </Button>
+                                            )}
+
+                                            {isHost && (
+                                                <Button
                                                     onClick={handleStartGame}
                                                     className="flex-1 h-12 text-lg font-bold bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 shadow-lg shadow-green-900/20 text-white border-0"
                                                 >
@@ -2175,9 +2214,14 @@ export default function JokerRoom() {
                                                     <Target className="w-4 h-4" />
                                                     {t('game.targetLifeCode')}
                                                 </label>
-                                                {phase === "red_light" && myAlive && lifeCodeWarningCountdown > 0 && !isPaused && (
+                                                {phase === "red_light" && myAlive && !isPaused && lifeCodeWarningCountdown > 0 && (
                                                     <div className="text-center text-xs font-semibold text-amber-200/90 bg-amber-500/10 border border-amber-500/20 rounded-full py-1">
                                                         {t('game.lifeCodeRefresh')} {lifeCodeWarningCountdown}s
+                                                    </div>
+                                                )}
+                                                {phase === "red_light" && myAlive && !isPaused && lifeCodeRefreshedCountdown > 0 && lifeCodeWarningCountdown === 0 && (
+                                                    <div className="text-center text-xs font-semibold text-emerald-200/90 bg-emerald-500/10 border border-emerald-500/20 rounded-full py-1">
+                                                        {t('game.lifeCodeRefreshed')}
                                                     </div>
                                                 )}
                                                 <div className="flex justify-center">
@@ -2805,7 +2849,7 @@ export default function JokerRoom() {
                                                         .map(p => (
                                                             <Button
                                                                 key={p.sessionId}
-                                                                onClick={() => handleVote(p.sessionId)}
+                                                                onClick={() => handleVoteClick(p.sessionId!, p.name || `${t('game.player')}${p.seat}`)}
                                                                 disabled={me?.hasVoted || isInteractionDisabled}
                                                                 className={`w-full justify-between h-14 rounded-xl px-4 border ${me?.hasVoted ? "opacity-50 grayscale" : "hover:scale-[1.02]"
                                                                     } transition-all bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20`}
@@ -2827,7 +2871,7 @@ export default function JokerRoom() {
 
                                             <div className="pt-4 border-t border-white/10 mt-4">
                                                 <Button
-                                                    onClick={() => handleVote(null)}
+                                                    onClick={() => handleVoteClick(null, t('voting.abstain'))}
                                                     variant="ghost"
                                                     className="w-full text-white/50 hover:text-white hover:bg-white/5 flex items-center gap-2"
                                                     disabled={me?.hasVoted || isInteractionDisabled}
@@ -3108,8 +3152,40 @@ export default function JokerRoom() {
                             votingHistory={jokerSnapshot?.votingHistory ?? []}
                             players={jokerPlayers}
                             locationHistory={jokerSnapshot?.locationHistory}
+                            taskContributionBySession={jokerSnapshot?.round?.taskContributionBySession}
                         />
                     </ScrollArea>
+                </DialogContent>
+            </Dialog>
+            {/* Vote Confirmation Dialog */}
+            <Dialog open={!!pendingVoteTarget} onOpenChange={(open) => !open && setPendingVoteTarget(null)}>
+                <DialogContent className="bg-slate-950/95 text-white border-white/10 max-w-sm">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <Vote className="w-5 h-5" />
+                            {t('voting.confirmTitle', '确认投票')}
+                        </DialogTitle>
+                        <DialogDescription className="text-white/60">
+                            {pendingVoteTarget?.sessionId === null
+                                ? t('voting.confirmAbstain', '确定要弃票吗？')
+                                : t('voting.confirmVoteFor', { name: pendingVoteTarget?.name ?? '' })}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="flex gap-3 pt-2">
+                        <Button
+                            variant="outline"
+                            className="flex-1 border-white/20 bg-white/10 text-white hover:bg-white/20"
+                            onClick={() => setPendingVoteTarget(null)}
+                        >
+                            {t('common.cancel', '取消')}
+                        </Button>
+                        <Button
+                            className="flex-1 bg-white text-black hover:bg-white/90"
+                            onClick={handleVoteConfirm}
+                        >
+                            {t('common.confirm', '确认')}
+                        </Button>
+                    </div>
                 </DialogContent>
             </Dialog>
             {ConfirmDialogElement}

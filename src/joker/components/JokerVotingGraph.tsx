@@ -15,21 +15,20 @@ interface JokerVotingGraphProps {
 // Removed ROLE_LABELS, using translation instead
 
 const ROLE_COLORS: Record<JokerRole, string> = {
-    duck: "bg-orange-500 text-white border-orange-600",
-    goose: "bg-emerald-500 text-white border-emerald-600",
-    dodo: "bg-purple-500 text-white border-purple-600",
-    hawk: "bg-blue-500 text-white border-blue-600",
-    // Special goose roles
-    vigilante_goose: "bg-emerald-600 text-white border-emerald-700",
-    sheriff_goose: "bg-emerald-600 text-white border-emerald-700",
-    coroner_goose: "bg-emerald-600 text-white border-emerald-700",
-    overseer_goose: "bg-emerald-600 text-white border-emerald-700",
-    // Special duck roles
-    poisoner_duck: "bg-orange-600 text-white border-orange-700",
-    saboteur_duck: "bg-orange-600 text-white border-orange-700",
-    // Neutral birds
-    falcon: "bg-blue-600 text-white border-blue-700",
-    woodpecker: "bg-blue-600 text-white border-blue-700",
+    // 🦢 Goose faction - Blue
+    goose: "bg-blue-500 text-white border-blue-600",
+    vigilante_goose: "bg-blue-600 text-white border-blue-700",
+    sheriff_goose: "bg-blue-600 text-white border-blue-700",
+    coroner_goose: "bg-blue-600 text-white border-blue-700",
+    overseer_goose: "bg-blue-600 text-white border-blue-700",
+    // 🦆 Duck faction - Red
+    duck: "bg-red-500 text-white border-red-600",
+    poisoner_duck: "bg-red-600 text-white border-red-700",
+    saboteur_duck: "bg-red-600 text-white border-red-700",
+    // 🐦 Neutral faction - Amber
+    dodo: "bg-amber-500 text-white border-amber-600",
+    hawk: "bg-amber-500 text-white border-amber-600",
+    woodpecker: "bg-amber-600 text-white border-amber-700",
 };
 
 const ROLE_ICONS: Record<JokerRole, React.ElementType> = {
@@ -46,7 +45,6 @@ const ROLE_ICONS: Record<JokerRole, React.ElementType> = {
     poisoner_duck: GiDuck,
     saboteur_duck: GiDuck,
     // Neutral birds
-    falcon: GiEagleHead,
     woodpecker: GiEagleHead,
 };
 
@@ -174,7 +172,7 @@ export function JokerVotingGraph({ players, votes, showRole = false }: JokerVoti
                                 <div className={`relative rounded-full transition-all duration-200 ${isFocused ? "ring-2 ring-offset-1 ring-blue-500 ring-offset-transparent" : ""}`}>
                                     <Avvvatars value={String(player?.seat || sessionId)} size={AVATAR_SIZE} />
                                     {showRole && player?.role && (
-                                        <div className={`absolute -bottom-1 -right-1 p-0.5 rounded-full border ${ROLE_COLORS[player.role]} z-20 bg-gray-900`}>
+                                        <div className={`absolute -bottom-1 -right-1 p-0.5 rounded-full border ${ROLE_COLORS[player.role]} z-20`}>
                                             {(() => {
                                                 const Icon = ROLE_ICONS[player.role];
                                                 return <Icon className="w-2.5 h-2.5" />;
@@ -264,7 +262,7 @@ export function JokerVotingGraph({ players, votes, showRole = false }: JokerVoti
                                 <div className={`relative rounded-full transition-all duration-200 ${isFocused ? "ring-2 ring-offset-1 ring-blue-500 ring-offset-transparent" : ""}`}>
                                     <Avvvatars value={String(player?.seat || sessionId)} size={AVATAR_SIZE} />
                                     {showRole && player?.role && (
-                                        <div className={`absolute -bottom-1 -right-1 p-0.5 rounded-full border ${ROLE_COLORS[player.role]} z-30 bg-gray-900`}>
+                                        <div className={`absolute -bottom-1 -right-1 p-0.5 rounded-full border ${ROLE_COLORS[player.role]} z-30`}>
                                             {(() => {
                                                 const Icon = ROLE_ICONS[player.role];
                                                 return <Icon className="w-2.5 h-2.5" />;

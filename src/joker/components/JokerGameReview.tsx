@@ -1,7 +1,7 @@
 // src/joker/components/JokerGameReview.tsx
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Skull, Vote, Users } from "lucide-react";
+import { Skull, Vote, Users, BarChart3, ThumbsUp } from "lucide-react";
 import type { JokerDeathRecord, JokerVotingRoundRecord, JokerPlayerState, JokerRole, JokerLocation } from "../types";
 import Avvvatars from "avvvatars-react";
 import { JokerVotingGraph } from "./JokerVotingGraph";
@@ -12,25 +12,25 @@ interface JokerGameReviewProps {
     votingHistory: JokerVotingRoundRecord[];
     players: JokerPlayerState[];
     locationHistory?: Record<number, Record<JokerLocation, number[]>>;
+    taskContributionBySession?: Record<string, number>;
 }
 
 
 const ROLE_COLORS: Record<JokerRole, string> = {
-    duck: "bg-orange-500/20 text-orange-300 border-orange-500/30",
-    goose: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
-    dodo: "bg-purple-500/20 text-purple-300 border-purple-500/30",
-    hawk: "bg-blue-500/20 text-blue-300 border-blue-500/30",
-    // Special goose roles
-    vigilante_goose: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
-    sheriff_goose: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
-    coroner_goose: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
-    overseer_goose: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
-    // Special duck role
-    poisoner_duck: "bg-orange-500/20 text-orange-300 border-orange-500/30",
-    saboteur_duck: "bg-orange-500/20 text-orange-300 border-orange-500/30",
-    // Neutral roles
-    falcon: "bg-blue-500/20 text-blue-300 border-blue-500/30",
-    woodpecker: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
+    // 🦢 Goose faction - Blue
+    goose: "bg-blue-500/20 text-blue-300 border-blue-500/30",
+    vigilante_goose: "bg-blue-500/20 text-blue-300 border-blue-500/30",
+    sheriff_goose: "bg-blue-500/20 text-blue-300 border-blue-500/30",
+    coroner_goose: "bg-blue-500/20 text-blue-300 border-blue-500/30",
+    overseer_goose: "bg-blue-500/20 text-blue-300 border-blue-500/30",
+    // 🦆 Duck faction - Red
+    duck: "bg-red-500/20 text-red-300 border-red-500/30",
+    poisoner_duck: "bg-red-500/20 text-red-300 border-red-500/30",
+    saboteur_duck: "bg-red-500/20 text-red-300 border-red-500/30",
+    // 🐦 Neutral faction - Yellow/Amber
+    dodo: "bg-amber-500/20 text-amber-200 border-amber-400/30",
+    hawk: "bg-amber-500/20 text-amber-200 border-amber-400/30",
+    woodpecker: "bg-amber-500/20 text-amber-200 border-amber-400/30",
 };
 
 const LOCATION_KEY_MAP: Record<JokerLocation, string> = {
@@ -49,7 +49,7 @@ type TimelineEvent =
     | { type: "death"; death: JokerDeathRecord }
     | { type: "voting"; voting: JokerVotingRoundRecord };
 
-export function JokerGameReview({ deaths, votingHistory, players, locationHistory }: JokerGameReviewProps) {
+export function JokerGameReview({ deaths, votingHistory, players, locationHistory, taskContributionBySession }: JokerGameReviewProps) {
     const { t } = useTranslation();
     const getPlayerSeat = (sessionId: string | null) => {
         if (!sessionId) return 0;
@@ -134,6 +134,70 @@ export function JokerGameReview({ deaths, votingHistory, players, locationHistor
 
     return (
         <div className="space-y-4">
+            {/* Task Contribution Chart */}
+            {(() => {
+                const contributions = players
+                    .filter(p => p.sessionId)
+                    .map(p => ({
+                        player: p,
+                        contribution: taskContributionBySession?.[p.sessionId!] ?? 0
+                    }))
+                    .sort((a, b) => b.contribution - a.contribution);
+
+                const maxContribution = Math.max(...contributions.map(c => c.contribution), 1);
+                const totalContribution = contributions.reduce((sum, c) => sum + c.contribution, 0);
+
+                const topContribution = contributions[0]?.contribution ?? 0;
+
+                return (
+                    <Card className="bg-black/30 backdrop-blur-xl border-emerald-500/30">
+                        <CardHeader className="pb-2 pt-3 px-4">
+                            <CardTitle className="flex items-center justify-between text-base">
+                                <div className="flex items-center gap-2 text-emerald-300">
+                                    <BarChart3 className="w-5 h-5" />
+                                    {t('review.taskContribution')}
+                                </div>
+                                <span className="text-sm text-white/50">
+                                    {t('review.total')}: {totalContribution.toFixed(1)}%
+                                </span>
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="px-4 pb-4">
+                            <div className="space-y-3">
+                                {contributions.map(({ player, contribution }, index) => {
+                                    // Bar width relative to max contribution for visual comparison
+                                    const barWidth = maxContribution > 0 ? (contribution / maxContribution) * 100 : 0;
+                                    const isTopContributor = index === 0 && topContribution > 0;
+
+                                    return (
+                                        <div key={player.sessionId} className="space-y-1">
+                                            {/* Player info row */}
+                                            <div className="flex items-center justify-between text-sm">
+                                                <div className="flex items-center gap-2">
+                                                    <Avvvatars value={String(player.seat)} size={20} />
+                                                    <span className={isTopContributor ? "text-amber-400 font-bold" : "text-white/90 font-medium"}>
+                                                        {player.name}
+                                                    </span>
+                                                    {isTopContributor && <ThumbsUp className="w-4 h-4 text-amber-400" />}
+                                                </div>
+                                                <span className="text-emerald-400 font-mono font-bold tabular-nums">
+                                                    +{contribution.toFixed(1)}%
+                                                </span>
+                                            </div>
+                                            {/* Bar - no background, just the colored bar */}
+                                            <div
+                                                className="h-3 rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400"
+                                                style={{ width: `${barWidth}%` }}
+                                            />
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </CardContent>
+                    </Card>
+                );
+            })()}
+
             {timeline.map((event, idx) => {
                 if (event.type === "round_start") {
                     return (
