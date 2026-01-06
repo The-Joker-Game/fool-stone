@@ -239,6 +239,7 @@ function createEmptyPlayer(seat: number): JokerPlayerState {
         },
         duckEmergencyUsed: false,
         hawkEmergencyUsed: false,
+        woodpeckerEmergencyUsed: false,
         oxygenLeakActive: false,
         oxygenLeakStartedAt: undefined,
         oxygenLeakResolvedAt: undefined,
