@@ -90,6 +90,8 @@ export interface JokerPlayerState {
     duckEmergencyUsed: boolean; // duck one-time +180 on first death
     hawkEmergencyUsed: boolean;
     woodpeckerEmergencyUsed: boolean; // woodpecker one-time +180 on first death
+    poisonerDuckEmergencyUsed: boolean; // poisoner_duck one-time +180 on first death
+    saboteurDuckEmergencyUsed: boolean; // saboteur_duck one-time +180 on first death
     oxygenLeakActive: boolean;
     oxygenLeakStartedAt?: number;
     oxygenLeakResolvedAt?: number;

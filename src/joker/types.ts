@@ -87,6 +87,8 @@ export interface JokerPlayerState {
     duckEmergencyUsed: boolean;
     hawkEmergencyUsed: boolean;
     woodpeckerEmergencyUsed: boolean;
+    poisonerDuckEmergencyUsed: boolean;
+    saboteurDuckEmergencyUsed: boolean;
     oxygenLeakActive: boolean;
     oxygenLeakStartedAt?: number;
     oxygenLeakResolvedAt?: number;

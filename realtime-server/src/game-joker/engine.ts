@@ -149,6 +149,8 @@ function createEmptyPlayer(seat: number): JokerPlayerState {
         duckEmergencyUsed: false,
         hawkEmergencyUsed: false,
         woodpeckerEmergencyUsed: false,
+        poisonerDuckEmergencyUsed: false,
+        saboteurDuckEmergencyUsed: false,
         oxygenLeakActive: false,
         oxygenLeakStartedAt: undefined,
         oxygenLeakResolvedAt: undefined,
@@ -1697,6 +1699,26 @@ export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
                     text: `Player ${player.name} used emergency oxygen`,
                     type: "oxygen",
                 });
+            } else if (player.role === "poisoner_duck" && !player.poisonerDuckEmergencyUsed) {
+                // Poisoner Duck gets emergency oxygen (one-time)
+                resetOxygen(player, DUCK_EMERGENCY_OXYGEN, OXYGEN_DRAIN_NORMAL);
+                player.poisonerDuckEmergencyUsed = true;
+
+                snapshot.logs.push({
+                    at: now,
+                    text: `Player ${player.name} used emergency oxygen`,
+                    type: "oxygen",
+                });
+            } else if (player.role === "saboteur_duck" && !player.saboteurDuckEmergencyUsed) {
+                // Saboteur Duck gets emergency oxygen (one-time)
+                resetOxygen(player, DUCK_EMERGENCY_OXYGEN, OXYGEN_DRAIN_NORMAL);
+                player.saboteurDuckEmergencyUsed = true;
+
+                snapshot.logs.push({
+                    at: now,
+                    text: `Player ${player.name} used emergency oxygen`,
+                    type: "oxygen",
+                });
             } else {
                 // Player dies
                 player.isAlive = false;
@@ -1997,6 +2019,9 @@ export function checkWinCondition(snapshot: JokerSnapshot): JokerGameResult | nu
     const aliveWoodpeckers = alivePlayers.filter(p => p.role === "woodpecker");
     const aliveDodos = alivePlayers.filter(p => p.role === "dodo");
 
+    // Armed neutrals that block victory (Dodo does not block)
+    const armedNeutralCount = aliveHawks.length + aliveWoodpeckers.length;
+
     // === NEUTRAL ROLE VICTORIES ===
 
     // Hawk (猎鹰) victory: alive alone or with exactly 1 goose-camp player
@@ -2023,26 +2048,26 @@ export function checkWinCondition(snapshot: JokerSnapshot): JokerGameResult | nu
 
     // === GOOSE VICTORIES ===
 
-    // Goose win: task progress reaches 100%
+    // Goose win: task progress reaches 100% (absolute victory, ignores armed neutrals)
     if (snapshot.taskProgress >= 100 && aliveBycamp.goose.length > 0) {
         return { winner: "goose", reason: "task_complete" };
     }
 
-    // Goose win: all ducks dead (counting all duck-camp roles)
-    if (aliveBycamp.duck.length === 0 && aliveBycamp.goose.length > 0) {
+    // Goose win: all ducks dead (counting all duck-camp roles, no armed neutrals)
+    if (aliveBycamp.duck.length === 0 && aliveBycamp.goose.length > 0 && armedNeutralCount === 0) {
         return { winner: "goose", reason: "all_ducks_eliminated" };
     }
 
     // === DUCK VICTORIES ===
 
-    // Duck win: all geese dead (counting all goose-camp roles)
-    if (aliveBycamp.duck.length > 0 && aliveBycamp.goose.length === 0) {
+    // Duck win: all geese dead (counting all goose-camp roles, no armed neutrals)
+    if (aliveBycamp.duck.length > 0 && aliveBycamp.goose.length === 0 && armedNeutralCount === 0) {
         return { winner: "duck", reason: "all_geese_eliminated" };
     }
 
-    // Duck win: ducks >= non-ducks
+    // Duck win: ducks >= non-ducks (no armed neutrals)
     const nonDuckCount = alivePlayers.length - aliveBycamp.duck.length;
-    if (aliveBycamp.duck.length > 0 && aliveBycamp.duck.length >= nonDuckCount) {
+    if (aliveBycamp.duck.length > 0 && aliveBycamp.duck.length >= nonDuckCount && armedNeutralCount === 0) {
         return { winner: "duck", reason: "duck_majority" };
     }
 
