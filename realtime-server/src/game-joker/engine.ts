@@ -942,9 +942,9 @@ function handleKillAction(
         return { ok: true, message: "氧气泄漏触发成功" };
     }
 
-    // duck, hawk: Normal kill
+    // duck, hawk, saboteur_duck: Normal kill
     // Only these roles can perform normal kills
-    const allowedKillers: JokerRole[] = ["duck", "hawk"];
+    const allowedKillers: JokerRole[] = ["duck", "hawk", "saboteur_duck"];
     if (actorRole && allowedKillers.includes(actorRole)) {
         return performKill(snapshot, actor, target, "kill", now);
     }
@@ -2276,11 +2276,11 @@ export function resolveSharedTask(
         const gain = SHARED_TASK_PROGRESS_PER_PARTICIPANT * shared.participants.length;
         snapshot.taskProgress = Math.min(100, snapshot.taskProgress + gain);
 
-        // Track contribution for each participant (each gets full contribution amount)
+        // Track contribution for each participant (each gets their share, not the full gain)
         for (const participantId of shared.participants) {
             const participant = snapshot.players.find(p => p.sessionId === participantId);
             if (participant) {
-                participant.totalTaskContribution = (participant.totalTaskContribution ?? 0) + gain;
+                participant.totalTaskContribution = (participant.totalTaskContribution ?? 0) + SHARED_TASK_PROGRESS_PER_PARTICIPANT;
                 snapshot.round.taskContributionBySession[participantId] = participant.totalTaskContribution;
             }
         }
@@ -2668,6 +2668,12 @@ export function transitionToGreenLight(snapshot: JokerSnapshot): void {
         player.oxygenLeakStartedAt = undefined;
         player.oxygenLeakResolvedAt = undefined;
         player.oxygenLeakRound = undefined;
+        // Reset ghost state for new round (unified reset point)
+        if (!player.isAlive) {
+            player.ghostTargetLocation = null;
+            player.ghostAssignedLocation = null;
+            player.hauntingTarget = null;
+        }
     }
     snapshot.round.oxygenGivenThisRound = {};
     snapshot.round.goldenRabbitTriggeredLocations = [];
@@ -2958,25 +2964,16 @@ export function processHauntingTick(snapshot: JokerSnapshot, deadline?: number):
     return deductedPlayers;
 }
 
-/** 清除所有幽灵的作祟状态（红灯结束时调用） */
-export function clearAllHauntings(snapshot: JokerSnapshot): void {
-    for (const player of snapshot.players) {
-        if (!player.isAlive) {
-            player.hauntingTarget = null;
-        }
-    }
-    snapshot.updatedAt = Date.now();
+/** 清除所有幽灵的作祟状态（红灯结束时调用，实际重置在 transitionToGreenLight 统一处理） */
+export function clearAllHauntings(_snapshot: JokerSnapshot): void {
+    // Ghost state is now reset in transitionToGreenLight as the unified reset point
+    // This function is kept for API compatibility but does nothing
 }
 
-/** 重置幽灵场所选择（新回合绿灯开始时调用） */
-export function resetGhostLocations(snapshot: JokerSnapshot): void {
-    for (const player of snapshot.players) {
-        if (!player.isAlive) {
-            player.ghostTargetLocation = null;
-            player.ghostAssignedLocation = null;
-        }
-    }
-    snapshot.updatedAt = Date.now();
+/** 重置幽灵场所选择（已废弃，实际重置在 transitionToGreenLight 统一处理） */
+export function resetGhostLocations(_snapshot: JokerSnapshot): void {
+    // Ghost state is now reset in transitionToGreenLight as the unified reset point
+    // This function is kept for API compatibility but does nothing
 }
 
 // Import JokerDeathRecord for ghost type checking

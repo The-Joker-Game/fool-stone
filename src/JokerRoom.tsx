@@ -2777,10 +2777,12 @@ export default function JokerRoom() {
                                                     <Skull className="w-4 h-4" />
                                                     <span>{t('meeting.deathCount', { count: jokerSnapshot?.meeting?.deathCount })}</span>
                                                 </div>
-                                                {/* 显示死亡玩家列表 */}
+                                                {/* 显示死亡玩家列表 - 按 revealedAt 排序取最近揭露的 */}
                                                 <div className="flex flex-wrap items-center justify-center gap-2 mt-2">
                                                     {jokerSnapshot?.deaths
-                                                        .filter(d => d.revealed && d.round === jokerSnapshot.roundCount)
+                                                        .filter(d => d.revealed)
+                                                        .sort((a, b) => (b.revealedAt ?? b.at) - (a.revealedAt ?? a.at))
+                                                        .slice(0, jokerSnapshot?.meeting?.deathCount ?? 0)
                                                         .map(d => (
                                                             <div key={d.sessionId} className="flex items-center gap-1.5 bg-red-500/20 px-2 py-1 rounded-lg border border-red-500/30">
                                                                 <Avvvatars value={String(d.seat)} size={20} />
