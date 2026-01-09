@@ -36,6 +36,10 @@ const roomTimers = new Map<string, NodeJS.Timeout[]>();
 const oxygenIntervals = new Map<string, NodeJS.Timeout>();
 const scheduledDeadlines = new Map<string, number>();
 
+// Life code refresh: track accumulated red light seconds per room
+const LIFE_CODE_REFRESH_INTERVAL_SECONDS = 65;
+const lifeCodeElapsed = new Map<string, number>();
+
 export function addTimeout(roomCode: string, timeout: NodeJS.Timeout): void {
     if (!roomTimers.has(roomCode)) {
         roomTimers.set(roomCode, []);
@@ -59,6 +63,7 @@ export function clearRoomTimeouts(roomCode: string): void {
     }
 
     scheduledDeadlines.delete(roomCode);
+    lifeCodeElapsed.delete(roomCode);
 }
 
 function broadcastSnapshot(room: { code: string; snapshot: any }, io: Server): void {
@@ -205,44 +210,21 @@ function scheduleRedLightActions(
 
     addTimeout(room.code, endTimer);
     scheduleEmergencyTasks(room, io);
-    scheduleLifeCodeRefresh(room, io);
-}
 
-function scheduleLifeCodeRefresh(
-    room: { code: string; snapshot: any },
-    io: Server
-): void {
-    const snapshot = room.snapshot as JokerSnapshot;
-    if (snapshot.phase !== "red_light" || !snapshot.deadline) return;
-
-    const redLightStartMs = snapshot.round.phaseStartAt;
-    const refreshSecond = snapshot.round.lifeCodeRefreshSecond;
-    const refreshAt = redLightStartMs + refreshSecond * 1000;
-    const warningAt = refreshAt - 5000; // 提前5秒警告
-
-    // 5秒前警告（如果刷新时间>=5秒才发警告，否则红灯开始时立即发）
-    const warningDelay = Math.max(0, warningAt - Date.now());
-    const warningTimer = setTimeout(() => {
-        if ((room.snapshot as JokerSnapshot).phase !== "red_light") return;
+    // Check if life code warning should be sent immediately on red light entry
+    const elapsed = lifeCodeElapsed.get(room.code) ?? 0;
+    const secondsUntilRefresh = LIFE_CODE_REFRESH_INTERVAL_SECONDS - elapsed;
+    if (secondsUntilRefresh <= 5 && secondsUntilRefresh > 0) {
         io.to(room.code).emit("action", {
             action: "joker:life_code_warning",
+            countdown: secondsUntilRefresh,
             from: "_server",
             at: Date.now(),
         });
-    }, warningDelay);
-    addTimeout(room.code, warningTimer);
-
-    // 刷新生命代码
-    const refreshDelay = Math.max(0, refreshAt - Date.now());
-    const refreshTimer = setTimeout(() => {
-        const snap = room.snapshot as JokerSnapshot;
-        if (snap.phase !== "red_light") return;
-        generateAllLifeCodes(snap);
-        console.log(`[LifeCode] Round ${snap.roundCount}: refreshed at ${refreshSecond}s`);
-        broadcastSnapshot(room, io);
-    }, refreshDelay);
-    addTimeout(room.code, refreshTimer);
+    }
 }
+
+// Life code refresh is now handled in startOxygenTick based on accumulated red light time
 
 const EMERGENCY_REMAINING_MIN_MS = 10_000;
 const EMERGENCY_REMAINING_MAX_MS = 50_000;
@@ -522,6 +504,32 @@ function startOxygenTick(
                 finalizeGame(snapshot, result);
                 broadcastSnapshot(room, io);
                 clearRoomTimeouts(room.code);
+            }
+        }
+
+        // Life code refresh: only accumulate during red light phase
+        if (snapshot.phase === "red_light") {
+            const elapsed = (lifeCodeElapsed.get(room.code) ?? 0) + 1;
+            lifeCodeElapsed.set(room.code, elapsed);
+
+            const secondsUntilRefresh = LIFE_CODE_REFRESH_INTERVAL_SECONDS - elapsed;
+
+            // Send warning 5 seconds before refresh
+            if (secondsUntilRefresh === 5) {
+                io.to(room.code).emit("action", {
+                    action: "joker:life_code_warning",
+                    countdown: 5,
+                    from: "_server",
+                    at: Date.now(),
+                });
+            }
+
+            // Trigger refresh when accumulated time reaches threshold
+            if (elapsed >= LIFE_CODE_REFRESH_INTERVAL_SECONDS) {
+                generateAllLifeCodes(snapshot);
+                lifeCodeElapsed.set(room.code, 0);
+                console.log(`[LifeCode] Room ${room.code}: refreshed at ${elapsed}s accumulated red light time`);
+                broadcastSnapshot(room, io);
             }
         }
 

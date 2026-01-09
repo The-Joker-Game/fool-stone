@@ -179,7 +179,6 @@ export interface JokerLifeCodeState {
 export interface JokerRoundState {
     roundCount: number;
     phaseStartAt: number;
-    lifeCodeRefreshSecond: number;
     oxygenGivenThisRound: Record<string, Record<string, boolean>>;
     goldenRabbitTriggeredLocations: JokerLocation[];
     arrivedBySession: Record<string, boolean>;

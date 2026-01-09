@@ -678,7 +678,8 @@ export default function JokerRoom() {
         // Subscribe to life code warning action
         const offAction = rt.subscribeAction(msg => {
             if (msg.action === "joker:life_code_warning") {
-                setLifeCodeWarningCountdown(5);
+                const countdown = typeof (msg as any).countdown === "number" ? (msg as any).countdown : 5;
+                setLifeCodeWarningCountdown(countdown);
             }
         });
 
@@ -2739,11 +2740,11 @@ export default function JokerRoom() {
                                     <Button
                                         onClick={handleReport}
                                         variant="outline"
-                                        disabled={isInteractionDisabled}
+                                        disabled={isInteractionDisabled || timeLeft > 30}
                                         className="w-full h-14 border-red-500/30 bg-red-500/10 text-red-200 hover:bg-red-500/20 hover:border-red-500/50 hover:text-red-100"
                                     >
                                         <AlertTriangle className="w-5 h-5 mr-2" />
-                                        {t('game.reportBody')}
+                                        {timeLeft > 30 ? `${t('game.reportBody')} (${timeLeft - 30}s)` : t('game.reportBody')}
                                     </Button>
                                 </motion.div>
                             )}

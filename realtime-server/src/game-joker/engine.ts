@@ -24,11 +24,10 @@ import type {
 } from "./types.js";
 
 const MAX_SEATS = 16;
-const INITIAL_OXYGEN = 270;
-const OXYGEN_REFILL = 90;
-const WAREHOUSE_OXYGEN_REFILL = 60;
-const DUCK_EMERGENCY_OXYGEN = 180;
-const HAWK_EMERGENCY_OXYGEN = 180;
+const INITIAL_OXYGEN = 180;
+const OXYGEN_REFILL = 60;
+const WAREHOUSE_OXYGEN_REFILL = 40;
+const EMERGENCY_OXYGEN = 120;
 const OXYGEN_DRAIN_NORMAL = 1;
 const OXYGEN_DRAIN_LEAK = 3;
 const GOLDEN_RABBIT_PROGRESS_REWARD = 9;
@@ -48,32 +47,6 @@ export const PHASE_DURATIONS = {
     execution: 10_000,
 };
 
-// ============ Life Code Refresh Timing ============
-
-const LIFE_CODE_MARGIN_MS = 5000; // 头尾各留 5 秒
-const LIFE_CODE_DRIFT_RANGE = 10;
-
-/** 计算刷新时刻范围（基于红灯时长动态计算） */
-function getLifeCodeRefreshRange(): { min: number; max: number } {
-    const redLightMs = PHASE_DURATIONS.red_light;
-    const minSecond = Math.ceil(LIFE_CODE_MARGIN_MS / 1000);
-    const maxSecond = Math.floor((redLightMs - LIFE_CODE_MARGIN_MS) / 1000);
-    return { min: minSecond, max: maxSecond };
-}
-
-/** 计算下一轮的生命代码刷新时刻（红灯开始后的秒数） */
-export function computeNextLifeCodeRefreshSecond(prevSecond: number): number {
-    const { min, max } = getLifeCodeRefreshRange();
-    const drift = Math.floor(Math.random() * (LIFE_CODE_DRIFT_RANGE * 2 + 1)) - LIFE_CODE_DRIFT_RANGE;
-    let next = prevSecond + drift;
-    return Math.max(min, Math.min(max, next));
-}
-
-/** 生成首轮随机刷新时刻 */
-export function computeFirstLifeCodeRefreshSecond(): number {
-    const { min, max } = getLifeCodeRefreshRange();
-    return min + Math.floor(Math.random() * (max - min + 1));
-}
 
 // ============ Oxygen State Helpers ============
 
@@ -180,7 +153,6 @@ function createEmptyRoundState(): JokerRoundState {
     return {
         roundCount: 0,
         phaseStartAt: Date.now(),
-        lifeCodeRefreshSecond: computeFirstLifeCodeRefreshSecond(),
         oxygenGivenThisRound: {},
         goldenRabbitTriggeredLocations: [],
         arrivedBySession: {},
@@ -1671,7 +1643,7 @@ export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
         if (currentOxygen <= 0) {
             if (player.role === "duck" && !player.duckEmergencyUsed) {
                 // Duck gets emergency oxygen (one-time)
-                resetOxygen(player, DUCK_EMERGENCY_OXYGEN, OXYGEN_DRAIN_NORMAL);
+                resetOxygen(player, EMERGENCY_OXYGEN, OXYGEN_DRAIN_NORMAL);
                 player.duckEmergencyUsed = true;
 
                 snapshot.logs.push({
@@ -1681,7 +1653,7 @@ export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
                 });
             } else if (player.role === "hawk" && !player.hawkEmergencyUsed) {
                 // Hawk gets emergency oxygen (one-time)
-                resetOxygen(player, HAWK_EMERGENCY_OXYGEN, OXYGEN_DRAIN_NORMAL);
+                resetOxygen(player, EMERGENCY_OXYGEN, OXYGEN_DRAIN_NORMAL);
                 player.hawkEmergencyUsed = true;
 
                 snapshot.logs.push({
@@ -1691,7 +1663,7 @@ export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
                 });
             } else if (player.role === "woodpecker" && !player.woodpeckerEmergencyUsed) {
                 // Woodpecker gets emergency oxygen (one-time)
-                resetOxygen(player, HAWK_EMERGENCY_OXYGEN, OXYGEN_DRAIN_NORMAL);
+                resetOxygen(player, EMERGENCY_OXYGEN, OXYGEN_DRAIN_NORMAL);
                 player.woodpeckerEmergencyUsed = true;
 
                 snapshot.logs.push({
@@ -1701,7 +1673,7 @@ export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
                 });
             } else if (player.role === "poisoner_duck" && !player.poisonerDuckEmergencyUsed) {
                 // Poisoner Duck gets emergency oxygen (one-time)
-                resetOxygen(player, DUCK_EMERGENCY_OXYGEN, OXYGEN_DRAIN_NORMAL);
+                resetOxygen(player, EMERGENCY_OXYGEN, OXYGEN_DRAIN_NORMAL);
                 player.poisonerDuckEmergencyUsed = true;
 
                 snapshot.logs.push({
@@ -1711,7 +1683,7 @@ export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
                 });
             } else if (player.role === "saboteur_duck" && !player.saboteurDuckEmergencyUsed) {
                 // Saboteur Duck gets emergency oxygen (one-time)
-                resetOxygen(player, DUCK_EMERGENCY_OXYGEN, OXYGEN_DRAIN_NORMAL);
+                resetOxygen(player, EMERGENCY_OXYGEN, OXYGEN_DRAIN_NORMAL);
                 player.saboteurDuckEmergencyUsed = true;
 
                 snapshot.logs.push({
@@ -1766,6 +1738,17 @@ export function startMeeting(
 
     // Count unrevealed deaths before revealing them
     const unrevealedDeathCount = snapshot.deaths.filter(d => !d.revealed).length;
+
+    // Penalty for false report: deduct 10s oxygen if no unrevealed deaths
+    const FALSE_REPORT_PENALTY = 10;
+    if (triggerType === "player" && unrevealedDeathCount === 0) {
+        deductOxygen(reporter, FALSE_REPORT_PENALTY);
+        snapshot.logs.push({
+            at: Date.now(),
+            text: `${reporter.name} received penalty for false report`,
+            type: "oxygen",
+        });
+    }
 
     // Reveal all unrevealed deaths when entering meeting
     const now = Date.now();
@@ -2660,9 +2643,9 @@ export function transitionToGreenLight(snapshot: JokerSnapshot): void {
         if (player.inStasis) {
             player.inStasis = false;
         }
-        // Reset oxygen drain rate to normal and refresh timestamp for new round
+        // Pause oxygen drain during green/yellow light (will resume in red light)
         if (player.isAlive) {
-            setOxygenDrainRate(player, OXYGEN_DRAIN_NORMAL);
+            setOxygenDrainRate(player, 0);
         }
         player.oxygenLeakActive = false;
         player.oxygenLeakStartedAt = undefined;
@@ -2706,10 +2689,6 @@ export function transitionToYellowLight(snapshot: JokerSnapshot): void {
 export function transitionToRedLight(snapshot: JokerSnapshot): void {
     snapshot.phase = "red_light";
     snapshot.round.phaseStartAt = Date.now();
-    snapshot.round.lifeCodeRefreshSecond = computeNextLifeCodeRefreshSecond(
-        snapshot.round.lifeCodeRefreshSecond
-    );
-    console.log(`[LifeCode] Round ${snapshot.roundCount}: scheduled at ${snapshot.round.lifeCodeRefreshSecond}s`);
 
     // 记录当前回合每个场所的玩家座位号
     const roundLocations: Record<string, number[]> = {};
@@ -2729,6 +2708,13 @@ export function transitionToRedLight(snapshot: JokerSnapshot): void {
         roundLocations[loc].sort((a, b) => a - b);
     }
     snapshot.locationHistory[snapshot.roundCount] = roundLocations as Record<JokerLocation, number[]>;
+
+    // Resume normal oxygen drain for all alive players
+    for (const player of snapshot.players) {
+        if (player.isAlive && !player.inStasis) {
+            setOxygenDrainRate(player, OXYGEN_DRAIN_NORMAL);
+        }
+    }
 
     snapshot.deadline = Date.now() + PHASE_DURATIONS.red_light;
     snapshot.updatedAt = Date.now();

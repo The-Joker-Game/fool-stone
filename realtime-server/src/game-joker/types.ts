@@ -186,8 +186,6 @@ export interface JokerLifeCodeState {
 export interface JokerRoundState {
     roundCount: number;
     phaseStartAt: number;
-    // Life code refresh timing: seconds after red light starts (dynamically computed)
-    lifeCodeRefreshSecond: number;
     // Track oxygen gives per round: actorSessionId -> targetSessionId -> true
     oxygenGivenThisRound: Record<string, Record<string, boolean>>;
     goldenRabbitTriggeredLocations: JokerLocation[];
