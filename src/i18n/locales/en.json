@@ -30,7 +30,7 @@
     "vigilante_goose": "Vigilante Goose",
     "sheriff_goose": "Sheriff Goose",
     "coroner_goose": "Coroner Goose",
-    "overseer_goose": "Foreman Goose",
+    "overseer_goose": "Overseer Goose",
     "poisoner_duck": "Poisoner Duck",
     "saboteur_duck": "Saboteur Duck",
     "woodpecker": "Woodpecker"
@@ -325,7 +325,292 @@
     "title": "Game Rules",
     "close": "Close",
     "version": "Version",
-    "content": "[Game Background]\nOn a distant interstellar route, the Goose race is building a massive spaceship to carry their new home. To prevent infiltration and sabotage, the ship has initiated the \"Red Light/Green Light Protocol\": Green Light for free movement and communication, Yellow Light for forced separation to work points, and Red Light for total ship lockdown—all engineers must complete tasks in place.\nBut the ship has been infiltrated by impostors: the Duck race. They look exactly like Geese but aim to eliminate them and sabotage the project. Even worse, the ship's life support system uses dynamic \"Life Codes\": every member has a dynamic oxygen verification code. Crewmates can input these codes to replenish each other's oxygen during collaboration; however, if a Duck glimpses and inputs the code during the lockdown, they can instantly disconnect the target's life support, creating a silent \"accident.\"\nWhen the alarm sounds, crew members can only hold an emergency meeting and vote to eject suspects into space. Task progress, oxygen levels, the eyes of companions, and reflections on phone screens become your evidence for finding the truth—in this unfinished interstellar ark, you must accomplish two things at once: survive and complete the ship.\n\n[Gameplay Tips]\nThis game encourages \"peeking at phones\"!\nDuring the Red Light phase, please do not intentionally block your screen or avoid eye contact—you need to approach, compare, and peek at others' screens to gain information, complete oxygen refills, and collaborate; at the same time, learn to use positioning, angles, and conversation to protect your own Life Code.\n(Prohibited: Physically blocking other people's phones, snatching devices, pushing/shoving, etc.)\n\n[Victory Conditions]\n• Goose: Total task progress hits 100% OR eliminate all Ducks and any armed neutral roles.\n• Duck: Duck count ≥ Non-Duck count, once all armed neutral roles are eliminated.\n• Dodo (Neutral): Win by getting voted out.\n• Hawk (Neutral): Can kill anyone. Win by surviving to the end (Only you or you + 1 Goose remaining).\n• Woodpecker (Neutral): Your attacks cause oxygen leaks. Win by surviving to the end (Only you or you + 1 Goose remaining).\n\n[Round Rhythm]\n• 90 seconds per round: Green Light (15s) Select Location -> Yellow Light (15s) Move -> Red Light (60s) Do Tasks/Kill.\n\n[Life Codes & Oxygen]\n• Red Light displays a 2-digit Life Code, used for Killing/Refilling.\n• Life Codes refresh irregularly once per round, with a countdown 5 seconds prior.\n• After inputting a Life Code, both Killing and Refilling enter a 10s cooldown.\n• Oxygen Refill: +90s each time; only once per player per round; a player cannot be refilled consecutively by the same person.\n• Initial oxygen is 270s per person; death occurs upon depletion. Ducks and Hawks automatically use 180s reserve oxygen when hitting zero (once per game).\n• Geese attempting to kill will die due to a foul.\n• Entering an invalid Life Code when killing results in a 30s oxygen penalty.\n\n[Meetings & Voting]\n• Take turns speaking (Suggested 30-60s per person; Host can skip or extend).\n• Simultaneous anonymous voting (Host can extend time; ends when everyone votes).\n• Can vote for self or skip; vote counts are revealed.\n\n[Task Mechanics]\n• Solo Task: Success +1.5% progress, Failure adds nothing; Consumes 10s oxygen per attempt.\n• Common Task: Starts only when everyone in the location clicks; Success adds +2.5% progress per participant; Failure adds no progress but still consumes oxygen.\n• Types: Grid Treasure Hunt, Number Puzzle (10s time limit).\n\n[Sudden Tasks]\n• Oxygen Leak: Oxygen consumption becomes -3/sec; fixed if any player refills your oxygen; no extra oxygen cost.\n• Golden Rabbit: Join the capture team within 8s; 9-grid capture, success if anyone selects it; Reward +9% progress.\n\n[Sudden Events]\n• Meteor Strike: May occur during Red Light, causing Total Task Progress -10%.\n\n[Location Effects] (Active when alone)\n1. Kitchen (Supply): Self-refill +90s oxygen.\n2. Medical Bay (Remote Aid): Refill +90s oxygen for any other player.\n3. Power Room (Overdrive): +3% progress for every personal task completed this round.\n4. Monitor Room (Surveillance): Peek at the Life Code of 1 random player from a different faction in a specified location (Display for 5s).\n5. Warehouse (Emergency Supply): Global oxygen refill +60s for everyone.\n6. Dispatch Room (Random Dispatch): Next round's Yellow Light reshuffles everyone (ignoring Green Light choices), except you go to your chosen location.\n7. Stasis Pod (Absolute Stasis): Enter stasis. No tasks, no oxygen consumption, immune to all effects (Cannot be Killed/Monitored/Refilled/Drained/Haunted).\n\n[Special Roles]\n🦢 Goose Faction (Goose)\n- Vigilante Goose: You have only one kill chance, can kill any player.\n- Sheriff Goose: You can kill any player, but die if killing a Goose.\n- Coroner Goose: When alone, investigate a corpse's cause of death (Kill / Poison / Suffocation / Suicide / Foul).\n- Foreman Goose: When alone, investigate a player's task contribution.\n🦆 Duck Faction (Duck)\n- Poisoner Duck: Your kill poisons the target, they die after 60s if still alive.\n- Saboteur Duck: Tasks bury hazards (contribution * 2). When total progress hits 100%, hazards explode, deducting corresponding % progress. System auto-repairs after explosion, removing the Saboteur's effect.\n🐦 Neutral Faction (Bird)\n- Dodo: Your goal is to get voted out during meetings to win alone.\n- Hawk: You can kill any player. Survive to the end (Only you or you + 1 Goose) to win.\n- Woodpecker: Your kill won't kill the target but causes an oxygen leak (same effect as Sudden Task). Survive to the end (Only you or you + 1 Goose) to win.\n\n[Ghost Haunting]\nWhen a player dies and the body is found triggering a meeting, that player enters \"Ghost\" state. Ghosts do not need to physically move and can stay in the resting area, acting via the App.\n- 🟢 Green Light: Select a location (or choose \"Skip/Don't Appear\").\n- 🟡 Yellow Light: Ghost appears in the selected location; if skipped during Green, will not appear anywhere this round.\n- 🔴 Red Light: Ghost can see living players and other ghosts in that location, and choose 1 living player to [Haunt].\n  - Effect: Target consumes an extra 3s of oxygen every 10s, effective immediately upon clicking Haunt.\n  - Stacking: Multiple ghosts can haunt the same target, effects stack; but max extra consumption is 9s every 10s (Max 3 ghosts simultaneously)."
+    "sections": {
+      "background": {
+        "title": "[Game Background]",
+        "content": "On a distant interstellar route, the Goose race is building a massive spaceship to carry their new home. To prevent infiltration and sabotage, the ship has initiated the \"Red Light/Green Light Protocol\": Green Light for free movement and communication, Yellow Light for forced separation to work points, and Red Light for total ship lockdown—all engineers must complete tasks in place.\nBut the ship has been infiltrated by impostors: the Duck race. They look exactly like Geese but aim to eliminate them and sabotage the project. Even worse, the ship's life support system uses dynamic \"Life Codes\": every member has a dynamic oxygen verification code. Crewmates can input these codes to replenish each other's oxygen during collaboration; however, if a Duck glimpses and inputs the code during the lockdown, they can instantly disconnect the target's life support, creating a silent \"accident.\"\nWhen the alarm sounds, crew members can only hold an emergency meeting and vote to eject suspects into space. Task progress, oxygen levels, the eyes of companions, and reflections on phone screens become your evidence for finding the truth—in this unfinished interstellar ark, you must accomplish two things at once: survive and complete the ship."
+      },
+      "tips": {
+        "title": "[Gameplay Tips]",
+        "content": "This game encourages \"peeking at phones\"!\nDuring the Red Light phase, please do not intentionally block your screen or avoid eye contact—you need to approach, compare, and peek at others' screens to gain information, complete oxygen refills, and collaborate; at the same time, learn to use positioning, angles, and conversation to protect your own Life Code.\n(Prohibited: Physically blocking other people's phones, snatching devices, pushing/shoving, etc.)"
+      },
+      "victory": {
+        "title": "[Victory Conditions]",
+        "content": "• Goose: Total task progress hits 100% OR eliminate all Ducks and any armed neutral roles.\n• Duck: Duck count ≥ Non-Duck count, once all armed neutral roles are eliminated.\n• Dodo (Neutral): Win by getting voted out.\n• Hawk (Neutral): Can kill anyone. Win by surviving to the end (Only you or you + 1 Goose remaining).\n• Woodpecker (Neutral): Your attacks cause oxygen leaks. Win by surviving to the end (Only you or you + 1 Goose remaining)."
+      },
+      "rhythm": {
+        "title": "[Round Rhythm]",
+        "content": "• 90 seconds per round: Green Light (15s) Select Location -> Yellow Light (15s) Move -> Red Light (60s) Do Tasks/Kill."
+      },
+      "lifeCode": {
+        "title": "[Life Codes & Oxygen]",
+        "content": "• Red Light displays a 2-digit Life Code, used for Killing/Refilling.\n• Life Codes refresh every 65 seconds during Red Light, with a countdown 5 seconds prior.\n• After inputting a Life Code, both Killing and Refilling enter a 10s cooldown.\n• Oxygen Refill: +60s each time; only once per player per round; a player cannot be refilled consecutively by the same person.\n• Initial oxygen is 180s per person; death occurs upon depletion. Ducks and Hawks automatically use 120s reserve oxygen when hitting zero (once per game).\n• Geese attempting to kill will die due to a foul.\n• Entering an invalid Life Code when killing results in a 30s oxygen penalty."
+      },
+      "meeting": {
+        "title": "[Meetings & Voting]",
+        "content": "• The alarm button is enabled 30s after Red Light starts. False alarms consume 10s oxygen.\n• If there is a new death and no alarm is raised, the system will automatically trigger an alarm at the end of the Red Light phase.\n• Take turns speaking (Suggested 30-60s per person; Host can skip or extend).\n• Simultaneous anonymous voting (Host can extend time; ends when everyone votes).\n• Can vote for self or skip; vote counts are revealed."
+      },
+      "task": {
+        "title": "[Task Mechanics]",
+        "content": "• Solo Task: Success +1.5% progress; Consumes 10s oxygen per attempt.\n• Common Task: Starts only when everyone in the location clicks; Success adds +2.5% progress per participant; Consumes 10s oxygen per attempt.\n• Types: Grid Treasure Hunt, Number Puzzle (10s time limit)."
+      },
+      "emergencyTask": {
+        "title": "[Sudden Tasks]",
+        "content": "• Oxygen Leak: Oxygen consumption becomes -3/sec; fixed if any player refills your oxygen; no extra oxygen cost.\n• Golden Rabbit: Join the capture team within 8s; 9-grid capture, success if anyone selects it; Reward +9% progress."
+      },
+      "emergencyEvent": {
+        "title": "[Sudden Events]",
+        "content": "• Meteor Strike: May occur during Red Light, causing Total Task Progress -10%."
+      },
+      "locationEffect": {
+        "title": "[Location Effects] (Active when alone)",
+        "content": "1. Kitchen (Supply): Self-refill +60s oxygen.\n2. Medical Bay (Remote Aid): Refill +60s oxygen for any other player.\n3. Power Room (Overdrive): +3% progress for every personal task completed this round.\n4. Monitor Room (Surveillance): Peek at the Life Code of 1 random player from a different faction in a specified location (Display for 5s).\n5. Warehouse (Emergency Supply): Global oxygen refill +40s for everyone.\n6. Dispatch Room (Random Dispatch): Next round's Yellow Light reshuffles everyone (ignoring Green Light choices), except you go to your chosen location.\n7. Stasis Pod (Absolute Stasis): Enter stasis. No tasks, no oxygen consumption, immune to all effects (Cannot be Killed/Monitored/Refilled/Drained/Haunted)."
+      },
+      "specialRoles": {
+        "title": "[Special Roles]",
+        "content": "🦢 Goose Faction (Goose)\n- Vigilante Goose: You have only one kill chance, can kill any player.\n- Sheriff Goose: You can kill any player, but die if killing a Goose.\n- Coroner Goose: When alone, investigate a corpse's cause of death (Kill / Poison / Suffocation / Suicide / Foul).\n- Overseer Goose: When alone, investigate a player's task contribution.\n🦆 Duck Faction (Duck)\n- Poisoner Duck: Your kill poisons the target, they die after 60s if still alive.\n- Saboteur Duck: Tasks bury hazards (contribution * 2). When total progress hits 100%, hazards explode, deducting corresponding % progress. System auto-repairs after explosion, removing the Saboteur's effect.\n🐦 Neutral Faction (Bird)\n- Dodo: Your goal is to get voted out during meetings to win alone.\n- Hawk: You can kill any player. Survive to the end (Only you or you + 1 Goose) to win.\n- Woodpecker: Your kill won't kill the target but causes an oxygen leak (same effect as Sudden Task). Survive to the end (Only you or you + 1 Goose) to win."
+      },
+      "ghost": {
+        "title": "[Ghost Haunting]",
+        "content": "When a player dies and the body is found triggering a meeting, that player enters \"Ghost\" state. Ghosts do not need to physically move and can stay in the resting area, acting via the App.\n- 🟢 Green Light: Select a location (or choose \"Skip/Don't Appear\").\n- 🟡 Yellow Light: Ghost appears in the selected location; if skipped during Green, will not appear anywhere this round.\n- 🔴 Red Light: Ghost can see living players and other ghosts in that location, and choose 1 living player to [Haunt].\n  - Effect: Target consumes an extra 3s of oxygen every 10s, effective immediately upon clicking Haunt.\n  - Stacking: Multiple ghosts can haunt the same target, effects stack; but max extra consumption is 9s every 10s (Max 3 ghosts simultaneously)."
+      }
+    },
+    "tables": {
+      "locationConfig": {
+        "title": "[Location Config]",
+        "headers": [
+          "Players",
+          "Locations"
+        ],
+        "rows": [
+          [
+            "3-4",
+            "2"
+          ],
+          [
+            "5-6",
+            "3"
+          ],
+          [
+            "7-8",
+            "4"
+          ],
+          [
+            "9-10",
+            "5"
+          ],
+          [
+            "11-13",
+            "6"
+          ],
+          [
+            "14-16",
+            "7"
+          ]
+        ]
+      },
+      "roleConfig": {
+        "title": "[Role Config]",
+        "headers": [
+          "Players",
+          "Goose",
+          "Vigilante Goose",
+          "Sheriff Goose",
+          "Coroner Goose",
+          "Overseer Goose",
+          "Duck",
+          "Poisoner Duck",
+          "Saboteur Duck",
+          "Dodo",
+          "Hawk",
+          "Woodpecker"
+        ],
+        "rows": [
+          [
+            "5",
+            "4",
+            "",
+            "",
+            "",
+            "",
+            "1",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ],
+          [
+            "6",
+            "4",
+            "",
+            "",
+            "",
+            "",
+            "1",
+            "",
+            "",
+            "1",
+            "",
+            ""
+          ],
+          [
+            "7",
+            "4",
+            "",
+            "",
+            "",
+            "",
+            "2",
+            "",
+            "",
+            "1",
+            "",
+            ""
+          ],
+          [
+            "8",
+            "4",
+            "",
+            "",
+            "",
+            "",
+            "1",
+            "1",
+            "",
+            "1",
+            {
+              "text": "Random 1",
+              "colSpan": 2
+            }
+          ],
+          [
+            "9",
+            "3",
+            {
+              "text": "Random 2 Special Goose, 0-2 each",
+              "colSpan": 4
+            },
+            "1",
+            "1",
+            "",
+            "1",
+            {
+              "text": "Random 1",
+              "colSpan": 2
+            }
+          ],
+          [
+            "10",
+            "4",
+            {
+              "text": "Random 2 Special Goose, 0-2 each",
+              "colSpan": 4
+            },
+            "",
+            "1",
+            "1",
+            "1",
+            {
+              "text": "Random 1",
+              "colSpan": 2
+            }
+          ],
+          [
+            "11",
+            "4",
+            {
+              "text": "Random 3 Special Goose, 0-2 each",
+              "colSpan": 4
+            },
+            "",
+            "1",
+            "1",
+            "1",
+            {
+              "text": "Random 1",
+              "colSpan": 2
+            }
+          ],
+          [
+            "12",
+            "4",
+            {
+              "text": "Random 3 Special Goose, 0-2 each",
+              "colSpan": 4
+            },
+            "1",
+            "1",
+            "1",
+            "1",
+            {
+              "text": "Random 1",
+              "colSpan": 2
+            }
+          ],
+          [
+            "13",
+            "5",
+            {
+              "text": "Random 3 Special Goose, 0-2 each",
+              "colSpan": 4
+            },
+            "1",
+            "1",
+            "1",
+            "1",
+            {
+              "text": "Random 1",
+              "colSpan": 2
+            }
+          ],
+          [
+            "14",
+            "5",
+            {
+              "text": "Random 4 Special Goose, 0-2 each",
+              "colSpan": 4
+            },
+            "1",
+            "1",
+            "1",
+            "1",
+            {
+              "text": "Random 1",
+              "colSpan": 2
+            }
+          ],
+          [
+            "15",
+            "5",
+            {
+              "text": "Random 4 Special Goose, 0-2 each",
+              "colSpan": 4
+            },
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1"
+          ],
+          [
+            "16",
+            "6",
+            {
+              "text": "Random 4 Special Goose, 0-2 each",
+              "colSpan": 4
+            },
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1"
+          ]
+        ]
+      }
+    }
   },
   "review": {
     "noData": "No review data available",

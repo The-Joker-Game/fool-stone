@@ -1769,7 +1769,65 @@ export default function JokerRoom() {
                             <div className="text-sm text-white/70 leading-relaxed whitespace-pre-line">
                                 {i18n.language.startsWith('zh') ? '【' : '['}{t('rules.version')}{i18n.language.startsWith('zh') ? '】' : ']'}{rulesVersion}
                                 {"\n"}
-                                {t('rules.content')}
+                                {Object.entries(t('rules.sections', { returnObjects: true }) as Record<string, { title: string; content: string }>).map(([key, section]) => (
+                                    <div key={key} className="mb-4">
+                                        <h3 className="text-amber-300 font-bold text-base mb-1">{section.title}</h3>
+                                        <p className="whitespace-pre-line text-white/80">{section.content}</p>
+                                    </div>
+                                ))}
+
+                                {(() => {
+                                    const tables = t('rules.tables', { returnObjects: true });
+                                    if (!tables || typeof tables !== 'object') return null;
+                                    return Object.entries(tables as Record<string, {
+                                        title: string;
+                                        headers: string[];
+                                        rows: (string | { text: string; colSpan: number })[][];
+                                    }>).map(([key, table]) => (
+                                        <div key={key} className="mb-6">
+                                            <h3 className="text-amber-300 font-bold text-base mb-2">{table.title}</h3>
+                                            <div className="rounded-lg border border-white/10 overflow-hidden bg-black/20">
+                                                <div className="overflow-x-auto">
+                                                    <table className="w-full text-sm text-center border-collapse min-w-max">
+                                                        <thead>
+                                                            <tr className="bg-white/10 text-white/90">
+                                                                {table.headers.map((h, i) => (
+                                                                    <th
+                                                                        key={i}
+                                                                        className={`p-2 border-b border-r border-white/10 last:border-r-0 font-medium whitespace-nowrap ${i === 0 ? 'sticky left-0 bg-slate-800 z-10' : ''}`}
+                                                                    >
+                                                                        {h}
+                                                                    </th>
+                                                                ))}
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {table.rows.map((row, rIndex) => (
+                                                                <tr key={rIndex} className="border-b border-white/5 last:border-0 hover:bg-white/5 transition-colors">
+                                                                    {row.map((cell, cIndex) => {
+                                                                        const isObj = typeof cell === 'object' && cell !== null;
+                                                                        const text = isObj ? (cell as any).text : cell;
+                                                                        const colSpan = isObj ? (cell as any).colSpan : 1;
+
+                                                                        return (
+                                                                            <td
+                                                                                key={cIndex}
+                                                                                colSpan={colSpan}
+                                                                                className={`p-2 border-r border-white/10 last:border-r-0 text-white/70 whitespace-nowrap ${cIndex === 0 ? 'sticky left-0 bg-slate-900/90 font-mono font-medium text-white shadow-[2px_0_5px_rgba(0,0,0,0.3)] z-10' : ''}`}
+                                                                            >
+                                                                                {text}
+                                                                            </td>
+                                                                        );
+                                                                    })}
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ));
+                                })()}
                             </div>
                         </ScrollArea>
                         <Button
