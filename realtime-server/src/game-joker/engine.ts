@@ -2750,6 +2750,8 @@ export function resetToLobby(snapshot: JokerSnapshot): void {
     snapshot.round = createEmptyRoundState();
     snapshot.logs = [];
     snapshot.deaths = [];
+    snapshot.votingHistory = [];
+    snapshot.locationHistory = {};
     snapshot.taskProgress = 0;
     snapshot.tasks = createEmptyTaskSystem();
     snapshot.paused = false;
