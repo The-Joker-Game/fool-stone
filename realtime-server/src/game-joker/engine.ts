@@ -1710,6 +1710,8 @@ export function checkOxygenDeath(snapshot: JokerSnapshot): JokerPlayerState[] {
                     revealed: false,
                 });
 
+                console.log(`[OxygenDeath] Player ${player.name} (seat ${player.seat}) died. snapshot.deaths.length=${snapshot.deaths.length}, unrevealed=${snapshot.deaths.filter(d => !d.revealed).length}`);
+
                 snapshot.logs.push({
                     at: now,
                     text: `Player ${player.name} died from oxygen depletion`,
@@ -1731,6 +1733,12 @@ export function startMeeting(
     bodySessionId?: string,
     triggerType: "player" | "system" = "player"
 ): ActionResult {
+    // Prevent duplicate meeting start
+    if (snapshot.phase === "meeting" || snapshot.phase === "voting" || snapshot.phase === "execution") {
+        console.log(`[StartMeeting] Rejected - already in ${snapshot.phase} phase`);
+        return { ok: false, error: "Meeting already in progress" };
+    }
+
     const reporter = snapshot.players.find(p => p.sessionId === reporterSessionId);
     if (!reporter || !reporter.isAlive) {
         return { ok: false, error: "Invalid reporter" };
@@ -1738,6 +1746,8 @@ export function startMeeting(
 
     // Count unrevealed deaths before revealing them
     const unrevealedDeathCount = snapshot.deaths.filter(d => !d.revealed).length;
+    console.log(`[StartMeeting] triggerType=${triggerType}, snapshot.deaths.length=${snapshot.deaths.length}, unrevealedDeathCount=${unrevealedDeathCount}`);
+    console.log(`[StartMeeting] deaths detail:`, snapshot.deaths.map(d => ({ seat: d.seat, reason: d.reason, revealed: d.revealed })));
 
     // Penalty for false report: deduct 10s oxygen if no unrevealed deaths
     const FALSE_REPORT_PENALTY = 10;
